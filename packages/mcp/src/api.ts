@@ -24,6 +24,11 @@ export class FmrlApi {
     this.root = baseUrl.replace(/\/+$/, "") + "/api/v1";
   }
 
+  /** viewerBase is the host pages live on: the configured base URL without /api/v1. */
+  get viewerBase(): string {
+    return this.root.slice(0, -"/api/v1".length);
+  }
+
   mint(label: string): Promise<MintResponse> {
     return this.call<MintResponse>("POST", "/keys", undefined, { label });
   }

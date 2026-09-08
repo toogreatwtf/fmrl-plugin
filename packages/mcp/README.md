@@ -1,0 +1,58 @@
+# fmrl
+
+Share anything your AI made. `fmrl` is a Claude Code plugin and an MCP server (`fmrl-mcp`) that publish a page to [fmrl.site](https://fmrl.site) and hand back a link. No account; the page lasts seven days unless someone keeps it from the page itself.
+
+## Install
+
+Claude Code:
+
+```
+/plugin marketplace add toogreatwtf/fmrl-plugin
+/plugin install fmrl@fmrl-plugin
+```
+
+Any MCP client (Claude Desktop, Cursor, Codex, Windsurf, and the rest):
+
+```json
+{ "mcpServers": { "fmrl": { "command": "npx", "args": ["-y", "fmrl-mcp"] } } }
+```
+
+No key step. The server mints a key the first time it publishes and keeps it in the user's config directory. `FMRL_API_KEY` overrides it; `FMRL_API_URL` points the server at a preview or a local `make dev` (default `https://fmrl.site`).
+
+curl, for people who want neither:
+
+```
+curl -sX POST https://fmrl.site/api/v1/keys
+curl -sX POST https://fmrl.site/api/v1/publish \
+  -H "Authorization: Bearer fmrl_…" -H "Content-Type: application/json" \
+  -d '{"format":"md","content":"# hello"}'
+```
+
+## What you get
+
+In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page.
+
+Any MCP client gets five tools:
+
+| Tool | Does |
+|---|---|
+| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title` → the page's URL, expiry and manage link |
+| `fmrl_publish_file` | `path` to a `.html`, `.htm`, `.md`, `.markdown`, `.mdx` or `.txt` file (2 MiB at most), optional `title` |
+| `fmrl_get` | an id or a viewer URL → status, format, size, expiry, whether it was kept |
+| `fmrl_delete` | an id or a viewer URL → removes a page this key published |
+| `fmrl_whoami` | the key's prefix and this month's quota |
+
+## Keys and limits
+
+The server mints a key on first use and stores it in `~/.config/fmrl/credentials.json` (`$XDG_CONFIG_HOME/fmrl/credentials.json`; `%APPDATA%\fmrl\credentials.json` on Windows), one key per API base URL, file mode 0600. `FMRL_API_KEY` overrides the file. 25 publishes a month per key, 5 keys a day per network, 2 MiB per page. Content is subject to fmrl.site's [acceptable use policy](https://fmrl.site/aup). Full API reference: [marky.md/api](https://marky.md/api).
+
+## Development
+
+```
+cd packages/mcp && npm install && npm test && npm run build
+claude --plugin-dir ./plugins/fmrl    # from the repo root; npm link in packages/mcp first so npx finds the local build
+```
+
+## License
+
+MIT, Too Great LLC.

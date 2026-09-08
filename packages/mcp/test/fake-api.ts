@@ -115,6 +115,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       res.statusCode = 204; res.setHeader("Cache-Control", "private, no-store, no-transform"); return res.end();
     }
     if (method === "GET" && url.pathname === "/api/v1/me") {
+      if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout
       const key = auth();
       if (!key) return unauthorized();
       return json(res, 200, { prefix: key.slice(0, 9), created_at: "2026-09-08T12:00:00Z", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } } });
@@ -126,6 +127,9 @@ export async function startFakeApi(): Promise<FakeApi> {
   const addr = server.address();
   if (!addr || typeof addr === "string") throw new Error("no address");
   api.baseUrl = `http://127.0.0.1:${addr.port}`;
-  api.close = () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+  api.close = () => {
+    server.closeAllConnections();
+    return new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+  };
   return api;
 }

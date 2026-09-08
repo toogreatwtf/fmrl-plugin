@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -52,6 +52,7 @@ export async function readCredentials(file: string): Promise<CredentialsFile> {
 export async function writeCredentials(file: string, data: CredentialsFile): Promise<void> {
   const dir = path.dirname(file);
   await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") await chmod(dir, 0o700);
   const tmp = path.join(dir, `.credentials.json.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
   await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
   await rename(tmp, file);

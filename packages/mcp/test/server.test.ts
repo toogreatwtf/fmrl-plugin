@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { mkdtemp, unlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
@@ -5,8 +6,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FmrlApi } from "../src/api.js";
+import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
-import { createServer } from "../src/server.js";
+import { createServer, type ServerDeps } from "../src/server.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string;
@@ -68,6 +70,34 @@ describe("tools", () => {
     expect(tooBig.isError).toBe(true);
     expect(text(tooBig)).toBe("That's bigger than the 2 MiB limit.");
     expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(1);
+  });
+  it("fmrl_publish_file publishes a file of exactly MAX_BYTES", async () => {
+    const exact = path.join(dir, "exact.md");
+    await writeFile(exact, "a".repeat(MAX_BYTES));
+    const r = await call("fmrl_publish_file", { path: exact });
+    expect(r.isError).toBeFalsy();
+    expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(1);
+  });
+  it("refuses a file over MAX_BYTES from the bounded read even when stat lies about the size", async () => {
+    const big = path.join(dir, "lied-big.md");
+    await writeFile(big, "a".repeat(MAX_BYTES + 1));
+    const api2 = new FmrlApi(fake.baseUrl);
+    const keys2 = new KeyStore({ api: api2, baseUrl: fake.baseUrl, file: path.join(dir, "credentials2.json") });
+    const lyingStat = (async () => ({ size: 10 }) as unknown as Stats) as unknown as ServerDeps["stat"];
+    const server2 = createServer({ api: api2, keys: keys2, stat: lyingStat });
+    const [ct2, st2] = InMemoryTransport.createLinkedPair();
+    await server2.connect(st2);
+    const client2 = new Client({ name: "test3", version: "0" });
+    await client2.connect(ct2);
+    try {
+      const r = (await client2.callTool({ name: "fmrl_publish_file", arguments: { path: big } })) as ToolResult;
+      expect(r.isError).toBe(true);
+      expect(text(r)).toBe("That's bigger than the 2 MiB limit.");
+      expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(0);
+    } finally {
+      await client2.close();
+      await server2.close();
+    }
   });
   it("fmrl_get and fmrl_delete accept an id or a URL", async () => {
     const pub = await call("fmrl_publish", { content: "x" });

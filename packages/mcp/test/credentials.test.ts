@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -42,5 +42,15 @@ describe("read and write", () => {
     // No temp file left behind.
     const { readdir } = await import("node:fs/promises");
     expect(await readdir(path.dirname(file))).toEqual(["credentials.json"]);
+  });
+  it("tightens an already-existing directory's permissions to 0700", async () => {
+    if (process.platform === "win32") return;
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const credDir = path.join(dir, "fmrl");
+    await mkdir(credDir, { recursive: true, mode: 0o755 });
+    const file = path.join(credDir, "credentials.json");
+    const data = { version: 1 as const, keys: {} };
+    await writeCredentials(file, data);
+    expect((await stat(credDir)).mode & 0o777).toBe(0o700);
   });
 });

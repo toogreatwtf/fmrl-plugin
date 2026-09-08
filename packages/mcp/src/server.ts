@@ -1,4 +1,4 @@
-import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
+import { open as fsOpen, stat as fsStat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,7 +11,7 @@ import type { KeyStore } from "./keys.js";
 export interface ServerDeps {
   api: FmrlApi;
   keys: KeyStore;
-  readFile?: typeof fsReadFile;
+  open?: typeof fsOpen;
   stat?: typeof fsStat;
 }
 
@@ -70,7 +70,7 @@ const meOutput = {
 /** createServer registers the five contract tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
   const { api, keys } = deps;
-  const readFile = deps.readFile ?? fsReadFile;
+  const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
   const server = new McpServer({ name: "fmrl", version: "0.1.0" });
 
@@ -118,9 +118,17 @@ export function createServer(deps: ServerDeps): McpServer {
         format = formatForPath(resolved);
         const info = await stat(resolved);
         if (info.size > MAX_BYTES) return fail(TOO_LARGE_MESSAGE);
-        const buf = await readFile(resolved);
+        const buf = Buffer.alloc(MAX_BYTES + 1);
+        let bytesRead: number;
+        const handle = await open(resolved, "r");
         try {
-          content = new TextDecoder("utf-8", { fatal: true }).decode(buf as Buffer);
+          ({ bytesRead } = await handle.read(buf, 0, MAX_BYTES + 1, 0));
+        } finally {
+          await handle.close();
+        }
+        if (bytesRead > MAX_BYTES) return fail(TOO_LARGE_MESSAGE);
+        try {
+          content = new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, bytesRead));
         } catch {
           return fail("That file isn't UTF-8 text.");
         }

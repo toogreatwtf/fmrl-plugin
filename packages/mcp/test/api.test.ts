@@ -59,4 +59,13 @@ describe("FmrlApi", () => {
     fake.mintLimit = 0;
     await expect(api.mint("x")).rejects.toMatchObject({ status: 429, retryAfterSeconds: 3600 });
   });
+  it("times out a request that never answers", async () => {
+    const hanging = new FmrlApi(fake.baseUrl, { headers: { "x-fake-hang": "1" }, timeoutMs: 200 });
+    const start = Date.now();
+    const err = await hanging.me("fmrl_x").catch((e) => e);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 0, code: "timeout" });
+    expect((err as ApiError).message).toMatch(/^No answer from .* within 0\.2s\.$/);
+  });
 });

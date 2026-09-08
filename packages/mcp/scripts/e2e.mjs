@@ -9,7 +9,7 @@ import path from "node:path";
 const dir = mkdtempSync(path.join(tmpdir(), "fmrl-e2e-"));
 const file = path.join(dir, "hello.md");
 writeFileSync(file, "# Hello from fmrl-mcp\n\nPublished through the MCP server end to end.\n");
-const transport = new StdioClientTransport({ command: "node", args: [new URL("../dist/index.js", import.meta.url).pathname], env: { ...process.env, XDG_CONFIG_HOME: dir } });
+const transport = new StdioClientTransport({ command: "node", args: [new URL("../dist/index.js", import.meta.url).pathname], env: { ...process.env, XDG_CONFIG_HOME: dir, APPDATA: dir } });
 const client = new Client({ name: "e2e", version: "0" });
 await client.connect(transport);
 const tools = (await client.listTools()).tools.map((t) => t.name);

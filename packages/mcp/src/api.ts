@@ -21,8 +21,14 @@ export class ApiError extends Error {
 /** FmrlApi is the thin HTTP client for /api/v1. It knows nothing about keys on disk. */
 export class FmrlApi {
   private readonly root: string;
-  constructor(baseUrl: string, private readonly fetchImpl: typeof fetch = fetch) {
+  private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
+  private readonly extraHeaders: Record<string, string>;
+  constructor(baseUrl: string, opts: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> } = {}) {
     this.root = baseUrl.replace(/\/+$/, "") + "/api/v1";
+    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.timeoutMs = opts.timeoutMs ?? 30000;
+    this.extraHeaders = opts.headers ?? {};
   }
 
   /** viewerBase is the host pages live on: the configured base URL without /api/v1. */
@@ -50,13 +56,21 @@ export class FmrlApi {
   }
 
   private async call<T>(method: string, path: string, key?: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = { Accept: "application/json" };
+    const headers: Record<string, string> = { Accept: "application/json", ...this.extraHeaders };
     if (key) headers.Authorization = `Bearer ${key}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     let res: Response;
     try {
-      res = await this.fetchImpl(this.root + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+      res = await this.fetchImpl(this.root + path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
     } catch (e) {
+      if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+        throw new ApiError(0, "timeout", `No answer from ${this.root} within ${this.timeoutMs / 1000}s.`);
+      }
       const cause = (e as { cause?: { message?: string } }).cause?.message ?? (e instanceof Error ? e.message : String(e));
       throw new ApiError(0, "network", `Couldn't reach ${this.root}: ${cause}`);
     }

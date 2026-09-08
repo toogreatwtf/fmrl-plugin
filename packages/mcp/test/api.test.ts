@@ -48,4 +48,15 @@ describe("FmrlApi", () => {
     await withSlash.mint("x");
     expect(fake.requests.at(-1)?.path).toBe("/api/v1/keys");
   });
+  it("reports a network failure as an ApiError instead of throwing raw", async () => {
+    const unreachable = new FmrlApi("http://127.0.0.1:9");
+    const err = await unreachable.mint("x").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 0, code: "network" });
+    expect((err as ApiError).message).toMatch(/^Couldn't reach/);
+  });
+  it("carries retryAfterSeconds from a 429's Retry-After header", async () => {
+    fake.mintLimit = 0;
+    await expect(api.mint("x")).rejects.toMatchObject({ status: 429, retryAfterSeconds: 3600 });
+  });
 });

@@ -4,13 +4,14 @@ export interface PublishResponse { id: string; url: string; raw_url: string; man
 export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string }
 export interface MeResponse { prefix: string; created_at: string; quota: { publishes: { used: number; limit: number; resets_at: string } } }
 
-/** ApiError is any non-2xx answer: the contract's code and message, plus resets_at on a 402. */
+/** ApiError is any non-2xx answer: the contract's code and message, plus resets_at on a 402 and retryAfterSeconds on a 429. A network failure (no response at all) is status 0, code "network". */
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly code: string,
     message: string,
     public readonly resetsAt?: string,
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -52,13 +53,21 @@ export class FmrlApi {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (key) headers.Authorization = `Bearer ${key}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const res = await this.fetchImpl(this.root + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.root + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    } catch (e) {
+      const cause = (e as { cause?: { message?: string } }).cause?.message ?? (e instanceof Error ? e.message : String(e));
+      throw new ApiError(0, "network", `Couldn't reach ${this.root}: ${cause}`);
+    }
     const text = await res.text();
     if (res.status === 204) return undefined as T;
     let parsed: unknown;
     try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = undefined; }
     if (res.ok) return parsed as T;
     const err = (parsed as { error?: { code?: string; message?: string; resets_at?: string } } | undefined)?.error;
-    throw new ApiError(res.status, err?.code ?? `http_${res.status}`, err?.message ?? `${method} ${path} answered ${res.status}.`, err?.resets_at);
+    const retryAfterHeader = res.headers.get("retry-after");
+    const retryAfterSeconds = retryAfterHeader !== null && /^\d+$/.test(retryAfterHeader) ? parseInt(retryAfterHeader, 10) : undefined;
+    throw new ApiError(res.status, err?.code ?? `http_${res.status}`, err?.message ?? `${method} ${path} answered ${res.status}.`, err?.resets_at, retryAfterSeconds);
   }
 }

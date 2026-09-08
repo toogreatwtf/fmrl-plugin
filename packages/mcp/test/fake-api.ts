@@ -101,7 +101,13 @@ export async function startFakeApi(): Promise<FakeApi> {
       const d = api.docs.get(m[1]);
       if (method === "GET") {
         if (!d || d.removed) return fail(res, 404, "not_found", d ? "That page was removed." : "No page with that id.");
-        return json(res, 200, { id: d.id, url: `https://fmrl.test/${d.id}`, status: "live", format: d.format, size: d.size, expires_at: "2026-09-15T12:00:00Z", pinned: false });
+        const pinned = d.title === "PINNED";
+        return json(res, 200, {
+          id: d.id, url: `https://fmrl.test/${d.id}`, status: "live", format: d.format, size: d.size,
+          expires_at: pinned ? null : "2026-09-15T12:00:00Z",
+          pinned,
+          ...(pinned ? { cid: "bafytest" } : {}),
+        });
       }
       if (!d || d.owner !== key) return fail(res, 404, "not_found", "No page with that id.");
       if (d.removed) return fail(res, 404, "not_found", "That page was already removed.");

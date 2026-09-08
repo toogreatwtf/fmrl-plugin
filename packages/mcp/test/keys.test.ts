@@ -48,4 +48,11 @@ describe("KeyStore", () => {
     await expect(store.withKey((k) => api.publish(k, { content: "PHISH" }))).rejects.toMatchObject({ status: 422 });
     expect(fake.requests.filter((r) => r.path === "/api/v1/publish")).toHaveLength(1);
   });
+  it("single-flights concurrent mints on a fresh store into one request", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const [k1, k2, k3] = await Promise.all([store.getKey(), store.getKey(), store.getKey()]);
+    expect(k1).toBe(k2);
+    expect(k2).toBe(k3);
+    expect(fake.requests.filter((r) => r.path === "/api/v1/keys")).toHaveLength(1);
+  });
 });

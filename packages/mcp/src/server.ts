@@ -1,4 +1,5 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -25,7 +26,15 @@ function fail(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 function errorText(e: unknown): string {
-  if (e instanceof ApiError) return e.resetsAt ? `${e.message} Resets at ${e.resetsAt}.` : e.message;
+  if (e instanceof ApiError) {
+    let msg = e.resetsAt && !e.message.includes(e.resetsAt) ? `${e.message} Resets at ${e.resetsAt}.` : e.message;
+    if (e.status === 429 && e.retryAfterSeconds) {
+      msg += e.retryAfterSeconds < 120
+        ? ` Try again in ${e.retryAfterSeconds} seconds.`
+        : ` Try again in ${Math.ceil(e.retryAfterSeconds / 60)} minutes.`;
+    }
+    return msg;
+  }
   return e instanceof Error ? e.message : String(e);
 }
 
@@ -82,7 +91,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         content: z.string().min(1).describe("The HTML or Markdown to publish (2 MiB at most)."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it."),
-        title: z.string().max(120).optional().describe("Page title; the first heading is used when left out."),
+        title: z.string().optional().describe("Page title; the first heading is used when left out."),
       },
       outputSchema: publishOutput,
     },
@@ -95,8 +104,8 @@ export function createServer(deps: ServerDeps): McpServer {
       title: "Publish a file to fmrl.site",
       description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file (2 MiB at most) as a page on fmrl.site and get its link. Only call this when the user asked to share the file.",
       inputSchema: {
-        path: z.string().min(1).describe("Path to the file."),
-        title: z.string().max(120).optional().describe("Page title; the file's first heading is used when left out."),
+        path: z.string().min(1).describe("Absolute path to the file (a leading ~ is expanded)."),
+        title: z.string().optional().describe("Page title; the file's first heading is used when left out."),
       },
       outputSchema: publishOutput,
     },
@@ -104,11 +113,17 @@ export function createServer(deps: ServerDeps): McpServer {
       let format: "html" | "md";
       let content: string;
       try {
-        const resolved = path.resolve(p);
+        const expanded = p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p;
+        const resolved = path.resolve(expanded);
         format = formatForPath(resolved);
         const info = await stat(resolved);
         if (info.size > MAX_BYTES) return fail(TOO_LARGE_MESSAGE);
-        content = await readFile(resolved, "utf8");
+        const buf = await readFile(resolved);
+        try {
+          content = new TextDecoder("utf-8", { fatal: true }).decode(buf as Buffer);
+        } catch {
+          return fail("That file isn't UTF-8 text.");
+        }
       } catch (e) {
         return fail(errorText(e));
       }
@@ -145,7 +160,7 @@ export function createServer(deps: ServerDeps): McpServer {
       const url = `${api.viewerBase}/${docId}`;
       return run(
         async (k) => { await api.delete(k, docId); return { id: docId, url, removed: true }; },
-        (v) => `Removed ${v.url}. It answers 410 from now on.\n${SEVEN_DAYS}`,
+        (v) => `Removed page ${v.id}. It answers 410 from now on.\n${SEVEN_DAYS}`,
       );
     },
   );

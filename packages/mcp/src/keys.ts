@@ -20,6 +20,7 @@ const LABEL = "fmrl-mcp";
  */
 export class KeyStore {
   private cached?: string;
+  private pending?: Promise<string>;
   constructor(private readonly o: KeyStoreOptions) {}
 
   async getKey(): Promise<string> {
@@ -30,7 +31,7 @@ export class KeyStore {
       this.cached = stored.key;
       return stored.key;
     }
-    return this.mint();
+    return this.mintOnce();
   }
 
   async withKey<T>(fn: (key: string) => Promise<T>): Promise<T> {
@@ -39,11 +40,16 @@ export class KeyStore {
       return await fn(key);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401 && !this.o.apiKeyFromEnv) {
-        const fresh = await this.mint();
+        const fresh = await this.mintOnce();
         return fn(fresh);
       }
       throw e;
     }
+  }
+
+  /** mintOnce collapses concurrent mint calls into a single in-flight request. */
+  private mintOnce(): Promise<string> {
+    return (this.pending ??= this.mint().finally(() => { this.pending = undefined; }));
   }
 
   private async mint(): Promise<string> {

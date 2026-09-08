@@ -14,4 +14,8 @@ describe("loadConfig", () => {
   it("treats an empty FMRL_API_KEY as absent", () => {
     expect(loadConfig({ FMRL_API_KEY: "  " }).apiKey).toBeUndefined();
   });
+  it("rejects a FMRL_API_URL with no scheme or a non-http(s) scheme", () => {
+    expect(() => loadConfig({ FMRL_API_URL: "fmrl.site" })).toThrow(/FMRL_API_URL must be an http\(s\) URL/);
+    expect(() => loadConfig({ FMRL_API_URL: "ftp://x" })).toThrow(/FMRL_API_URL must be an http\(s\) URL/);
+  });
 });

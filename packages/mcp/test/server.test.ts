@@ -1,5 +1,5 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, unlink, writeFile } from "node:fs/promises";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -79,8 +79,7 @@ describe("tools", () => {
     expect(got.structuredContent).toMatchObject({ id, status: "live", pinned: false });
     const del = await call("fmrl_delete", { id });
     expect(del.isError).toBeFalsy();
-    // The delete text uses the configured base URL (FMRL_API_URL), which in tests is the fake's address.
-    expect(text(del)).toContain(`Removed ${fake.baseUrl}/${id}`);
+    expect(text(del)).toContain(`Removed page ${id}. It answers 410 from now on.`);
     const again = await call("fmrl_get", { id });
     expect(again.isError).toBe(true);
     expect(text(again)).toBe("That page was removed.");
@@ -98,7 +97,7 @@ describe("tools", () => {
     fake.quota = 0;
     const r = await call("fmrl_publish", { content: "x" });
     expect(r.isError).toBe(true);
-    expect(text(r)).toBe("This key has used its free publishes for the month; it resets at 2026-10-01T00:00:00Z. Resets at 2026-10-01T00:00:00Z.");
+    expect(text(r)).toBe("This key has used its free publishes for the month; it resets at 2026-10-01T00:00:00Z.");
     expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(1);
   });
   it("a 422 is a tool error with the API's message", async () => {
@@ -112,5 +111,63 @@ describe("tools", () => {
     const r = await call("fmrl_whoami");
     expect(r.isError).toBeFalsy();
     expect(fake.requests.filter((q) => q.path === "/api/v1/keys")).toHaveLength(2);
+  });
+  it("a 429 on mint reports the retry time in minutes", async () => {
+    fake.mintLimit = 0;
+    const r = await call("fmrl_whoami");
+    expect(r.isError).toBe(true);
+    expect(text(r)).toMatch(/Try again in 60 minutes\.$/);
+  });
+  it("fmrl_whoami reports a network error when the API is unreachable", async () => {
+    const badDir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const badApi = new FmrlApi("http://127.0.0.1:9");
+    const badKeys = new KeyStore({ api: badApi, baseUrl: "http://127.0.0.1:9", file: path.join(badDir, "credentials.json") });
+    const badServer = createServer({ api: badApi, keys: badKeys });
+    const [ct2, st2] = InMemoryTransport.createLinkedPair();
+    await badServer.connect(st2);
+    const badClient = new Client({ name: "test2", version: "0" });
+    await badClient.connect(ct2);
+    try {
+      const r = (await badClient.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/^Couldn't reach/);
+    } finally {
+      await badClient.close();
+      await badServer.close();
+    }
+  });
+  it("fmrl_publish_file expands a leading ~", async () => {
+    if (process.platform === "win32") return;
+    const name = `.fmrl-mcp-test-${Date.now()}.md`;
+    const abs = path.join(os.homedir(), name);
+    await writeFile(abs, "# Home file");
+    try {
+      const r = await call("fmrl_publish_file", { path: `~/${name}` });
+      expect(r.isError).toBeFalsy();
+      expect(fake.requests.at(-1)?.body).toEqual({ content: "# Home file", format: "md" });
+    } finally {
+      await unlink(abs);
+    }
+  });
+  it("fmrl_publish_file rejects a non-UTF-8 file without publishing", async () => {
+    const bad = path.join(dir, "bad.md");
+    await writeFile(bad, Buffer.from([0xff, 0xfe, 0xfd, 0xfc]));
+    const r = await call("fmrl_publish_file", { path: bad });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toBe("That file isn't UTF-8 text.");
+    expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(0);
+  });
+  it("fmrl_publish reports the server's 413 for oversized content", async () => {
+    const r = await call("fmrl_publish", { content: "a".repeat(2 * 1024 * 1024 + 1) });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toBe("That's bigger than the 2 MiB limit.");
+  });
+  it("fmrl_get renders a pinned page as kept forever with its CID", async () => {
+    const pub = await call("fmrl_publish", { content: "x", title: "PINNED" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const got = await call("fmrl_get", { id });
+    expect(got.isError).toBeFalsy();
+    expect(text(got)).toContain("kept forever (bafytest)");
+    expect(got.structuredContent).toMatchObject({ pinned: true, expires_at: null, cid: "bafytest" });
   });
 });

@@ -1,0 +1,11 @@
+{
+  "name": "fmrl-plugin",
+  "owner": { "name": "Too Great LLC", "url": "https://fmrl.site" },
+  "plugins": [
+    {
+      "name": "fmrl",
+      "source": "./plugins/fmrl",
+      "description": "Share anything your AI made: publish a page to fmrl.site and get a link."
+    }
+  ]
+}

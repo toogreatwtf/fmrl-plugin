@@ -33,21 +33,38 @@ export function toHTML(markdown: string): string {
 }
 
 /**
+ * codePointToChar bounds a parsed numeric character reference before handing
+ * it to String.fromCodePoint, which throws RangeError for anything outside
+ * 0..0x10FFFF (and for lone surrogates, which are unpaired code points, not
+ * valid characters). Marked's escape() does not re-escape a "&" that already
+ * looks like an entity, so untrusted Markdown can carry an out-of-range
+ * reference like "&#99999999;" straight through toHTML into firstHeading.
+ * Out-of-range or malformed values become U+FFFD, the standard replacement
+ * character, instead of throwing.
+ */
+function codePointToChar(n: number): string {
+  if (Number.isNaN(n) || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) {
+    return "�";
+  }
+  return String.fromCodePoint(n);
+}
+
+/**
  * decodeEntities reverses the handful of named entities marked ever emits in
- * escaped text (amp, lt, gt, quot, #39), plus numeric &#NNN;/&#xHH; forms.
- * This is the same job static/fmrl.js does with a scratch <textarea> (a DOM
- * API Node doesn't have) so that wrapDocument's own escapeHTML is the only
- * escaping applied to the title. &amp; is decoded last so "&amp;lt;" becomes
- * "&lt;", not "<" — the same single-pass semantics the textarea gives.
+ * escaped text (amp, lt, gt, quot), plus numeric &#NNN;/&#xHH; forms (&#39;
+ * included — the decimal branch already handles it). This is the same job
+ * static/fmrl.js does with a scratch <textarea> (a DOM API Node doesn't
+ * have) so that wrapDocument's own escapeHTML is the only escaping applied
+ * to the title. &amp; is decoded last so "&amp;lt;" becomes "&lt;", not "<"
+ * — the same single-pass semantics the textarea gives.
  */
 function decodeEntities(s: string): string {
   return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => codePointToChar(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => codePointToChar(parseInt(dec, 10)))
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
     .replace(/&amp;/g, "&");
 }
 

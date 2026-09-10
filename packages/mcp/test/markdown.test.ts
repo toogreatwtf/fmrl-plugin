@@ -32,6 +32,14 @@ describe("markdown", () => {
   it("firstHeading decodes marked's escaped entities", () => {
     expect(firstHeading('<h1>Tom &amp; Jerry &#39;s &lt;b&gt;</h1>')).toBe("Tom & Jerry 's <b>");
   });
+  it("firstHeading bounds out-of-range numeric references instead of throwing", () => {
+    expect(() =>
+      firstHeading('<h1>a &#99999999; b &#xFFFFFFFF; c &#55296; d &#x41;</h1>')
+    ).not.toThrow();
+    expect(firstHeading('<h1>a &#99999999; b &#xFFFFFFFF; c &#55296; d &#x41;</h1>')).toBe(
+      "a � b � c � d A"
+    );
+  });
   it("title survives toHTML -> firstHeading -> wrapDocument with only one layer of escaping", () => {
     const body = toHTML('# Tom & Jerry "quoted" <3');
     const doc = wrapDocument(body, firstHeading(body));

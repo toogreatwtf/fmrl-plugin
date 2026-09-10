@@ -29,4 +29,16 @@ describe("markdown", () => {
     expect(firstHeading("<p>a</p><h2>Two <em>words</em></h2>")).toBe("Two words");
     expect(firstHeading("<p>none</p>")).toBe("");
   });
+  it("firstHeading decodes marked's escaped entities", () => {
+    expect(firstHeading('<h1>Tom &amp; Jerry &#39;s &lt;b&gt;</h1>')).toBe("Tom & Jerry 's <b>");
+  });
+  it("title survives toHTML -> firstHeading -> wrapDocument with only one layer of escaping", () => {
+    const body = toHTML('# Tom & Jerry "quoted" <3');
+    const doc = wrapDocument(body, firstHeading(body));
+    expect(doc).toContain('<title>Tom &amp; Jerry &quot;quoted&quot; &lt;3</title>');
+    const titleCount = (doc.match(/<title>Tom &amp; Jerry &quot;quoted&quot; &lt;3<\/title>/g) || []).length;
+    expect(titleCount).toBe(1);
+    expect(doc).not.toContain("&amp;amp;");
+    expect(doc).not.toContain("&amp;quot;");
+  });
 });

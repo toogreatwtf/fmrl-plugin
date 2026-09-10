@@ -32,10 +32,29 @@ export function toHTML(markdown: string): string {
   return marked.parse(markdown, { gfm: true, async: false }) as string;
 }
 
-/** firstHeading is the text of the first h1..h6 in an HTML fragment, tags stripped, or "". */
+/**
+ * decodeEntities reverses the handful of named entities marked ever emits in
+ * escaped text (amp, lt, gt, quot, #39), plus numeric &#NNN;/&#xHH; forms.
+ * This is the same job static/fmrl.js does with a scratch <textarea> (a DOM
+ * API Node doesn't have) so that wrapDocument's own escapeHTML is the only
+ * escaping applied to the title. &amp; is decoded last so "&amp;lt;" becomes
+ * "&lt;", not "<" — the same single-pass semantics the textarea gives.
+ */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** firstHeading is the text of the first h1..h6 in an HTML fragment, tags stripped, entities decoded, or "". */
 export function firstHeading(html: string): string {
   const m = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(html);
-  return m ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+  return m ? decodeEntities(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()) : "";
 }
 
 /** wrapDocument is render.WrapDocument: a complete document with the Markdown stylesheet inlined. */

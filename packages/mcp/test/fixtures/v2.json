@@ -1,0 +1,7 @@
+{
+  "plaintext": "<!DOCTYPE html><html><head><title>Interop</title></head><body><h1>fmrl interop</h1></body></html>",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "passphrase": "correct horse battery staple",
+  "go": {"none": "MARKYENC{\"v\":2,\"alg\":\"aes-256-gcm\",\"kdf\":\"none\",\"salt\":\"\",\"nonce\":\"sq5u7G3PoaZ1yRcB\",\"data\":\"qXTy7K1W6VmttAkkyPbEjuzufvq7vxf+hXC0YWvhauNdvSCnLYsvQkDbiw7zBosm1+3wq4yHqRUT7UbcLOXm+LdK0X/2x51r6tL0jYXp0OgyddMyuLNXYNj3RPCZa7T0BPUL4T9Shzduh8xjEDFYZcE=\"}", "pbkdf2": "MARKYENC{\"v\":2,\"alg\":\"aes-256-gcm\",\"kdf\":\"pbkdf2\",\"salt\":\"sLfrWEqE7vJGQJcTgIgq4g==\",\"nonce\":\"bVGHc4onzQsA9DYT\",\"data\":\"+0C4WwHX5ak/Oedt7QthNRU5Gtuh0C7lasjRVddXL+6oLz2pjSJVadOKBHgod4pjsfBXbV2/0TVVp1oiQqtlshp/7L3yuFHhDlMLnvrNd0a1ee3IfX/SvW7d4VWPiWvtYwaq9xjVS9eSZDXZ5b1BnAM=\"}"},
+  "js": {"none": "", "pbkdf2": ""}
+}

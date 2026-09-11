@@ -51,21 +51,27 @@ function codePointToChar(n: number): string {
 
 /**
  * decodeEntities reverses the handful of named entities marked ever emits in
- * escaped text (amp, lt, gt, quot), plus numeric &#NNN;/&#xHH; forms (&#39;
- * included — the decimal branch already handles it). This is the same job
- * static/fmrl.js does with a scratch <textarea> (a DOM API Node doesn't
- * have) so that wrapDocument's own escapeHTML is the only escaping applied
- * to the title. &amp; is decoded last so "&amp;lt;" becomes "&lt;", not "<"
- * — the same single-pass semantics the textarea gives.
+ * escaped text (amp, lt, gt, quot), plus numeric &#NNN;/&#xHH; forms, in a
+ * single pass. This is the same job static/fmrl.js does with a scratch
+ * <textarea> (a DOM API Node doesn't have) so that wrapDocument's own
+ * escapeHTML is the only escaping applied to the title. A single pass is
+ * what a textarea does too: "&amp;lt;" decodes to "&lt;", not "<", because
+ * the "lt;" left behind by decoding "&amp;" is never looked at again.
  */
 function decodeEntities(s: string): string {
-  return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => codePointToChar(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec: string) => codePointToChar(parseInt(dec, 10)))
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&");
+  return s.replace(/&(#x[0-9a-f]+|#\d+|lt|gt|quot|amp|#39);/gi, (_, body: string) => {
+    if (body[0] === "#") {
+      const n = body[1]?.toLowerCase() === "x" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+      return codePointToChar(n);
+    }
+    switch (body.toLowerCase()) {
+      case "lt": return "<";
+      case "gt": return ">";
+      case "quot": return '"';
+      case "amp": return "&";
+      default: return `&${body};`;
+    }
+  });
 }
 
 /** firstHeading is the text of the first h1..h6 in an HTML fragment, tags stripped, entities decoded, or "". */

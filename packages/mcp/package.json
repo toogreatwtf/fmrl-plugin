@@ -18,7 +18,7 @@
   "keywords": ["mcp", "fmrl", "share", "publish"],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "marked": "^15.0.12",
+    "marked": "15.0.12",
     "zod": "^3.25.0"
   },
   "devDependencies": {

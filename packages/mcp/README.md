@@ -44,7 +44,7 @@ Any MCP client gets five tools:
 
 ## Keys and limits
 
-The server mints a key on first use and stores it in `~/.config/fmrl/credentials.json` (`$XDG_CONFIG_HOME/fmrl/credentials.json`; `%APPDATA%\fmrl\credentials.json` on Windows), one key per API base URL, file mode 0600. `FMRL_API_KEY` overrides the file. 25 publishes a month per key, 5 keys a day per network, 2 MiB per page. Content is subject to fmrl.site's [acceptable use policy](https://fmrl.site/aup). Full API reference: [marky.md/api](https://marky.md/api).
+The server mints a key on first use and stores it in `~/.config/fmrl/credentials.json` (`$XDG_CONFIG_HOME/fmrl/credentials.json`; `%APPDATA%\fmrl\credentials.json` on Windows), one key per API base URL, file mode 0600. `FMRL_API_KEY` overrides the file. 25 publishes a month per key, 5 keys a day per network, 2 MiB per page. Content is subject to fmrl.site's [acceptable use policy](https://fmrl.site/aup). Full API reference: [fmrl.site/api](https://fmrl.site/api).
 
 ## License
 

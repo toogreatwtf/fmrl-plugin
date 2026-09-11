@@ -144,7 +144,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         content: z.string().min(1).describe("The HTML or Markdown to publish (2 MiB at most)."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it."),
-        title: z.string().optional().describe("Page title; the first heading is used when left out. For a private page the server stores no title, but the encrypted document's own title uses it (falling back to the first heading)."),
+        title: z.string().optional().describe("Page title; the first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
         private: z.boolean().optional().describe("Encrypt the page here before upload; the returned link carries the key after #p=. The page has no title or preview on fmrl.site and cannot be recovered without the link."),
         passphrase: z.string().min(1).optional().describe("Encrypt with this passphrase instead of a link key (implies private). Readers type it on the page; the link alone shows nothing."),
       },
@@ -160,7 +160,7 @@ export function createServer(deps: ServerDeps): McpServer {
       description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file (2 MiB at most) as a page on fmrl.site and get its link. Pass private: true to encrypt it here first. Only call this when the user asked to share the file.",
       inputSchema: {
         path: z.string().min(1).describe("Absolute path to the file (a leading ~ is expanded)."),
-        title: z.string().optional().describe("Page title; the file's first heading is used when left out. For a private page the server stores no title, but the encrypted document's own title uses it (falling back to the first heading)."),
+        title: z.string().optional().describe("Page title; the file's first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
         private: z.boolean().optional().describe("Encrypt the page here before upload; the returned link carries the key after #p=. The page has no title or preview on fmrl.site and cannot be recovered without the link."),
         passphrase: z.string().min(1).optional().describe("Encrypt with this passphrase instead of a link key (implies private). Readers type it on the page; the link alone shows nothing."),
       },

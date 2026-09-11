@@ -91,7 +91,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (Buffer.byteLength(b.content) > 2097152) return fail(res, 413, "too_large", "That's bigger than the 2 MiB limit.");
       if (b.content.includes("PHISH")) return fail(res, 422, "rejected", "That can't be shared: it looks like phishing: a well-known brand next to a sign-in prompt.");
       const id = newId();
-      const format = b.format ?? (b.content.trimStart().startsWith("<") ? "html" : "md");
+      const format = b.format ?? (b.encrypted === true ? "html" : (b.content.trimStart().startsWith("<") ? "html" : "md"));
       api.docs.set(id, { id, owner: key, format, size: Buffer.byteLength(b.content), title: b.title });
       api.publishes.set(key, used + 1);
       return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/manage/${id}#k=tok${id}`, expires_at: "2026-09-15T12:00:00Z", status: "live" });

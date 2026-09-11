@@ -3,5 +3,5 @@
   "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
   "passphrase": "correct horse battery staple",
   "go": {"none": "MARKYENC{\"v\":2,\"alg\":\"aes-256-gcm\",\"kdf\":\"none\",\"salt\":\"\",\"nonce\":\"sq5u7G3PoaZ1yRcB\",\"data\":\"qXTy7K1W6VmttAkkyPbEjuzufvq7vxf+hXC0YWvhauNdvSCnLYsvQkDbiw7zBosm1+3wq4yHqRUT7UbcLOXm+LdK0X/2x51r6tL0jYXp0OgyddMyuLNXYNj3RPCZa7T0BPUL4T9Shzduh8xjEDFYZcE=\"}", "pbkdf2": "MARKYENC{\"v\":2,\"alg\":\"aes-256-gcm\",\"kdf\":\"pbkdf2\",\"salt\":\"sLfrWEqE7vJGQJcTgIgq4g==\",\"nonce\":\"bVGHc4onzQsA9DYT\",\"data\":\"+0C4WwHX5ak/Oedt7QthNRU5Gtuh0C7lasjRVddXL+6oLz2pjSJVadOKBHgod4pjsfBXbV2/0TVVp1oiQqtlshp/7L3yuFHhDlMLnvrNd0a1ee3IfX/SvW7d4VWPiWvtYwaq9xjVS9eSZDXZ5b1BnAM=\"}"},
-  "js": {"none": "", "pbkdf2": ""}
+  "js": {"none": "MARKYENC{\"v\":2,\"alg\":\"aes-256-gcm\",\"kdf\":\"none\",\"salt\":\"\",\"nonce\":\"BBKCiObC9R6HeoKX\",\"data\":\"B20j1mSBI4lxFMvxbMRJl1nCclkL7za8Zh6pJchGdEDIwlhQ5lJYMJHD9bVL05CpAxgyUcr71BdbaktdAMtmh7pTVSqmKF1HO43URXWMJqvU1Wr245pHF+/5FJbpx63sm1bbmtjQDAftGU5YDcH4Cz4=\"}", "pbkdf2": "MARKYENC{\"v\":2,\"alg\":\"aes-256-gcm\",\"kdf\":\"pbkdf2\",\"salt\":\"ZZBoFgFFv28uJDSJ0Y+crg==\",\"nonce\":\"L/1v1rOgSFYVRCec\",\"data\":\"gUF2N8nsWOTXYy/r65j/mams1DvMKqrc2NObi5n3F/zC+TKG2qaVG2t4svLWqa8T4mHMM4R5x9Yv17MyBDfa9yRNHVQkS1D+soi4/Y3NllHEzRDG/4d9PacUe3ZC8v1nSfVKz2fzWWd7X1DNRKGZuAQ=\"}"}
 }

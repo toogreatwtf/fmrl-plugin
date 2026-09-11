@@ -32,4 +32,9 @@ describe("seal", () => {
   it("refuses an empty plaintext", async () => {
     await expect(seal("")).rejects.toThrow();
   });
+  it("the fixture's js envelopes open (what the Go test checks too)", async () => {
+    const fx = await fixture();
+    expect(await openEnvelope(fx.js.none, { key: fx.key })).toBe(fx.plaintext);
+    expect(await openEnvelope(fx.js.pbkdf2, { passphrase: fx.passphrase })).toBe(fx.plaintext);
+  });
 });

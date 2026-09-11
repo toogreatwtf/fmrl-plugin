@@ -1,21 +1,38 @@
 {
   "name": "fmrl-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for fmrl.site: publish a page from any agent and get a link.",
   "license": "MIT",
   "type": "module",
-  "bin": { "fmrl-mcp": "dist/index.js" },
-  "files": ["dist", "README.md", "LICENSE"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "fmrl-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepublishOnly": "npm run build && npm test"
   },
-  "repository": { "type": "git", "url": "https://github.com/toogreatwtf/fmrl-plugin", "directory": "packages/mcp" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toogreatwtf/fmrl-plugin",
+    "directory": "packages/mcp"
+  },
   "homepage": "https://fmrl.site/install",
-  "keywords": ["mcp", "fmrl", "share", "publish"],
+  "keywords": [
+    "mcp",
+    "fmrl",
+    "share",
+    "publish"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.25.0"

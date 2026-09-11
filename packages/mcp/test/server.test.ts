@@ -246,4 +246,12 @@ describe("tools", () => {
     await call("fmrl_publish", { content: "# Plain" });
     expect(fake.requests[1].body).toEqual({ content: "# Plain" });
   });
+  it("fmrl_publish private: content that seals over the 2 MiB cap is refused before sending, even though the plaintext is under it", async () => {
+    const html = `<h1>x</h1>${"a".repeat(1_677_700)}`;
+    expect(Buffer.byteLength(html, "utf8")).toBeLessThan(MAX_BYTES);
+    const r = await call("fmrl_publish", { content: html, private: true });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("over the 2 MiB limit");
+    expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
+  });
 });

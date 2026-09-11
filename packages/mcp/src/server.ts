@@ -59,6 +59,10 @@ async function preparePrivate(content: string, format: "html" | "md" | undefined
     html = wrapDocument(body, firstHeading(body));
   }
   const sealed = await seal(html, passphrase || undefined);
+  const envBytes = Buffer.byteLength(sealed.envelope, "utf8");
+  if (envBytes > MAX_BYTES) {
+    throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits.`);
+  }
   return { body: { content: sealed.envelope, format: "html", encrypted: true }, key: sealed.key };
 }
 
@@ -133,7 +137,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         content: z.string().min(1).describe("The HTML or Markdown to publish (2 MiB at most)."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it."),
-        title: z.string().optional().describe("Page title; the first heading is used when left out."),
+        title: z.string().optional().describe("Page title; the first heading is used when left out. Ignored for a private page: the server stores no title, and the encrypted document's own title is its first heading."),
         private: z.boolean().optional().describe("Encrypt the page here before upload; the returned link carries the key after #p=. The page has no title or preview on fmrl.site and cannot be recovered without the link."),
         passphrase: z.string().min(1).optional().describe("Encrypt with this passphrase instead of a link key (implies private). Readers type it on the page; the link alone shows nothing."),
       },
@@ -149,7 +153,7 @@ export function createServer(deps: ServerDeps): McpServer {
       description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file (2 MiB at most) as a page on fmrl.site and get its link. Pass private: true to encrypt it here first. Only call this when the user asked to share the file.",
       inputSchema: {
         path: z.string().min(1).describe("Absolute path to the file (a leading ~ is expanded)."),
-        title: z.string().optional().describe("Page title; the file's first heading is used when left out."),
+        title: z.string().optional().describe("Page title; the file's first heading is used when left out. Ignored for a private page: the server stores no title, and the encrypted document's own title is its first heading."),
         private: z.boolean().optional().describe("Encrypt the page here before upload; the returned link carries the key after #p=. The page has no title or preview on fmrl.site and cannot be recovered without the link."),
         passphrase: z.string().min(1).optional().describe("Encrypt with this passphrase instead of a link key (implies private). Readers type it on the page; the link alone shows nothing."),
       },

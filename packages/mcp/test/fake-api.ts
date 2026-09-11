@@ -81,8 +81,10 @@ export async function startFakeApi(): Promise<FakeApi> {
       const key = auth();
       if (!key) return unauthorized();
       if (raw.length > 3 * 2097152) return fail(res, 413, "too_large", "That's bigger than the 2 MiB limit.");
-      const b = (body ?? {}) as { format?: string; content?: string; title?: string };
+      const b = (body ?? {}) as { format?: string; content?: string; title?: string; encrypted?: boolean };
       if (b.format !== undefined && b.format !== "html" && b.format !== "md") return fail(res, 400, "bad_request", "format must be html or md, or left out to detect it.");
+      if (b.encrypted === true && b.format === "md") return fail(res, 400, "bad_request", "An encrypted page is HTML.");
+      if (b.encrypted === true && !String(b.content).startsWith("MARKYENC")) return fail(res, 422, "rejected", "That isn't a valid encrypted page: content must be a MARKYENC v2 envelope.");
       if (!b.content || b.content.trim() === "") return fail(res, 400, "bad_request", "content is required.");
       const used = api.publishes.get(key) ?? 0;
       if (used >= api.quota) return fail(res, 402, "quota_exhausted", "This key has used its free publishes for the month; it resets at 2026-10-01T00:00:00Z.", { resets_at: "2026-10-01T00:00:00Z" });

@@ -1,4 +1,5 @@
 import { open as fsOpen, stat as fsStat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -9,6 +10,10 @@ import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId } from "./ids.js";
 import type { KeyStore } from "./keys.js";
 import { firstHeading, looksLikeHTML, toHTML, wrapDocument } from "./markdown.js";
+
+// The version the server reports to MCP clients is the package's, read at
+// runtime, so a release bump in package.json cannot leave this behind.
+const { version: VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export interface ServerDeps {
   api: FmrlApi;
@@ -106,7 +111,7 @@ export function createServer(deps: ServerDeps): McpServer {
   const { api, keys } = deps;
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
-  const server = new McpServer({ name: "fmrl", version: "0.1.0" });
+  const server = new McpServer({ name: "fmrl", version: VERSION });
 
   const run = async <T extends Record<string, unknown>>(fn: (key: string) => Promise<T>, render: (v: T) => string): Promise<ToolResult> => {
     try {

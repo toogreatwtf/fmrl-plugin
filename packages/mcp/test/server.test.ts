@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FmrlApi } from "../src/api.js";
+import { openEnvelope } from "../src/crypto.js";
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
 import { createServer, type ServerDeps } from "../src/server.js";
@@ -199,5 +200,87 @@ describe("tools", () => {
     expect(got.isError).toBeFalsy();
     expect(text(got)).toContain("kept forever (bafytest)");
     expect(got.structuredContent).toMatchObject({ pinned: true, expires_at: null, cid: "bafytest" });
+  });
+  it("fmrl_publish private: renders Markdown, sends an envelope with encrypted true, returns the key in the fragment", async () => {
+    const r = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true });
+    expect(r.isError).toBeFalsy();
+    const body = fake.requests[1].body as { content: string; encrypted?: boolean; format?: string; title?: string };
+    expect(body.encrypted).toBe(true);
+    expect(body.format).toBe("html");
+    expect(body.title).toBeUndefined();
+    expect(body.content.startsWith('MARKYENC{"v":2,"alg":"aes-256-gcm","kdf":"none"')).toBe(true);
+    const url = (r.structuredContent as { url: string }).url;
+    const m = /#p=([A-Za-z0-9_-]{43})$/.exec(url);
+    expect(m).not.toBeNull();
+    const html = await openEnvelope(body.content, { key: m![1] });
+    expect(html).toContain("<h1>Quiet</h1>");
+    expect(html).toContain("<title>Quiet</title>");
+    const t = text(r);
+    expect(t).toContain(`Published: ${url}`);
+    expect(t).toContain("private");
+    expect(t).toContain("This page lasts seven days; a private page cannot be kept.");
+    expect(t).not.toContain("keeps it");
+    expect((r.structuredContent as { manage_url: string }).manage_url).not.toContain("#p=");
+
+    const titled = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true, title: "Custom Title" });
+    expect(titled.isError).toBeFalsy();
+    const titledBody = fake.requests.at(-1)?.body as { content: string; title?: string };
+    expect(titledBody.title).toBeUndefined();
+    const titledKey = /#p=([A-Za-z0-9_-]{43})$/.exec((titled.structuredContent as { url: string }).url)![1];
+    const titledHtml = await openEnvelope(titledBody.content, { key: titledKey });
+    expect(titledHtml).toContain("<title>Custom Title</title>");
+  });
+  it("fmrl_publish passphrase: pbkdf2 envelope, no fragment", async () => {
+    const r = await call("fmrl_publish", { content: "<h1>x</h1>", passphrase: "open sesame" });
+    expect(r.isError).toBeFalsy();
+    const body = fake.requests[1].body as { content: string; encrypted?: boolean };
+    expect(body.encrypted).toBe(true);
+    expect(body.content).toContain('"kdf":"pbkdf2"');
+    const url = (r.structuredContent as { url: string }).url;
+    expect(url).not.toContain("#");
+    expect(await openEnvelope(body.content, { passphrase: "open sesame" })).toBe("<h1>x</h1>");
+    const t = text(r);
+    expect(t).toContain("passphrase");
+    expect(t).toContain("This page lasts seven days; a private page cannot be kept.");
+    expect(t).not.toContain("keeps it");
+  });
+  it("fmrl_publish_file private renders a .md file before sealing", async () => {
+    const md = path.join(dir, "notes.md");
+    await writeFile(md, "# Notes\n\n- one");
+    const r = await call("fmrl_publish_file", { path: md, private: true });
+    expect(r.isError).toBeFalsy();
+    const body = fake.requests[1].body as { content: string; encrypted?: boolean; format?: string };
+    expect(body.encrypted).toBe(true);
+    expect(body.format).toBe("html");
+    const key = /#p=([A-Za-z0-9_-]{43})$/.exec((r.structuredContent as { url: string }).url)![1];
+    expect(await openEnvelope(body.content, { key })).toContain("<li>one</li>");
+  });
+  it("a public publish sends neither encrypted nor a rendered body", async () => {
+    await call("fmrl_publish", { content: "# Plain" });
+    expect(fake.requests[1].body).toEqual({ content: "# Plain" });
+  });
+  it("fmrl_publish private: whitespace-only content is refused before sending", async () => {
+    const r = await call("fmrl_publish", { content: "  \n ", private: true });
+    expect(r.isError).toBe(true);
+    expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
+  });
+  it("fmrl_publish public: whitespace-only content is refused before sending", async () => {
+    const r = await call("fmrl_publish", { content: "  \n ", format: "md" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("Nothing to publish");
+    expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
+  });
+  it("fmrl_publish private html: whitespace-only content is refused rather than sealed as a blank page", async () => {
+    const r = await call("fmrl_publish", { content: " \t\n", format: "html", private: true });
+    expect(r.isError).toBe(true);
+    expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
+  });
+  it("fmrl_publish private: content that seals over the 2 MiB cap is refused before sending, even though the plaintext is under it", async () => {
+    const html = `<h1>x</h1>${"a".repeat(1_677_700)}`;
+    expect(Buffer.byteLength(html, "utf8")).toBeLessThan(MAX_BYTES);
+    const r = await call("fmrl_publish", { content: html, private: true });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("over the 2 MiB limit");
+    expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
   });
 });

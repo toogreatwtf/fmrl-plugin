@@ -1,5 +1,5 @@
 export interface MintResponse { key: string; prefix: string; created_at: string; quota: { publishes: number; period: string } }
-export interface PublishRequest { content: string; format?: "html" | "md"; title?: string }
+export interface PublishRequest { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean }
 export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string }
 export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string }
 export interface MeResponse { prefix: string; created_at: string; quota: { publishes: { used: number; limit: number; resets_at: string } } }
@@ -43,6 +43,7 @@ export class FmrlApi {
     const payload: Record<string, unknown> = { content: body.content };
     if (body.format !== undefined) payload.format = body.format;
     if (body.title !== undefined) payload.title = body.title;
+    if (body.encrypted) payload.encrypted = true;
     return this.call<PublishResponse>("POST", "/publish", key, payload);
   }
   get(key: string, id: string): Promise<DocResponse> {

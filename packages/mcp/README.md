@@ -1,6 +1,6 @@
 # fmrl
 
-Share anything your AI made. `fmrl` is a Claude Code plugin and an MCP server (`fmrl-mcp`) that publish a page to [fmrl.site](https://fmrl.site) and hand back a link. No account; the page lasts seven days unless someone keeps it from the page itself.
+Share anything your AI made. `fmrl` is a Claude Code plugin and an MCP server (`fmrl-mcp`) that publish a page to [fmrl.site](https://fmrl.site) and hand back a link. No account; the page lasts seven days unless someone keeps it from the page itself — a private page cannot be kept.
 
 ## Install
 
@@ -36,15 +36,15 @@ Any MCP client gets five tools:
 
 | Tool | Does |
 |---|---|
-| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title` → the page's URL, expiry and manage link |
-| `fmrl_publish_file` | `path` to a `.html`, `.htm`, `.md`, `.markdown`, `.mdx` or `.txt` file (2 MiB at most), optional `title` |
+| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`), optional `passphrase` (implies private; readers type it on the page instead) → the page's URL, expiry and manage link |
+| `fmrl_publish_file` | `path` to a `.html`, `.htm`, `.md`, `.markdown`, `.mdx` or `.txt` file (2 MiB at most), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`), optional `passphrase` (implies private; readers type it on the page instead) |
 | `fmrl_get` | an id or a viewer URL → status, format, size, expiry, whether it was kept |
 | `fmrl_delete` | an id or a viewer URL → removes a page this key published |
 | `fmrl_whoami` | the key's prefix and this month's quota |
 
 ## Keys and limits
 
-The server mints a key on first use and stores it in `~/.config/fmrl/credentials.json` (`$XDG_CONFIG_HOME/fmrl/credentials.json`; `%APPDATA%\fmrl\credentials.json` on Windows), one key per API base URL, file mode 0600. `FMRL_API_KEY` overrides the file. 25 publishes a month per key, 5 keys a day per network, 2 MiB per page. Content is subject to fmrl.site's [acceptable use policy](https://fmrl.site/aup). Full API reference: [fmrl.site/api](https://fmrl.site/api).
+The server mints a key on first use and stores it in `~/.config/fmrl/credentials.json` (`$XDG_CONFIG_HOME/fmrl/credentials.json`; `%APPDATA%\fmrl\credentials.json` on Windows), one key per API base URL, file mode 0600. `FMRL_API_KEY` overrides the file. 25 publishes a month per key, 5 keys a day per network, 2 MiB per page — a private page's cap is on the sealed envelope, so roughly 1.4 MB of HTML fits. Content is subject to fmrl.site's [acceptable use policy](https://fmrl.site/aup). Full API reference: [fmrl.site/api](https://fmrl.site/api).
 
 ## License
 

@@ -53,6 +53,8 @@ cd packages/mcp && npm install && npm test && npm run build
 claude --plugin-dir ./plugins/fmrl    # from the repo root; npm link in packages/mcp first so npx finds the local build
 ```
 
+Pull requests open as drafts and are marked ready when `npm test` in `packages/mcp` is green. CodeRabbit runs on a metered allowance and `.coderabbit.yaml` skips drafts and reviews only when a PR opens or is marked ready, never on each push, so one review is spent per PR (none for `docs:` titles) and one more on `@coderabbitai review` after fixes.
+
 ## License
 
 MIT, Too Great LLC.

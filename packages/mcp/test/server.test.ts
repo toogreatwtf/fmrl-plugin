@@ -264,6 +264,17 @@ describe("tools", () => {
     expect(r.isError).toBe(true);
     expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
   });
+  it("fmrl_publish public: whitespace-only content is refused before sending", async () => {
+    const r = await call("fmrl_publish", { content: "  \n ", format: "md" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("Nothing to publish");
+    expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
+  });
+  it("fmrl_publish private html: whitespace-only content is refused rather than sealed as a blank page", async () => {
+    const r = await call("fmrl_publish", { content: " \t\n", format: "html", private: true });
+    expect(r.isError).toBe(true);
+    expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
+  });
   it("fmrl_publish private: content that seals over the 2 MiB cap is refused before sending, even though the plaintext is under it", async () => {
     const html = `<h1>x</h1>${"a".repeat(1_677_700)}`;
     expect(Buffer.byteLength(html, "utf8")).toBeLessThan(MAX_BYTES);

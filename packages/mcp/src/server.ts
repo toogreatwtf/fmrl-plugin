@@ -126,6 +126,12 @@ export function createServer(deps: ServerDeps): McpServer {
   const publishOrSeal = async (
     content: string, format: "html" | "md" | undefined, title: string | undefined, priv: boolean | undefined, passphrase: string | undefined,
   ): Promise<ToolResult> => {
+    // Refuse blank content before any request, on every path: the server
+    // turns empty content away too, but a local message is clearer than a
+    // 400, and a private page would otherwise seal and publish a blank page.
+    if (content.trim() === "") {
+      return fail("Nothing to publish: the content is empty.");
+    }
     if (!priv && !passphrase) {
       return run<PublishResponse & Record<string, unknown>>((k) => api.publish(k, { content, format, title }) as Promise<PublishResponse & Record<string, unknown>>, publishText);
     }

@@ -45,13 +45,17 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+export const LINK_HINT = (url: string) => `See your pages on fmrl.site: open ${url} once in your browser (it works for an hour, and once).`;
+
 function publishTextLines(p: PublishResponse, expiryLine: string): string[] {
-  return [
+  const lines = [
     `Published: ${p.url}`,
     `Expires ${p.expires_at}`,
     expiryLine,
     `Manage link (removes the page; give it only to someone who should be able to): ${p.manage_url}`,
   ];
+  if (p.link_url) lines.push(LINK_HINT(p.link_url));
+  return lines;
 }
 function publishText(p: PublishResponse): string {
   return publishTextLines(p, SEVEN_DAYS).join("\n");
@@ -91,11 +95,15 @@ function docText(d: DocResponse): string {
 }
 function meText(m: MeResponse): string {
   const q = m.quota.publishes;
-  return [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, SEVEN_DAYS].join("\n");
+  const linked = m.linked_at ? `Linked to a browser on ${m.linked_at}.` : "Not linked to any browser yet.";
+  const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, linked];
+  if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).`);
+  return [...lines, SEVEN_DAYS].join("\n");
 }
 
 const publishOutput = {
   id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string(), status: z.string(),
+  link_url: z.string().optional(),
 };
 const docOutput = {
   id: z.string(), url: z.string(), status: z.string(), format: z.string(), size: z.number(),
@@ -104,6 +112,7 @@ const docOutput = {
 const meOutput = {
   prefix: z.string(), created_at: z.string(),
   quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
+  linked_at: z.string().nullable().optional(), link_url: z.string().optional(),
 };
 
 /** createServer registers the five contract tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
@@ -245,7 +254,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_whoami",
     {
       title: "This fmrl.site key",
-      description: "The key's prefix and how many of this month's free publishes it has used.",
+      description: "The key's prefix, how many of this month's free publishes it has used, whether a browser is linked to it, and a fresh link to link one.",
       inputSchema: {},
       outputSchema: meOutput,
     },

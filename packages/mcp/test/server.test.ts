@@ -45,6 +45,7 @@ describe("tools", () => {
       "Expires 2026-09-15T12:00:00Z",
       "This page lasts seven days unless someone keeps it on the page itself.",
       `Manage link (removes the page; give it only to someone who should be able to): https://fmrl.test/manage/${id}#k=tok${id}`,
+      `See your pages on fmrl.site: open https://fmrl.test/link/code${id} once in your browser (it works for an hour, and once).`,
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
     expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/publish"]);
@@ -123,6 +124,24 @@ describe("tools", () => {
     expect(r.isError).toBeFalsy();
     expect(text(r)).toMatch(/fmrl_\w{4}…: 0 of 25 publishes used this month, resets 2026-10-01T00:00:00Z/);
     expect(r.structuredContent).toMatchObject({ quota: { publishes: { used: 0, limit: 25 } } });
+  });
+  it("fmrl_publish says nothing about a link once the key is linked", async () => {
+    const first = await call("fmrl_publish", { content: "# a" });
+    fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
+    const r = await call("fmrl_publish", { content: "# b" });
+    expect(text(first)).toContain("See your pages on fmrl.site");
+    expect(text(r)).not.toContain("See your pages");
+    expect(r.structuredContent).not.toHaveProperty("link_url");
+  });
+  it("fmrl_whoami says whether a browser is linked and always offers a link", async () => {
+    const r = await call("fmrl_whoami");
+    expect(text(r)).toContain("Not linked to any browser yet.");
+    expect(text(r)).toContain("open https://fmrl.test/link/fresh (works for an hour, and once)");
+    expect(r.structuredContent).toMatchObject({ linked_at: null, link_url: "https://fmrl.test/link/fresh" });
+    fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
+    const again = await call("fmrl_whoami");
+    expect(text(again)).toContain("Linked to a browser on 2026-09-16T12:00:00Z.");
+    expect(again.structuredContent).toMatchObject({ linked_at: "2026-09-16T12:00:00Z" });
   });
   it("a 402 is a tool error with the reset time and is not retried", async () => {
     fake.quota = 0;

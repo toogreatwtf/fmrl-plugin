@@ -10,6 +10,8 @@ export interface FakeApi {
   docs: Map<string, FakeDoc>;
   requests: RequestLog[];
   publishes: Map<string, number>;
+  /** linked holds the keys a browser has been linked to: publish stops carrying link_url and me reports linked_at. */
+  linked: Set<string>;
   quota: number;
   mintLimit: number;
   close(): Promise<void>;
@@ -51,6 +53,7 @@ export async function startFakeApi(): Promise<FakeApi> {
     docs: new Map(),
     requests: [],
     publishes: new Map(),
+    linked: new Set(),
     quota: 25,
     mintLimit: 5,
     close: async () => {},
@@ -94,7 +97,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       const format = b.format ?? (b.encrypted === true ? "html" : (b.content.trimStart().startsWith("<") ? "html" : "md"));
       api.docs.set(id, { id, owner: key, format, size: Buffer.byteLength(b.content), title: b.title });
       api.publishes.set(key, used + 1);
-      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/manage/${id}#k=tok${id}`, expires_at: "2026-09-15T12:00:00Z", status: "live" });
+      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/manage/${id}#k=tok${id}`, expires_at: "2026-09-15T12:00:00Z", status: "live", link_url: api.linked.has(key) ? undefined : `https://fmrl.test/link/code${id}` });
     }
     const m = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)$/);
     if (m && (method === "GET" || method === "DELETE")) {
@@ -120,7 +123,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout
       const key = auth();
       if (!key) return unauthorized();
-      return json(res, 200, { prefix: key.slice(0, 9), created_at: "2026-09-08T12:00:00Z", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } } });
+      return json(res, 200, { prefix: key.slice(0, 9), created_at: "2026-09-08T12:00:00Z", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, link_url: "https://fmrl.test/link/fresh" });
     }
     if (url.pathname.startsWith("/api/v1/")) return fail(res, 404, "not_found", "No such API route.");
     res.statusCode = 404; res.end("not found");

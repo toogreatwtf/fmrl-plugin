@@ -1,8 +1,10 @@
 export interface MintResponse { key: string; prefix: string; created_at: string; quota: { publishes: number; period: string } }
 export interface PublishRequest { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean }
-export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string }
+/** link_url rides on a publish only until a browser has been linked to the key; a server that predates linking never sends it. */
+export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string; link_url?: string }
 export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string }
-export interface MeResponse { prefix: string; created_at: string; quota: { publishes: { used: number; limit: number; resets_at: string } } }
+/** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. */
+export interface MeResponse { prefix: string; created_at: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; link_url?: string }
 
 /** ApiError is any non-2xx answer: the contract's code and message, plus resets_at on a 402 and retryAfterSeconds on a 429. A network failure (no response at all) is status 0, code "network". */
 export class ApiError extends Error {

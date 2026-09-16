@@ -1,0 +1,39 @@
+# The test suite as a PR check. The MCP server's tests are the merge gate
+# (.coderabbit.yaml: mark ready when `npm test` in packages/mcp is green),
+# so run them where the merge button can see them, on the two Node lines
+# package.json's engines admit (>=20).
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mcp:
+    name: mcp (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    defaults:
+      run:
+        working-directory: packages/mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: packages/mcp/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

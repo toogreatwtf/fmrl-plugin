@@ -249,19 +249,10 @@ describe("tools", () => {
     const titledHtml = await openEnvelope(titledBody.content, { key: titledKey });
     expect(titledHtml).toContain("<title>Custom Title</title>");
   });
-  it("fmrl_publish passphrase: pbkdf2 envelope, no fragment", async () => {
+  it("fmrl_publish refuses a passphrase argument: there is no passphrase mode", async () => {
     const r = await call("fmrl_publish", { content: "<h1>x</h1>", passphrase: "open sesame" });
-    expect(r.isError).toBeFalsy();
-    const body = fake.requests[1].body as { content: string; encrypted?: boolean };
-    expect(body.encrypted).toBe(true);
-    expect(body.content).toContain('"kdf":"pbkdf2"');
-    const url = (r.structuredContent as { url: string }).url;
-    expect(url).not.toContain("#");
-    expect(await openEnvelope(body.content, { passphrase: "open sesame" })).toBe("<h1>x</h1>");
-    const t = text(r);
-    expect(t).toContain("passphrase");
-    expect(t).toContain("This page lasts seven days; a private page cannot be kept.");
-    expect(t).not.toContain("keeps it");
+    expect(r.isError).toBe(true);
+    expect(fake.requests).toHaveLength(0); // refused before the handler ran: no key mint, nothing published
   });
   it("fmrl_publish_file private renders a .md file before sealing", async () => {
     const md = path.join(dir, "notes.md");

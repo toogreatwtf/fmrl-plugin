@@ -86,8 +86,10 @@ export async function readCredentials(file: string, log?: (line: string) => void
   let parsed: Partial<CredentialsFile>;
   try {
     parsed = JSON.parse(raw) as Partial<CredentialsFile>;
-  } catch (e) {
-    return moveAside(file, (e as Error).message, log);
+  } catch {
+    // Not the parse error's own message: V8 quotes a fragment of the
+    // offending input in it, which could be part of a ring.
+    return moveAside(file, "not valid JSON", log);
   }
   if (parsed && typeof parsed === "object" && parsed.version === 1 && parsed.keys && typeof parsed.keys === "object") {
     const { rings, ...rest } = parsed;

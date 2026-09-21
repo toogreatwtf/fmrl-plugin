@@ -62,6 +62,21 @@ describe("read and write", () => {
     expect(joined).toContain(aside);
     expect(joined).not.toContain(ring);
   });
+  it("never quotes file content in the log or a thrown error on a JSON parse failure", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const ring = "R".repeat(43);
+    // The ring value is unquoted, so V8's JSON.parse fails and quotes a
+    // fragment of the offending input (including part of the ring) in its
+    // own error message — that fragment must never reach the log or a
+    // thrown error.
+    await writeFile(file, `{"version":1,"keys":{"https://fmrl.site":{"key":"fmrl_x","prefix":"fmrl_x","created_at":"t","ring":${ring}}}}`);
+    const logs: string[] = [];
+    await readCredentials(file, (line) => logs.push(line));
+    const joined = logs.join("\n");
+    expect(joined).toContain("(not valid JSON)");
+    expect(joined).not.toContain("RRRRRRRRRR");
+  });
   it("preserves an unknown top-level field across a read, write, read", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
     const file = path.join(dir, "credentials.json");

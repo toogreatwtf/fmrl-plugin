@@ -7,10 +7,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FmrlApi } from "../src/api.js";
 import { readCredentials, writeCredentials } from "../src/credentials.js";
-import { newRing, openEnvelope, openRecord } from "../src/crypto.js";
+import { newRing, openEnvelope, openRecord, sealRecord } from "../src/crypto.js";
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
-import { createServer, RING_ENV_LINE, RING_FILE_LINE, type ServerDeps } from "../src/server.js";
+import { createServer, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, type ServerDeps } from "../src/server.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string;
@@ -45,9 +45,9 @@ beforeEach(async () => {
 afterEach(async () => { await client.close(); await fake.close(); });
 
 describe("tools", () => {
-  it("lists exactly the five contract tools", async () => {
+  it("lists exactly the six tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["fmrl_delete", "fmrl_get", "fmrl_publish", "fmrl_publish_file", "fmrl_whoami"]);
+    expect(names).toEqual(["fmrl_delete", "fmrl_get", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_whoami"]);
   });
   it("fmrl_publish mints a key on first use and returns url, expiry, the seven-days line and the manage link", async () => {
     const r = await call("fmrl_publish", { content: "# Hello", title: "Hello" });
@@ -409,5 +409,74 @@ describe("tools", () => {
     } finally {
       await client2.close();
     }
+  });
+  it("fmrl_list says so when the key has no pages", async () => {
+    const r = await call("fmrl_list");
+    expect(r.isError).toBeFalsy();
+    expect(text(r)).toBe(LIST_EMPTY);
+    expect(r.structuredContent).toEqual({ docs: [] });
+  });
+  it("fmrl_list hands back a private page's title and keyed link, and a public page's url, newest first", async () => {
+    const pub = await call("fmrl_publish", { content: "# Open" });
+    const priv = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true });
+    const pubId = (pub.structuredContent as { id: string }).id;
+    const { id: privId, url: privUrl } = priv.structuredContent as { id: string; url: string };
+    const r = await call("fmrl_list");
+    expect(text(r).split("\n")).toEqual([
+      "2 pages on this key, newest first:",
+      `- Quiet — ${privUrl} — expires 2026-09-15T12:00:00Z`,
+      `- https://fmrl.test/${pubId} — expires 2026-09-15T12:00:00Z`,
+    ]);
+    const docs = (r.structuredContent as { docs: Array<Record<string, unknown>> }).docs;
+    expect(docs[0]).toMatchObject({ id: privId, url: privUrl, private: true, key_held: true, title: "Quiet" });
+    expect(docs[0]).not.toHaveProperty("sealed");
+    expect(docs[1]).toMatchObject({ id: pubId, url: `https://fmrl.test/${pubId}`, private: false });
+    expect(docs[1]).not.toHaveProperty("key_held");
+    expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: "/api/v1/docs" });
+  });
+  it("fmrl_list names a page whose key it cannot open, and opens one under a replaced key's ring", async () => {
+    const mine = await call("fmrl_publish", { content: "# Mine", private: true });
+    const mineUrl = (mine.structuredContent as { url: string }).url;
+    const key = keyOf(fake.requests.at(-1)!);
+    const oldRing = newRing();
+    const saved = await readCredentials(credFile);
+    saved.rings = { fmrl_OLD1: oldRing };
+    await writeCredentials(credFile, saved);
+    const doc = (id: string, extra: Partial<{ sealed: string; status: string; owner: string }>) =>
+      fake.docs.set(id, { id, owner: key, format: "html", size: 1, encrypted: true, ...extra });
+    doc("aaaaaaaaaaaa", { sealed: await sealRecord(newRing(), "A".repeat(43), "Theirs") });
+    doc("bbbbbbbbbbbb", {});
+    doc("cccccccccccc", { sealed: await sealRecord(oldRing, "B".repeat(43), "Before"), status: "quarantined" });
+    doc("dddddddddddd", { owner: "fmrl_" + "Z".repeat(32) });
+    expect(text(await call("fmrl_list")).split("\n")).toEqual([
+      "4 pages on this key, newest first:",
+      `- Before — https://fmrl.test/cccccccccccc#p=${"B".repeat(43)} — expires 2026-09-15T12:00:00Z, quarantined`,
+      "- private page (key not held here) — https://fmrl.test/bbbbbbbbbbbb — expires 2026-09-15T12:00:00Z",
+      "- private page (key not held here) — https://fmrl.test/aaaaaaaaaaaa — expires 2026-09-15T12:00:00Z",
+      `- Mine — ${mineUrl} — expires 2026-09-15T12:00:00Z`,
+    ]);
+  });
+  it("fmrl_get hands back a private page's title and keyed link to the key that owns it", async () => {
+    const priv = await call("fmrl_publish", { content: "# Quiet", private: true });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    const got = await call("fmrl_get", { id });
+    expect(got.isError).toBeFalsy();
+    const [first, second, extra] = text(got).split("\n");
+    expect(first.startsWith(`Quiet — ${url}: live, html, `)).toBe(true);
+    expect(first.endsWith(" bytes, expires 2026-09-15T12:00:00Z.")).toBe(true);
+    expect(second).toBe(SEVEN_DAYS_PRIVATE);
+    expect(extra).toBeUndefined();
+    expect(got.structuredContent).toMatchObject({ id, url, private: true, key_held: true, title: "Quiet" });
+    expect(got.structuredContent).not.toHaveProperty("sealed");
+  });
+  it("fmrl_get says a private page's key is not held here when another key owns it", async () => {
+    const priv = await call("fmrl_publish", { content: "# Theirs", private: true });
+    const id = (priv.structuredContent as { id: string }).id;
+    fake.docs.get(id)!.owner = "fmrl_" + "Z".repeat(32);
+    const got = await call("fmrl_get", { id });
+    expect(got.isError).toBeFalsy();
+    expect(text(got)).toContain(NOT_HELD_LINE);
+    expect(text(got)).toContain(SEVEN_DAYS_PRIVATE);
+    expect(got.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, private: true, key_held: false });
   });
 });

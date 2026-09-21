@@ -371,9 +371,14 @@ describe("tools", () => {
       expect(fake.requests.at(-1)!.body as Record<string, unknown>).not.toHaveProperty("sealed");
       expect((r.structuredContent as { url: string }).url).toMatch(/#p=[A-Za-z0-9_-]{43}$/);
       expect((r.structuredContent as { link_url: string }).link_url).not.toContain("#r=");
+      // A link without #r= must not claim to carry the ring.
+      expect(text(r)).toContain("See your pages on fmrl.site: open ");
+      expect(text(r)).not.toContain("It also carries the ring");
       expect(logs.join("\n")).toMatch(/couldn't save a key ring/);
       const who = (await client2.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
       expect(text(who)).toContain(`Couldn't save a key ring to ${path.join(blocker, "credentials.json")} (`);
+      expect(text(who)).toContain("To see this key's pages on fmrl.site, open ");
+      expect(text(who)).not.toContain("It also carries the ring");
     } finally {
       await client2.close();
     }

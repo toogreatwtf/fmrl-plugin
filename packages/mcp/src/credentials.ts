@@ -91,7 +91,9 @@ export async function readCredentials(file: string, log?: (line: string) => void
     // offending input in it, which could be part of a ring.
     return moveAside(file, "not valid JSON", log);
   }
-  if (parsed && typeof parsed === "object" && parsed.version === 1 && parsed.keys && typeof parsed.keys === "object") {
+  // keys must be a record: typeof [] is "object" too, and an array would read
+  // as holding no key for any base URL, so the next write would replace it.
+  if (parsed && typeof parsed === "object" && parsed.version === 1 && parsed.keys && typeof parsed.keys === "object" && !Array.isArray(parsed.keys)) {
     const { rings, ...rest } = parsed;
     const out: CredentialsFile = { ...(rest as object), version: 1, keys: { ...parsed.keys } } as CredentialsFile;
     const sanitized = Object.entries(rings && typeof rings === "object" ? rings : {}).filter(([, r]) => isRing(r));

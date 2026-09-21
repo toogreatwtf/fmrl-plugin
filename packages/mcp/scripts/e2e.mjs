@@ -15,6 +15,10 @@ if (!process.env.FMRL_API_URL) {
 }
 let failed = 0;
 const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if (!ok) failed++; };
+// Tool text carries capabilities in link fragments — a page's key after #p=,
+// the key ring after #r=<prefix>., a manage token after #k= — so nothing is
+// printed until they are blanked; terminal and CI logs never hold one.
+const redact = (s) => s.replace(/([#&](?:p|k)=)[A-Za-z0-9_-]+/g, "$1…").replace(/([#&]r=[A-Za-z0-9_]{1,16}\.)[A-Za-z0-9_-]+/g, "$1…");
 
 const dir = mkdtempSync(path.join(tmpdir(), "fmrl-e2e-"));
 const file = path.join(dir, "hello.md");
@@ -34,12 +38,12 @@ const who = await client.callTool({ name: "fmrl_whoami", arguments: {} });
 console.log("whoami:", who.content[0].text.split("\n")[0]);
 check(!who.isError && who.content[0].text.includes("Your key ring is in "), "whoami names the ring file");
 const pub = await client.callTool({ name: "fmrl_publish_file", arguments: { path: file } });
-console.log(pub.isError ? "publish FAILED: " + pub.content[0].text : "publish:\n" + pub.content[0].text);
+console.log(redact(pub.isError ? "publish FAILED: " + pub.content[0].text : "publish:\n" + pub.content[0].text));
 check(!pub.isError, "public publish");
 const id = pub.structuredContent?.id;
 if (id) {
   const got = await client.callTool({ name: "fmrl_get", arguments: { id } });
-  console.log("get:", got.content[0].text.split("\n")[0]);
+  console.log("get:", redact(got.content[0].text.split("\n")[0]));
 }
 const priv = await client.callTool({ name: "fmrl_publish", arguments: { content: "# Private from fmrl-mcp\n\nSealed end to end.", private: true } });
 check(!priv.isError, "private publish with a sealed record" + (priv.isError ? ": " + priv.content[0].text : ""));
@@ -49,7 +53,7 @@ for (const link of [who.structuredContent?.link_url, pub.structuredContent?.link
   check(/#r=[A-Za-z0-9_]{1,16}\.[A-Za-z0-9_-]{43}$/.test(link), "a browser link carries the ring after #r=");
 }
 const list = await client.callTool({ name: "fmrl_list", arguments: {} });
-console.log("list:\n" + list.content[0].text);
+console.log("list:\n" + redact(list.content[0].text));
 const row = (list.structuredContent?.docs ?? []).find((d) => d.id === priv.structuredContent?.id);
 check(row?.url === keyed && row?.title === "Private from fmrl-mcp", "fmrl_list opens the sealed record: title and keyed link");
 const privGot = await client.callTool({ name: "fmrl_get", arguments: { id: priv.structuredContent?.id ?? "x" } });

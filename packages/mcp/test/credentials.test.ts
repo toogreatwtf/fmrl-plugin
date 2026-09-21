@@ -49,6 +49,18 @@ describe("read and write", () => {
     expect(await readFile(aside, "utf8")).toBe(original);
     await expect(stat(file)).rejects.toMatchObject({ code: "ENOENT" });
   });
+  it("moves a version 1 file whose keys is an array aside rather than accepting it", async () => {
+    // typeof [] is "object": accepted, the array would read as having no key
+    // for any base URL, and the next write would replace what it held.
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const original = JSON.stringify({ version: 1, keys: [{ key: "fmrl_x", prefix: "fmrl_x", created_at: "t", ring: "R".repeat(43) }] });
+    await writeFile(file, original);
+    expect(await readCredentials(file)).toEqual({ version: 1, keys: {} });
+    const aside = await oneUnreadableFile(dir, "credentials.json");
+    expect(await readFile(aside, "utf8")).toBe(original);
+    await expect(stat(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("logs the aside path and never the ring when moving a file aside", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
     const file = path.join(dir, "credentials.json");

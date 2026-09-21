@@ -46,7 +46,11 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export const LINK_HINT = (url: string) => `See your pages on fmrl.site: open ${url} once in your browser (it works for an hour, and once). It also carries the ring that lets that browser open your private pages.`;
+// Said only of a link that carries the ring: when the ring couldn't be saved,
+// the link goes out without #r= and the browser it links can't open private pages.
+const ringCarried = (url: string) => (/[#&]r=/.test(url) ? " It also carries the ring that lets that browser open your private pages." : "");
+
+export const LINK_HINT = (url: string) => `See your pages on fmrl.site: open ${url} once in your browser (it works for an hour, and once).${ringCarried(url)}`;
 
 /** withRing appends key's ring to a browser link as #r=<prefix>.<ring>. The link page stores it for the key its form names; the server never sees a fragment. */
 export function withRing(linkUrl: string, key: string, ring: string): string {
@@ -164,7 +168,7 @@ function meText(m: MeResponse, ringLine: string): string {
   const q = m.quota.publishes;
   const linked = m.linked_at ? `Linked to a browser on ${m.linked_at}.` : "Not linked to any browser yet.";
   const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, linked];
-  if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once). It also carries the ring that lets that browser open your private pages.`);
+  if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)}`);
   return [...lines, ringLine, SEVEN_DAYS].join("\n");
 }
 

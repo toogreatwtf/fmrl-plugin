@@ -80,6 +80,13 @@ export function firstHeading(html: string): string {
   return m ? decodeEntities(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()) : "";
 }
 
+/** documentTitle is the browser's pageTitle (static/fmrl.js): the <title> text, tags stripped, whitespace collapsed and entities decoded, else the first heading, else "". It names a private HTML page in its sealed record. */
+export function documentTitle(html: string): string {
+  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const t = m ? decodeEntities(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()) : "";
+  return t || firstHeading(html);
+}
+
 /** wrapDocument is render.WrapDocument: a complete document with the Markdown stylesheet inlined. */
 export function wrapDocument(body: string, title: string): string {
   return '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' +

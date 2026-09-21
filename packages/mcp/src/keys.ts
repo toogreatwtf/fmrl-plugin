@@ -42,7 +42,26 @@ export class KeyStore {
   private cached?: string;
   private pending?: Promise<string>;
   private readonly ringPending = new Map<string, Promise<string>>();
+  /** fileQueue orders this store's own read-modify-write cycles on the credentials file; see serialize. */
+  private fileQueue: Promise<unknown> = Promise.resolve();
   constructor(private readonly o: KeyStoreOptions) {}
+
+  /**
+   * serialize runs fn only after every earlier serialize call on this store
+   * has settled, so two read-modify-write cycles on the credentials file
+   * (a ring mint for one key, a key mint for another) never interleave and
+   * clobber each other's write. It orders writes from this process only; a
+   * second process writing the same file concurrently is a race this store
+   * already accepted for key minting, and stays accepted here.
+   */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.fileQueue.then(fn, fn);
+    this.fileQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   /** file is where the key and its ring live. */
   get file(): string {
@@ -102,17 +121,19 @@ export class KeyStore {
     return [...new Set(all.filter(isRing))];
   }
 
-  private async loadOrMintRing(key: string): Promise<string> {
-    const file = await readCredentials(this.o.file);
-    const found = storedRing(file, this.o.baseUrl, key);
-    if (found) return found;
-    const ring = newRing();
-    const entry = file.keys[this.o.baseUrl];
-    if (entry?.key === key) entry.ring = ring;
-    else file.rings = { ...file.rings, [prefixOf(key)]: ring };
-    await writeCredentials(this.o.file, file);
-    this.o.log?.(`fmrl-mcp: minted a key ring for ${prefixOf(key)}…, saved to ${this.o.file}`);
-    return ring;
+  private loadOrMintRing(key: string): Promise<string> {
+    return this.serialize(async () => {
+      const file = await readCredentials(this.o.file);
+      const found = storedRing(file, this.o.baseUrl, key);
+      if (found) return found;
+      const ring = newRing();
+      const entry = file.keys[this.o.baseUrl];
+      if (entry?.key === key) entry.ring = ring;
+      else file.rings = { ...file.rings, [prefixOf(key)]: ring };
+      await writeCredentials(this.o.file, file);
+      this.o.log?.(`fmrl-mcp: minted a key ring for ${prefixOf(key)}…, saved to ${this.o.file}`);
+      return ring;
+    });
   }
 
   /** mintOnce collapses concurrent mint calls into a single in-flight request. */
@@ -122,13 +143,15 @@ export class KeyStore {
 
   private async mint(): Promise<string> {
     const minted = await this.o.api.mint(LABEL);
-    const file = await readCredentials(this.o.file);
-    // A replaced key's ring stays, under its prefix: its pages still exist,
-    // and their sealed records open only under it.
-    const old = file.keys[this.o.baseUrl];
-    if (old && isRing(old.ring)) file.rings = { ...file.rings, [old.prefix || prefixOf(old.key)]: old.ring };
-    file.keys[this.o.baseUrl] = { key: minted.key, prefix: minted.prefix, created_at: minted.created_at };
-    await writeCredentials(this.o.file, file);
+    await this.serialize(async () => {
+      const file = await readCredentials(this.o.file);
+      // A replaced key's ring stays, under its prefix: its pages still exist,
+      // and their sealed records open only under it.
+      const old = file.keys[this.o.baseUrl];
+      if (old && isRing(old.ring)) file.rings = { ...file.rings, [old.prefix || prefixOf(old.key)]: old.ring };
+      file.keys[this.o.baseUrl] = { key: minted.key, prefix: minted.prefix, created_at: minted.created_at };
+      await writeCredentials(this.o.file, file);
+    });
     this.cached = minted.key;
     this.o.log?.(`fmrl-mcp: minted key ${minted.prefix}… for ${this.o.baseUrl}, saved to ${this.o.file}`);
     return minted.key;

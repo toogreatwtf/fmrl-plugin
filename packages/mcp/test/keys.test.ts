@@ -133,4 +133,13 @@ describe("KeyStore rings", () => {
   it("names its file", () => {
     expect(new KeyStore({ api, baseUrl: fake.baseUrl, file }).file).toBe(file);
   });
+  it("does not lose a ring minted for a different key in a concurrent call", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const storedKeyValue = await store.getKey();
+    const otherKey = "fmrl_" + "X".repeat(32);
+    const [storedKeyRing, otherKeyRing] = await Promise.all([store.ringFor(storedKeyValue), store.ringFor(otherKey)]);
+    const saved = await readCredentials(file);
+    expect(saved.keys[fake.baseUrl].ring).toBe(storedKeyRing);
+    expect(saved.rings).toEqual({ fmrl_XXXX: otherKeyRing });
+  });
 });

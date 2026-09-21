@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiError, FmrlApi } from "../src/api.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
+import { newRing, sealRecord } from "../src/crypto.js";
 
 let fake: FakeApi;
 let api: FmrlApi;
@@ -67,5 +68,39 @@ describe("FmrlApi", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 0, code: "timeout" });
     expect((err as ApiError).message).toMatch(/^No answer from .* within 0\.2s\.$/);
+  });
+  it("sends sealed on a private publish, and lists this key's pages newest first", async () => {
+    const { key } = await api.mint("x");
+    const sealed = await sealRecord(newRing(), "A".repeat(43), "Quiet");
+    const a = await api.publish(key, { content: "# public" });
+    const b = await api.publish(key, { content: "MARKYENC{}", format: "html", encrypted: true, sealed });
+    expect(fake.requests.at(-1)?.body).toMatchObject({ encrypted: true, sealed });
+    const stranger = await api.mint("y");
+    await api.publish(stranger.key, { content: "# not mine" });
+    const { docs } = await api.list(key);
+    expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: "/api/v1/docs", auth: `Bearer ${key}` });
+    expect(docs.map((d) => d.id)).toEqual([b.id, a.id]);
+    expect(docs[0]).toMatchObject({ private: true, sealed, rev: 1 });
+    expect(docs[1]).toMatchObject({ private: false });
+    expect(docs[1]).not.toHaveProperty("sealed");
+  });
+  it("hands a page's sealed record to its owner only", async () => {
+    const owner = await api.mint("x");
+    const stranger = await api.mint("y");
+    const sealed = await sealRecord(newRing(), "A".repeat(43), "t");
+    const p = await api.publish(owner.key, { content: "MARKYENC{}", format: "html", encrypted: true, sealed });
+    expect(await api.get(owner.key, p.id)).toMatchObject({ private: true, sealed });
+    expect(await api.get(stranger.key, p.id)).not.toHaveProperty("sealed");
+  });
+  it("the fake refuses sealed on a public page and a malformed record, with the server's 400", async () => {
+    const { key } = await api.mint("x");
+    const sealed = await sealRecord(newRing(), "A".repeat(43), "t");
+    await expect(api.publish(key, { content: "# public", sealed })).rejects.toMatchObject({ status: 400, code: "bad_request" });
+    await expect(api.publish(key, { content: "MARKYENC{}", encrypted: true, sealed: "not a record" })).rejects.toMatchObject({ status: 400, code: "bad_request" });
+  });
+  it("sends no sealed field when none is given", async () => {
+    const { key } = await api.mint("x");
+    await api.publish(key, { content: "MARKYENC{}", encrypted: true });
+    expect(fake.requests.at(-1)?.body as Record<string, unknown>).not.toHaveProperty("sealed");
   });
 });

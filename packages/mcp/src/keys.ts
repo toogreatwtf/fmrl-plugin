@@ -50,9 +50,11 @@ export class KeyStore {
    * serialize runs fn only after every earlier serialize call on this store
    * has settled, so two read-modify-write cycles on the credentials file
    * (a ring mint for one key, a key mint for another) never interleave and
-   * clobber each other's write. It orders writes from this process only; a
-   * second process writing the same file concurrently is a race this store
-   * already accepted for key minting, and stays accepted here.
+   * clobber each other's write. It only orders writes within this process:
+   * two processes sharing the file (two agent sessions) still race — the
+   * last writer wins, and a ring the losing process minted, which may
+   * already have sealed a record or gone out in a link, is lost from the
+   * file. The window is one read-modify-write, once per key. Accepted.
    */
   private serialize<T>(fn: () => Promise<T>): Promise<T> {
     const result = this.fileQueue.then(fn, fn);

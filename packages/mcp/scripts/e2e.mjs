@@ -19,7 +19,12 @@ const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if
 const dir = mkdtempSync(path.join(tmpdir(), "fmrl-e2e-"));
 const file = path.join(dir, "hello.md");
 writeFileSync(file, "# Hello from fmrl-mcp\n\nPublished through the MCP server end to end.\n");
-const transport = new StdioClientTransport({ command: "node", args: [new URL("../dist/index.js", import.meta.url).pathname], env: { ...process.env, XDG_CONFIG_HOME: dir, APPDATA: dir } });
+// An ambient FMRL_API_KEY would defeat the temp-dir isolation below (the
+// server would use that key instead of minting its own), and an ambient
+// FMRL_RING would fail the "names the ring file" check. Strip both for the
+// child; FMRL_API_URL passes through untouched.
+const { FMRL_API_KEY: _unusedApiKey, FMRL_RING: _unusedRing, ...childEnv } = process.env;
+const transport = new StdioClientTransport({ command: "node", args: [new URL("../dist/index.js", import.meta.url).pathname], env: { ...childEnv, XDG_CONFIG_HOME: dir, APPDATA: dir } });
 const client = new Client({ name: "e2e", version: "0" });
 await client.connect(transport);
 const tools = (await client.listTools()).tools.map((t) => t.name);

@@ -13,12 +13,13 @@ if (!process.env.FMRL_API_URL) {
   console.error("Set FMRL_API_URL (a local server, e.g. http://fmrl.localhost:8080): this script mints a key and publishes real pages.");
   process.exit(2);
 }
-let failed = 0;
-const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if (!ok) failed++; };
 // Tool text carries capabilities in link fragments — a page's key after #p=,
 // the key ring after #r=<prefix>., a manage token after #k= — so nothing is
 // printed until they are blanked; terminal and CI logs never hold one.
 const redact = (s) => s.replace(/([#&](?:p|k)=)[A-Za-z0-9_-]+/g, "$1…").replace(/([#&]r=[A-Za-z0-9_]{1,16}\.)[A-Za-z0-9_-]+/g, "$1…");
+let failed = 0;
+// check redacts its line too: a failed check may quote a tool's own text.
+const check = (ok, what) => { console.log(redact(`${ok ? "ok  " : "FAIL"} ${what}`)); if (!ok) failed++; };
 
 const dir = mkdtempSync(path.join(tmpdir(), "fmrl-e2e-"));
 const file = path.join(dir, "hello.md");
@@ -35,7 +36,7 @@ const tools = (await client.listTools()).tools.map((t) => t.name);
 console.log("tools:", tools.join(" "));
 check(tools.includes("fmrl_list"), "fmrl_list is offered");
 const who = await client.callTool({ name: "fmrl_whoami", arguments: {} });
-console.log("whoami:", who.content[0].text.split("\n")[0]);
+console.log("whoami:", redact(who.content[0].text.split("\n")[0]));
 check(!who.isError && who.content[0].text.includes("Your key ring is in "), "whoami names the ring file");
 const pub = await client.callTool({ name: "fmrl_publish_file", arguments: { path: file } });
 console.log(redact(pub.isError ? "publish FAILED: " + pub.content[0].text : "publish:\n" + pub.content[0].text));

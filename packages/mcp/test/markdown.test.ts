@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstHeading, looksLikeHTML, toHTML, wrapDocument } from "../src/markdown.js";
+import { documentTitle, firstHeading, looksLikeHTML, toHTML, wrapDocument } from "../src/markdown.js";
 
 describe("markdown", () => {
   it("looksLikeHTML matches share.DetectFormat", () => {
@@ -51,5 +51,10 @@ describe("markdown", () => {
     expect(titleCount).toBe(1);
     expect(doc).not.toContain("&amp;amp;");
     expect(doc).not.toContain("&amp;quot;");
+  });
+  it("documentTitle is the browser's pageTitle: the <title> text, else the first heading", () => {
+    expect(documentTitle("<html><head><title> A &amp; <b>B</b>\n </title></head><body><h1>H</h1></body></html>")).toBe("A & B");
+    expect(documentTitle("<html><head><title> </title></head><body><h2>Two <em>words</em></h2></body></html>")).toBe("Two words");
+    expect(documentTitle("<p>none</p>")).toBe("");
   });
 });

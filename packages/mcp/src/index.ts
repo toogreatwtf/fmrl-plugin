@@ -12,8 +12,8 @@ const log = (line: string) => process.stderr.write(line + "\n");
 async function main(): Promise<void> {
   const cfg = loadConfig();
   const api = new FmrlApi(cfg.baseUrl);
-  const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, file: credentialsPath(), log });
-  const server = createServer({ api, keys });
+  const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, ringFromEnv: cfg.ring, file: credentialsPath(), log });
+  const server = createServer({ api, keys, log });
   await server.connect(new StdioServerTransport());
 }
 

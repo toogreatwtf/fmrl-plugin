@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, type DocResponse, type FmrlApi, type MeResponse, type PublishResponse } from "./api.js";
-import { seal } from "./crypto.js";
+import { ApiError, type DocResponse, type FmrlApi, type MeResponse, type PublishRequest, type PublishResponse } from "./api.js";
+import { openRecord, seal, sealRecord, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId } from "./ids.js";
-import type { KeyStore } from "./keys.js";
-import { firstHeading, looksLikeHTML, toHTML, wrapDocument } from "./markdown.js";
+import { prefixOf, type KeyStore } from "./keys.js";
+import { documentTitle, firstHeading, looksLikeHTML, toHTML, wrapDocument } from "./markdown.js";
 
 // The version the server reports to MCP clients is the package's, read at
 // runtime, so a release bump in package.json cannot leave this behind.
@@ -20,6 +20,7 @@ export interface ServerDeps {
   keys: KeyStore;
   open?: typeof fsOpen;
   stat?: typeof fsStat;
+  log?: (line: string) => void;
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -45,7 +46,19 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export const LINK_HINT = (url: string) => `See your pages on fmrl.site: open ${url} once in your browser (it works for an hour, and once).`;
+// Said only of a link that carries the ring: when the ring couldn't be saved,
+// the link goes out without #r= and the browser it links can't open private pages.
+const ringCarried = (url: string) => (/[#&]r=/.test(url) ? " It also carries the ring that lets that browser open your private pages." : "");
+
+export const LINK_HINT = (url: string) => `See your pages on fmrl.site: open ${url} once in your browser (it works for an hour, and once).${ringCarried(url)}`;
+
+/** withRing appends key's ring to a browser link as #r=<prefix>.<ring>. The link page stores it for the key its form names; the server never sees a fragment. */
+export function withRing(linkUrl: string, key: string, ring: string): string {
+  return `${linkUrl}${linkUrl.includes("#") ? "&" : "#"}r=${prefixOf(key)}.${ring}`;
+}
+export const RING_FILE_LINE = (file: string) => `Your key ring is in ${file}; back up that file to keep every page's key.`;
+export const RING_ENV_LINE = "Your key ring comes from FMRL_RING; back up that value to keep every page's key.";
+const RING_UNSAVED_LINE = (file: string, why: string) => `Couldn't save a key ring to ${file} (${why}); private pages publish without their key sealed until it can be written, or FMRL_RING is set.`;
 
 function publishTextLines(p: PublishResponse, expiryLine: string): string[] {
   const lines = [
@@ -63,22 +76,26 @@ function publishText(p: PublishResponse): string {
 export const SEVEN_DAYS_PRIVATE = "This page lasts seven days; a private page cannot be kept.";
 export const PRIVATE_LINE = "This page is private: it was encrypted here before upload, and the key is the part of the link after #p=. fmrl.site cannot read or recover it.";
 
-/** preparePrivate renders (if Markdown) and seals content, returning the request body and the link key. Title, when given, only ever reaches the envelope's own <title> — the request body never carries it. */
-async function preparePrivate(content: string, format: "html" | "md" | undefined, title: string | undefined): Promise<{ body: { content: string; format: "html"; encrypted: true }; key: string }> {
+/** preparePrivate renders (if Markdown) and seals content, returning the request body, the link key, and the title the sealed record carries: the title given, else the first heading for Markdown, else the document's <title> or first heading for HTML. The request body never carries a title. */
+async function preparePrivate(content: string, format: "html" | "md" | undefined, title: string | undefined): Promise<{ body: { content: string; format: "html"; encrypted: true }; key: string; title: string }> {
   let html = content;
+  let name: string;
   if (format === "md" || (format === undefined && !looksLikeHTML(content))) {
     const body = toHTML(content);
     if (body.trim() === "") {
       throw new Error("Nothing to publish: the content rendered to an empty page.");
     }
-    html = wrapDocument(body, title || firstHeading(body));
+    name = title || firstHeading(body);
+    html = wrapDocument(body, name);
+  } else {
+    name = title || documentTitle(content);
   }
   const sealed = await seal(html);
   const envBytes = Buffer.byteLength(sealed.envelope, "utf8");
   if (envBytes > MAX_BYTES) {
     throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits.`);
   }
-  return { body: { content: sealed.envelope, format: "html", encrypted: true }, key: sealed.key };
+  return { body: { content: sealed.envelope, format: "html", encrypted: true }, key: sealed.key, title: name };
 }
 
 function withFragment(p: PublishResponse, key: string): PublishResponse {
@@ -88,38 +105,125 @@ function privateText(p: PublishResponse): string {
   return [...publishTextLines(p, SEVEN_DAYS_PRIVATE), PRIVATE_LINE].join("\n");
 }
 
-function docText(d: DocResponse): string {
-  const kept = d.pinned ? `kept forever${d.cid ? ` (${d.cid})` : ""}` : `expires ${d.expires_at}`;
-  return [`${d.url}: ${d.status}, ${d.format}, ${d.size} bytes, ${kept}.`, SEVEN_DAYS].join("\n");
+/** unseal opens a sealed record with the first ring that fits, or answers undefined: a page whose key this machine does not hold. */
+async function unseal(rings: string[], sealed: string | undefined): Promise<OpenedRecord | undefined> {
+  if (!sealed) return undefined;
+  for (const ring of rings) {
+    try {
+      return await openRecord(ring, sealed);
+    } catch {
+      // Not this ring.
+    }
+  }
+  return undefined;
 }
-function meText(m: MeResponse): string {
+
+/** PageRow is a page as fmrl_get and fmrl_list hand it back: the API's description minus the sealed record. A private page whose record opened here carries its title, and its keyed link as url. */
+type PageRow = {
+  id: string; url: string; status: string; format: string; size: number; expires_at: string | null;
+  pinned: boolean; cid?: string; private: boolean; key_held?: boolean; title?: string;
+};
+
+function pageRow(d: DocResponse, opened: OpenedRecord | undefined): PageRow {
+  const row: PageRow = { id: d.id, url: d.url, status: d.status, format: d.format, size: d.size, expires_at: d.expires_at, pinned: d.pinned, private: d.private === true };
+  if (d.cid) row.cid = d.cid;
+  if (row.private) {
+    row.key_held = opened !== undefined;
+    if (opened) {
+      row.url = `${d.url}#p=${opened.key}`;
+      row.title = opened.title;
+    }
+  }
+  return row;
+}
+
+export const NOT_HELD_LINE = "This page is private and its key is not held here: it opens from its link, or from a browser linked to the key that published it.";
+
+function docText(r: PageRow): string {
+  const kept = r.pinned ? `kept forever${r.cid ? ` (${r.cid})` : ""}` : `expires ${r.expires_at}`;
+  const name = r.key_held && r.title ? `${r.title} — ` : "";
+  const lines = [`${name}${r.url}: ${r.status}, ${r.format}, ${r.size} bytes, ${kept}.`];
+  if (r.private && !r.key_held) lines.push(NOT_HELD_LINE);
+  lines.push(r.private ? SEVEN_DAYS_PRIVATE : SEVEN_DAYS);
+  return lines.join("\n");
+}
+
+export const LIST_EMPTY = "This key has no pages right now; removed and expired pages are not listed.";
+
+function when(r: PageRow): string {
+  const life = r.pinned ? "kept" : `expires ${r.expires_at}`;
+  return r.status === "live" || r.status === "pinned" ? life : `${life}, ${r.status}`;
+}
+function listLine(r: PageRow): string {
+  if (!r.private) return `- ${r.url} — ${when(r)}`;
+  if (!r.key_held) return `- private page (key not held here) — ${r.url} — ${when(r)}`;
+  return `- ${r.title || "untitled private page"} — ${r.url} — ${when(r)}`;
+}
+function listText(rows: PageRow[]): string {
+  if (rows.length === 0) return LIST_EMPTY;
+  const count = rows.length === 1 ? "1 page" : `${rows.length} pages`;
+  return [`${count} on this key, newest first${rows.length >= 50 ? " (the newest 50)" : ""}:`, ...rows.map(listLine)].join("\n");
+}
+function meText(m: MeResponse, ringLine: string): string {
   const q = m.quota.publishes;
   const linked = m.linked_at ? `Linked to a browser on ${m.linked_at}.` : "Not linked to any browser yet.";
   const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, linked];
-  if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).`);
-  return [...lines, SEVEN_DAYS].join("\n");
+  if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)}`);
+  return [...lines, ringLine, SEVEN_DAYS].join("\n");
 }
 
 const publishOutput = {
   id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string(), status: z.string(),
   link_url: z.string().optional(),
 };
-const docOutput = {
+const pageOutput = {
   id: z.string(), url: z.string(), status: z.string(), format: z.string(), size: z.number(),
   expires_at: z.string().nullable(), pinned: z.boolean(), cid: z.string().optional(),
+  private: z.boolean(), key_held: z.boolean().optional(), title: z.string().optional(),
 };
+const listOutput = { docs: z.array(z.object(pageOutput)) };
 const meOutput = {
   prefix: z.string(), created_at: z.string(),
   quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
   linked_at: z.string().nullable().optional(), link_url: z.string().optional(),
 };
 
-/** createServer registers the five contract tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
+/** createServer registers the six tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
   const { api, keys } = deps;
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
   const server = new McpServer({ name: "fmrl", version: VERSION });
+
+  const log = deps.log;
+
+  /** ringOrNothing is keys.ringFor for a caller that must not fail on it: a page goes out without a sealed record, and a link without a ring, rather than not at all. */
+  const ringOrNothing = async (k: string): Promise<string | undefined> => {
+    try {
+      return await keys.ringFor(k);
+    } catch (e) {
+      log?.(`fmrl-mcp: couldn't save a key ring to ${keys.file}: ${errorText(e)}`);
+      return undefined;
+    }
+  };
+
+  /**
+   * publishAs publishes body as key k. A private page (secret set) carries
+   * its key and title sealed under k's ring; a link_url in the answer gets
+   * #r= so the browser that redeems it holds the ring too. It runs inside
+   * withKey, so a retry after a 401 seals under the replacement key's ring.
+   */
+  const publishAs = async (k: string, body: PublishRequest, secret?: { key: string; title: string }): Promise<PublishResponse> => {
+    let ring: string | undefined;
+    if (secret) {
+      ring = await ringOrNothing(k);
+      if (ring) body = { ...body, sealed: await sealRecord(ring, secret.key, secret.title) };
+    }
+    const p = await api.publish(k, body);
+    if (!p.link_url) return p;
+    ring ??= await ringOrNothing(k);
+    return ring ? { ...p, link_url: withRing(p.link_url, k, ring) } : p;
+  };
 
   const run = async <T extends Record<string, unknown>>(fn: (key: string) => Promise<T>, render: (v: T) => string): Promise<ToolResult> => {
     try {
@@ -141,7 +245,7 @@ export function createServer(deps: ServerDeps): McpServer {
       return fail("Nothing to publish: the content is empty.");
     }
     if (!priv) {
-      return run<PublishResponse & Record<string, unknown>>((k) => api.publish(k, { content, format, title }) as Promise<PublishResponse & Record<string, unknown>>, publishText);
+      return run<PublishResponse & Record<string, unknown>>(async (k) => (await publishAs(k, { content, format, title })) as PublishResponse & Record<string, unknown>, publishText);
     }
     let prepared: Awaited<ReturnType<typeof preparePrivate>>;
     try {
@@ -150,7 +254,7 @@ export function createServer(deps: ServerDeps): McpServer {
       return fail(errorText(e));
     }
     return run<PublishResponse & Record<string, unknown>>(
-      async (k) => withFragment(await api.publish(k, prepared.body), prepared.key) as PublishResponse & Record<string, unknown>,
+      async (k) => withFragment(await publishAs(k, prepared.body, { key: prepared.key, title: prepared.title }), prepared.key) as PublishResponse & Record<string, unknown>,
       privateText,
     );
   };
@@ -219,15 +323,32 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_get",
     {
       title: "Describe a fmrl.site page",
-      description: "Look up a page by id or URL: status, format, size, expiry, and whether it has been kept.",
+      description: "Look up a page by id or URL: status, format, size, expiry, and whether it has been kept. For a private page this key owns, also its title and its link with the key after #p=, when this machine holds the key ring.",
       inputSchema: { id: z.string().min(1).describe("A document id or any fmrl.site URL for it.") },
-      outputSchema: docOutput,
+      outputSchema: pageOutput,
     },
     async ({ id }) => {
       let docId: string;
       try { docId = parseDocId(id); } catch (e) { return fail(errorText(e)); }
-      return run<DocResponse & Record<string, unknown>>((k) => api.get(k, docId) as Promise<DocResponse & Record<string, unknown>>, docText);
+      return run<PageRow>(async (k) => {
+        const d = await api.get(k, docId);
+        return pageRow(d, d.private ? await unseal(await keys.ringsFor(k), d.sealed) : undefined);
+      }, docText);
     },
+  );
+
+  server.registerTool(
+    "fmrl_list",
+    {
+      title: "List this key's fmrl.site pages",
+      description: "List the pages this key owns, newest first (50 at most): published through it, or shared from a browser linked to it. A private page comes back with its title and its link with the key after #p= when this machine holds the key ring. Use it when the user asks for a page they shared earlier.",
+      inputSchema: {},
+      outputSchema: listOutput,
+    },
+    async () => run<{ docs: PageRow[] }>(async (k) => {
+      const [{ docs }, rings] = await Promise.all([api.list(k), keys.ringsFor(k)]);
+      return { docs: await Promise.all(docs.map(async (d) => pageRow(d, d.private ? await unseal(rings, d.sealed) : undefined))) };
+    }, (v) => listText(v.docs)),
   );
 
   server.registerTool(
@@ -253,11 +374,24 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_whoami",
     {
       title: "This fmrl.site key",
-      description: "The key's prefix, how many of this month's free publishes it has used, whether a browser is linked to it, and a fresh link to link one.",
+      description: "The key's prefix, how many of this month's free publishes it has used, whether a browser is linked to it, a fresh link to link one (it carries the key ring), and where the key ring is kept.",
       inputSchema: {},
       outputSchema: meOutput,
     },
-    async () => run<MeResponse & Record<string, unknown>>((k) => api.me(k) as Promise<MeResponse & Record<string, unknown>>, meText),
+    async () => {
+      let ringLine = "";
+      return run<MeResponse & Record<string, unknown>>(async (k) => {
+        const me = await api.me(k);
+        let ring: string | undefined;
+        try {
+          ring = await keys.ringFor(k);
+          ringLine = keys.ringFromEnv ? RING_ENV_LINE : RING_FILE_LINE(keys.file);
+        } catch (e) {
+          ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
+        }
+        return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, k, ring) } : me) as MeResponse & Record<string, unknown>;
+      }, (m) => meText(m, ringLine));
+    },
   );
 
   return server;

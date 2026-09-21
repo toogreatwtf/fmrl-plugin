@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 
-export interface FakeDoc { id: string; owner: string; format: string; size: number; title?: string; removed?: boolean }
+export interface FakeDoc { id: string; owner: string; format: string; size: number; title?: string; removed?: boolean; encrypted?: boolean; sealed?: string; status?: string }
 export interface RequestLog { method: string; path: string; auth?: string; body?: unknown }
 
 export interface FakeApi {
@@ -46,6 +46,26 @@ function fail(res: ServerResponse, status: number, code: string, message: string
   json(res, status, { error: { code, message, ...extra } });
 }
 
+// The server's rule for sealed: crypto.ValidateSealed's shape, on an encrypted page only.
+function validSealed(s: unknown): boolean {
+  if (typeof s !== "string" || !/^[A-Za-z0-9_-]+$/.test(s)) return false;
+  const n = Buffer.from(s, "base64url").length;
+  return n >= 30 && n <= 1024;
+}
+
+// docRow is the server's docResponseFor: sealed only to the owning key.
+function docRow(d: FakeDoc, caller: string): Record<string, unknown> {
+  const pinned = d.title === "PINNED";
+  return {
+    id: d.id, url: `https://fmrl.test/${d.id}`, status: d.status ?? "live", format: d.format, size: d.size, rev: 1,
+    private: d.encrypted === true,
+    ...(d.sealed && d.owner === caller ? { sealed: d.sealed } : {}),
+    expires_at: pinned ? null : "2026-09-15T12:00:00Z",
+    pinned,
+    ...(pinned ? { cid: "bafytest" } : {}),
+  };
+}
+
 export async function startFakeApi(): Promise<FakeApi> {
   const api: FakeApi = {
     baseUrl: "",
@@ -84,10 +104,11 @@ export async function startFakeApi(): Promise<FakeApi> {
       const key = auth();
       if (!key) return unauthorized();
       if (raw.length > 3 * 2097152) return fail(res, 413, "too_large", "That's bigger than the 2 MiB limit.");
-      const b = (body ?? {}) as { format?: string; content?: string; title?: string; encrypted?: boolean };
+      const b = (body ?? {}) as { format?: string; content?: string; title?: string; encrypted?: boolean; sealed?: unknown };
       if (b.format !== undefined && b.format !== "html" && b.format !== "md") return fail(res, 400, "bad_request", "format must be html or md, or left out to detect it.");
       if (b.encrypted === true && b.format === "md") return fail(res, 400, "bad_request", "An encrypted page is HTML.");
       if (b.encrypted === true && !String(b.content).startsWith("MARKYENC")) return fail(res, 422, "rejected", "That isn't a valid encrypted page: content must be a MARKYENC v2 envelope.");
+      if (b.sealed !== undefined && (b.encrypted !== true || !validSealed(b.sealed))) return fail(res, 400, "bad_request", "sealed must be an unpadded base64url record of at most 1 KiB, and only on an encrypted page.");
       if (!b.content || b.content.trim() === "") return fail(res, 400, "bad_request", "content is required.");
       const used = api.publishes.get(key) ?? 0;
       if (used >= api.quota) return fail(res, 402, "quota_exhausted", "This key has used its free publishes for the month; it resets at 2026-10-01T00:00:00Z.", { resets_at: "2026-10-01T00:00:00Z" });
@@ -95,9 +116,15 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (b.content.includes("PHISH")) return fail(res, 422, "rejected", "That can't be shared: it looks like phishing: a well-known brand next to a sign-in prompt.");
       const id = newId();
       const format = b.format ?? (b.encrypted === true ? "html" : (b.content.trimStart().startsWith("<") ? "html" : "md"));
-      api.docs.set(id, { id, owner: key, format, size: Buffer.byteLength(b.content), title: b.title });
+      api.docs.set(id, { id, owner: key, format, size: Buffer.byteLength(b.content), title: b.title, encrypted: b.encrypted === true, sealed: typeof b.sealed === "string" ? b.sealed : undefined });
       api.publishes.set(key, used + 1);
       return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/manage/${id}#k=tok${id}`, expires_at: "2026-09-15T12:00:00Z", status: "live", link_url: api.linked.has(key) ? undefined : `https://fmrl.test/link/code${id}` });
+    }
+    if (method === "GET" && url.pathname === "/api/v1/docs") {
+      const key = auth();
+      if (!key) return unauthorized();
+      const docs = [...api.docs.values()].filter((d) => d.owner === key && !d.removed).reverse().slice(0, 50).map((d) => docRow(d, key));
+      return json(res, 200, { docs });
     }
     const m = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)$/);
     if (m && (method === "GET" || method === "DELETE")) {
@@ -106,13 +133,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       const d = api.docs.get(m[1]);
       if (method === "GET") {
         if (!d || d.removed) return fail(res, 404, "not_found", d ? "That page was removed." : "No page with that id.");
-        const pinned = d.title === "PINNED";
-        return json(res, 200, {
-          id: d.id, url: `https://fmrl.test/${d.id}`, status: "live", format: d.format, size: d.size,
-          expires_at: pinned ? null : "2026-09-15T12:00:00Z",
-          pinned,
-          ...(pinned ? { cid: "bafytest" } : {}),
-        });
+        return json(res, 200, docRow(d, key));
       }
       if (!d || d.owner !== key) return fail(res, 404, "not_found", "No page with that id.");
       if (d.removed) return fail(res, 404, "not_found", "That page was already removed.");

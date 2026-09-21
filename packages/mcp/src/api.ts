@@ -1,8 +1,17 @@
 export interface MintResponse { key: string; prefix: string; created_at: string; quota: { publishes: number; period: string } }
-export interface PublishRequest { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean }
+/** sealed is the page's key and title under the key's ring (crypto.sealRecord); the server takes it on an encrypted page only. */
+export interface PublishRequest { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean; sealed?: string }
 /** link_url rides on a publish only until a browser has been linked to the key; a server that predates linking never sends it. */
 export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string; link_url?: string }
-export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string }
+/**
+ * DocResponse is a page as GET /api/v1/docs/{id} and each GET /api/v1/docs row
+ * describe it. rev and private come from servers with sealed records
+ * (markymd #71); sealed is present only on a private page that has one, and
+ * only to the key that owns the page.
+ */
+export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string; rev?: number; private?: boolean; sealed?: string }
+/** DocsResponse is GET /api/v1/docs: this key's pages, newest first, 50 at most, removed and expired left out. */
+export interface DocsResponse { docs: DocResponse[] }
 /** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. */
 export interface MeResponse { prefix: string; created_at: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; link_url?: string }
 
@@ -46,10 +55,14 @@ export class FmrlApi {
     if (body.format !== undefined) payload.format = body.format;
     if (body.title !== undefined) payload.title = body.title;
     if (body.encrypted) payload.encrypted = true;
+    if (body.sealed !== undefined) payload.sealed = body.sealed;
     return this.call<PublishResponse>("POST", "/publish", key, payload);
   }
   get(key: string, id: string): Promise<DocResponse> {
     return this.call<DocResponse>("GET", `/docs/${encodeURIComponent(id)}`, key);
+  }
+  list(key: string): Promise<DocsResponse> {
+    return this.call<DocsResponse>("GET", "/docs", key);
   }
   async delete(key: string, id: string): Promise<void> {
     await this.call<void>("DELETE", `/docs/${encodeURIComponent(id)}`, key);

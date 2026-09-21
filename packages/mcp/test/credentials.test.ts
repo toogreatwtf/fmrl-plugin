@@ -1,8 +1,15 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { credentialsPath, readCredentials, writeCredentials } from "../src/credentials.js";
+
+/** oneUnreadableFile finds the single `${base}.unreadable-*` sibling readCredentials left behind. */
+async function oneUnreadableFile(dir: string, base: string): Promise<string> {
+  const names = (await readdir(dir)).filter((n) => n.startsWith(`${base}.unreadable-`));
+  expect(names).toHaveLength(1);
+  return path.join(dir, names[0]);
+}
 
 describe("credentialsPath", () => {
   const home = () => "/home/u";
@@ -21,12 +28,76 @@ describe("credentialsPath", () => {
 });
 
 describe("read and write", () => {
-  it("returns an empty file when missing or unreadable", async () => {
+  it("returns an empty file when missing; moves an unreadable one aside instead of destroying it", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
     expect(await readCredentials(path.join(dir, "nope", "credentials.json"))).toEqual({ version: 1, keys: {} });
     const bad = path.join(dir, "bad.json");
-    await writeFile(bad, "{not json");
+    const original = "{not json";
+    await writeFile(bad, original);
     expect(await readCredentials(bad)).toEqual({ version: 1, keys: {} });
+    const aside = await oneUnreadableFile(dir, "bad.json");
+    expect(await readFile(aside, "utf8")).toBe(original);
+    await expect(stat(bad)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("moves a wrong-version file aside the same way", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const original = JSON.stringify({ version: 2, keys: {} });
+    await writeFile(file, original);
+    expect(await readCredentials(file)).toEqual({ version: 1, keys: {} });
+    const aside = await oneUnreadableFile(dir, "credentials.json");
+    expect(await readFile(aside, "utf8")).toBe(original);
+    await expect(stat(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("moves a version 1 file whose keys is an array aside rather than accepting it", async () => {
+    // typeof [] is "object": accepted, the array would read as having no key
+    // for any base URL, and the next write would replace what it held.
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const original = JSON.stringify({ version: 1, keys: [{ key: "fmrl_x", prefix: "fmrl_x", created_at: "t", ring: "R".repeat(43) }] });
+    await writeFile(file, original);
+    expect(await readCredentials(file)).toEqual({ version: 1, keys: {} });
+    const aside = await oneUnreadableFile(dir, "credentials.json");
+    expect(await readFile(aside, "utf8")).toBe(original);
+    await expect(stat(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("logs the aside path and never the ring when moving a file aside", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const ring = "R".repeat(43);
+    await writeFile(file, JSON.stringify({ version: 1, keys: { x: { key: "fmrl_x", prefix: "fmrl_x", created_at: "t", ring } }, rings: { fmrl_old1: ring } }) + ",");
+    const logs: string[] = [];
+    await readCredentials(file, (line) => logs.push(line));
+    const aside = await oneUnreadableFile(dir, "credentials.json");
+    const joined = logs.join("\n");
+    expect(joined).toContain(`fmrl-mcp: couldn't read ${file} (`);
+    expect(joined).toContain(aside);
+    expect(joined).not.toContain(ring);
+  });
+  it("never quotes file content in the log or a thrown error on a JSON parse failure", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const ring = "R".repeat(43);
+    // The ring value is unquoted, so V8's JSON.parse fails and quotes a
+    // fragment of the offending input (including part of the ring) in its
+    // own error message — that fragment must never reach the log or a
+    // thrown error.
+    await writeFile(file, `{"version":1,"keys":{"https://fmrl.site":{"key":"fmrl_x","prefix":"fmrl_x","created_at":"t","ring":${ring}}}}`);
+    const logs: string[] = [];
+    await readCredentials(file, (line) => logs.push(line));
+    const joined = logs.join("\n");
+    expect(joined).toContain("(not valid JSON)");
+    expect(joined).not.toContain("RRRRRRRRRR");
+  });
+  it("preserves an unknown top-level field across a read, write, read", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    await writeFile(file, JSON.stringify({ version: 1, keys: {}, futureField: "kept" }));
+    const read = await readCredentials(file);
+    expect((read as unknown as { futureField: string }).futureField).toBe("kept");
+    await writeCredentials(file, read);
+    const reread = await readCredentials(file);
+    expect((reread as unknown as { futureField: string }).futureField).toBe("kept");
   });
   it("writes atomically with 0600 and creates the directory with 0700", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
@@ -52,5 +123,22 @@ describe("read and write", () => {
     const data = { version: 1 as const, keys: {} };
     await writeCredentials(file, data);
     expect((await stat(credDir)).mode & 0o777).toBe(0o700);
+  });
+  it("keeps a key's ring and the rings map, and drops a malformed entry from the map", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const data = {
+      version: 1 as const,
+      keys: { "https://fmrl.site": { key: "fmrl_x", prefix: "fmrl_x", created_at: "2026-09-08T00:00:00Z", ring: "R".repeat(43) } },
+      rings: { fmrl_old1: "O".repeat(43) },
+    };
+    await writeCredentials(file, data);
+    expect(await readCredentials(file)).toEqual(data);
+    await writeFile(file, JSON.stringify({ ...data, rings: { fmrl_bad1: "short", fmrl_bad2: 7, fmrl_ok11: "K".repeat(43) } }));
+    expect((await readCredentials(file)).rings).toEqual({ fmrl_ok11: "K".repeat(43) });
+    for (const rings of ["nope", null]) {
+      await writeFile(file, JSON.stringify({ version: 1, keys: {}, rings }));
+      expect(await readCredentials(file)).toEqual({ version: 1, keys: {} });
+    }
   });
 });

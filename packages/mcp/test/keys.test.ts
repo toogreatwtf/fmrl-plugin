@@ -56,3 +56,81 @@ describe("KeyStore", () => {
     expect(fake.requests.filter((r) => r.path === "/api/v1/keys")).toHaveLength(1);
   });
 });
+
+describe("KeyStore rings", () => {
+  const RING = /^[A-Za-z0-9_-]{43}$/;
+  it("mints a ring once, keeps it on the stored key, and logs the prefix but never the ring", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, log: (s) => logs.push(s) });
+    const key = await store.getKey();
+    const ring = await store.ringFor(key);
+    expect(ring).toMatch(RING);
+    expect((await readCredentials(file)).keys[fake.baseUrl].ring).toBe(ring);
+    expect(await store.ringFor(key)).toBe(ring);
+    expect(await new KeyStore({ api, baseUrl: fake.baseUrl, file }).ringFor(key)).toBe(ring);
+    expect(logs.join("\n")).toContain(`minted a key ring for ${key.slice(0, 9)}…`);
+    expect(logs.join("\n")).not.toContain(ring);
+  });
+  it("shares one mint between concurrent calls", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const key = await store.getKey();
+    const rings = await Promise.all([store.ringFor(key), store.ringFor(key), store.ringFor(key)]);
+    expect(new Set(rings).size).toBe(1);
+    expect((await readCredentials(file)).keys[fake.baseUrl].ring).toBe(rings[0]);
+  });
+  it("prefers FMRL_RING and never writes it", async () => {
+    const envRing = "E".repeat(43);
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, ringFromEnv: envRing });
+    expect(store.ringFromEnv).toBe(true);
+    const key = await store.getKey();
+    expect(await store.ringFor(key)).toBe(envRing);
+    const saved = await readCredentials(file);
+    expect(saved.keys[fake.baseUrl].ring).toBeUndefined();
+    expect(saved.rings).toBeUndefined();
+    expect(await store.ringsFor(key)).toEqual([envRing]);
+  });
+  it("keeps an environment key's ring under rings[prefix]", async () => {
+    const envKey = "fmrl_" + "E".repeat(32);
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: envKey });
+    const ring = await store.ringFor(envKey);
+    const saved = await readCredentials(file);
+    expect(saved.keys).toEqual({});
+    expect(saved.rings).toEqual({ fmrl_EEEE: ring });
+    expect(await new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: envKey }).ringFor(envKey)).toBe(ring);
+  });
+  it("an environment key that is also the stored key seals under the stored key's ring", async () => {
+    const stored = await new KeyStore({ api, baseUrl: fake.baseUrl, file }).getKey();
+    const ring = await new KeyStore({ api, baseUrl: fake.baseUrl, file }).ringFor(stored);
+    expect(await new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: stored }).ringFor(stored)).toBe(ring);
+  });
+  it("moves a replaced key's ring to rings[oldPrefix] and mints the new key its own", async () => {
+    const oldRing = "O".repeat(43);
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key: "fmrl_" + "S".repeat(32), prefix: "fmrl_SSSS", created_at: "x", ring: oldRing } } });
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const fresh = await store.withKey(async (k) => { await api.me(k); return k; });
+    const saved = await readCredentials(file);
+    expect(saved.rings).toEqual({ fmrl_SSSS: oldRing });
+    expect(saved.keys[fake.baseUrl].ring).toBeUndefined();
+    const ring = await store.ringFor(fresh);
+    expect(ring).not.toBe(oldRing);
+    expect(await store.ringsFor(fresh)).toEqual([ring, oldRing]);
+  });
+  it("ringsFor never mints", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const key = await store.getKey();
+    expect(await store.ringsFor(key)).toEqual([]);
+    expect((await readCredentials(file)).keys[fake.baseUrl].ring).toBeUndefined();
+  });
+  it("replaces a malformed stored ring rather than sealing under it", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const key = await store.getKey();
+    const saved = await readCredentials(file);
+    saved.keys[fake.baseUrl].ring = "not-a-ring";
+    await writeCredentials(file, saved);
+    const ring = await store.ringFor(key);
+    expect(ring).toMatch(RING);
+    expect((await readCredentials(file)).keys[fake.baseUrl].ring).toBe(ring);
+  });
+  it("names its file", () => {
+    expect(new KeyStore({ api, baseUrl: fake.baseUrl, file }).file).toBe(file);
+  });
+});

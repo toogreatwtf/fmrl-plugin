@@ -2,16 +2,25 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isRing } from "./crypto.js";
 
 export interface StoredKey {
   key: string;
   prefix: string;
   created_at: string;
+  /** ring seals this key's private pages' records. Minted the first time one is needed; it leaves this machine only inside a browser link's fragment. */
+  ring?: string;
 }
 
 export interface CredentialsFile {
   version: 1;
   keys: Record<string, StoredKey>;
+  /**
+   * rings holds, by key prefix, the rings of keys that are not the stored
+   * key for their base URL: a key from FMRL_API_KEY, and a key replaced
+   * after a 401, whose pages still exist and whose records open only under it.
+   */
+  rings?: Record<string, string>;
 }
 
 const EMPTY: CredentialsFile = { version: 1, keys: {} };
@@ -35,12 +44,15 @@ export function credentialsPath(
   return path.join(base, "fmrl", "credentials.json");
 }
 
-/** readCredentials treats a missing, unreadable, or malformed file as empty. */
+/** readCredentials treats a missing, unreadable, or malformed file as empty, and drops a malformed entry from rings. */
 export async function readCredentials(file: string): Promise<CredentialsFile> {
   try {
     const parsed = JSON.parse(await readFile(file, "utf8")) as Partial<CredentialsFile>;
     if (parsed && parsed.version === 1 && parsed.keys && typeof parsed.keys === "object") {
-      return { version: 1, keys: { ...parsed.keys } };
+      const out: CredentialsFile = { version: 1, keys: { ...parsed.keys } };
+      const rings = Object.entries(parsed.rings && typeof parsed.rings === "object" ? parsed.rings : {}).filter(([, r]) => isRing(r));
+      if (rings.length > 0) out.rings = Object.fromEntries(rings);
+      return out;
     }
     return { ...EMPTY, keys: {} };
   } catch {

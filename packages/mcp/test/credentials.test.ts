@@ -53,4 +53,21 @@ describe("read and write", () => {
     await writeCredentials(file, data);
     expect((await stat(credDir)).mode & 0o777).toBe(0o700);
   });
+  it("keeps a key's ring and the rings map, and drops a malformed entry from the map", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const data = {
+      version: 1 as const,
+      keys: { "https://fmrl.site": { key: "fmrl_x", prefix: "fmrl_x", created_at: "2026-09-08T00:00:00Z", ring: "R".repeat(43) } },
+      rings: { fmrl_old1: "O".repeat(43) },
+    };
+    await writeCredentials(file, data);
+    expect(await readCredentials(file)).toEqual(data);
+    await writeFile(file, JSON.stringify({ ...data, rings: { fmrl_bad1: "short", fmrl_bad2: 7, fmrl_ok11: "K".repeat(43) } }));
+    expect((await readCredentials(file)).rings).toEqual({ fmrl_ok11: "K".repeat(43) });
+    for (const rings of ["nope", null]) {
+      await writeFile(file, JSON.stringify({ version: 1, keys: {}, rings }));
+      expect(await readCredentials(file)).toEqual({ version: 1, keys: {} });
+    }
+  });
 });

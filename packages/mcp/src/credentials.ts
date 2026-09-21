@@ -44,20 +44,59 @@ export function credentialsPath(
   return path.join(base, "fmrl", "credentials.json");
 }
 
-/** readCredentials treats a missing, unreadable, or malformed file as empty, and drops a malformed entry from rings. */
-export async function readCredentials(file: string): Promise<CredentialsFile> {
+/**
+ * moveAside is readCredentials' recovery for a file it cannot trust: it is
+ * never overwritten in place, only renamed out of the way, because it may
+ * hold the one copy of a key ring. A rename that loses to another reader
+ * (ENOENT) is fine — the file is already moved; any other rename failure
+ * means the original is left exactly where it was, and the caller must not
+ * proceed to write a fresh file over it.
+ */
+async function moveAside(file: string, reason: string, log?: (line: string) => void): Promise<CredentialsFile> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const aside = `${file}.unreadable-${stamp}`;
   try {
-    const parsed = JSON.parse(await readFile(file, "utf8")) as Partial<CredentialsFile>;
-    if (parsed && parsed.version === 1 && parsed.keys && typeof parsed.keys === "object") {
-      const out: CredentialsFile = { version: 1, keys: { ...parsed.keys } };
-      const rings = Object.entries(parsed.rings && typeof parsed.rings === "object" ? parsed.rings : {}).filter(([, r]) => isRing(r));
-      if (rings.length > 0) out.rings = Object.fromEntries(rings);
-      return out;
-    }
-    return { ...EMPTY, keys: {} };
-  } catch {
-    return { ...EMPTY, keys: {} };
+    await rename(file, aside);
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") return { ...EMPTY, keys: {} };
+    throw new Error(`Couldn't read ${file} (${reason}) or move it aside (${err.message}); fmrl-mcp won't overwrite it. Fix or move that file.`);
   }
+  log?.(`fmrl-mcp: couldn't read ${file} (${reason}); moved it to ${aside} and started a new one. Your old key and key ring are in that file.`);
+  return { ...EMPTY, keys: {} };
+}
+
+/**
+ * readCredentials treats a missing file as empty. Anything else it cannot
+ * trust — unreadable, unparseable, or not a version-1 credentials file — is
+ * moved aside rather than silently replaced, since the file may be the only
+ * copy of a stored key's ring; see moveAside. Unknown top-level fields
+ * (everything but rings, which is re-sanitized) round-trip untouched, and a
+ * malformed rings entry is dropped.
+ */
+export async function readCredentials(file: string, log?: (line: string) => void): Promise<CredentialsFile> {
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") return { ...EMPTY, keys: {} };
+    return moveAside(file, err.message, log);
+  }
+  let parsed: Partial<CredentialsFile>;
+  try {
+    parsed = JSON.parse(raw) as Partial<CredentialsFile>;
+  } catch (e) {
+    return moveAside(file, (e as Error).message, log);
+  }
+  if (parsed && typeof parsed === "object" && parsed.version === 1 && parsed.keys && typeof parsed.keys === "object") {
+    const { rings, ...rest } = parsed;
+    const out: CredentialsFile = { ...(rest as object), version: 1, keys: { ...parsed.keys } } as CredentialsFile;
+    const sanitized = Object.entries(rings && typeof rings === "object" ? rings : {}).filter(([, r]) => isRing(r));
+    if (sanitized.length > 0) out.rings = Object.fromEntries(sanitized);
+    return out;
+  }
+  return moveAside(file, "not a version 1 credentials file", log);
 }
 
 /** writeCredentials writes to a sibling temp file with mode 0600 and renames it into place. */

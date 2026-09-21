@@ -76,7 +76,7 @@ export class KeyStore {
   async getKey(): Promise<string> {
     if (this.o.apiKeyFromEnv) return this.o.apiKeyFromEnv;
     if (this.cached) return this.cached;
-    const stored = (await readCredentials(this.o.file)).keys[this.o.baseUrl];
+    const stored = (await readCredentials(this.o.file, this.o.log)).keys[this.o.baseUrl];
     if (stored?.key) {
       this.cached = stored.key;
       return stored.key;
@@ -116,14 +116,14 @@ export class KeyStore {
 
   /** ringsFor lists every ring that may open a record on key's pages, the one ringFor would seal under first. It never mints. */
   async ringsFor(key: string): Promise<string[]> {
-    const file = await readCredentials(this.o.file);
+    const file = await readCredentials(this.o.file, this.o.log);
     const all = [this.o.ringFromEnv, storedRing(file, this.o.baseUrl, key), ...Object.values(file.rings ?? {})];
     return [...new Set(all.filter(isRing))];
   }
 
   private loadOrMintRing(key: string): Promise<string> {
     return this.serialize(async () => {
-      const file = await readCredentials(this.o.file);
+      const file = await readCredentials(this.o.file, this.o.log);
       const found = storedRing(file, this.o.baseUrl, key);
       if (found) return found;
       const ring = newRing();
@@ -144,7 +144,7 @@ export class KeyStore {
   private async mint(): Promise<string> {
     const minted = await this.o.api.mint(LABEL);
     await this.serialize(async () => {
-      const file = await readCredentials(this.o.file);
+      const file = await readCredentials(this.o.file, this.o.log);
       // A replaced key's ring stays, under its prefix: its pages still exist,
       // and their sealed records open only under it.
       const old = file.keys[this.o.baseUrl];

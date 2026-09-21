@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -54,6 +54,30 @@ describe("KeyStore", () => {
     expect(k1).toBe(k2);
     expect(k2).toBe(k3);
     expect(fake.requests.filter((r) => r.path === "/api/v1/keys")).toHaveLength(1);
+  });
+  it("moves a malformed credentials file aside instead of destroying its key and ring on the next write", async () => {
+    const oldRing = "R".repeat(43);
+    const otherRing = "O".repeat(43);
+    const original =
+      JSON.stringify({
+        version: 1,
+        keys: { [fake.baseUrl]: { key: "fmrl_" + "S".repeat(32), prefix: "fmrl_SSSS", created_at: "t", ring: oldRing } },
+        rings: { fmrl_old1: otherRing },
+      }) + ",";
+    await writeFile(file, original);
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, log: (s) => logs.push(s) });
+    const fresh = await store.getKey();
+    expect(fresh).not.toBe("fmrl_" + "S".repeat(32));
+    const dir = path.dirname(file);
+    const asideNames = (await readdir(dir)).filter((n) => n.startsWith("credentials.json.unreadable-"));
+    expect(asideNames).toHaveLength(1);
+    expect(await readFile(path.join(dir, asideNames[0]), "utf8")).toBe(original);
+    // A fresh credentials.json exists and was not overwritten in place.
+    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(fresh);
+    const joined = logs.join("\n");
+    expect(joined).toContain(asideNames[0]);
+    expect(joined).not.toContain(oldRing);
+    expect(joined).not.toContain(otherRing);
   });
 });
 

@@ -45,25 +45,33 @@ export function credentialsPath(
 }
 
 /**
- * moveAside is readCredentials' recovery for a file it cannot trust: it is
- * never overwritten in place, only renamed out of the way, because it may
- * hold the one copy of a key ring. A rename that loses to another reader
- * (ENOENT) is fine — the file is already moved; any other rename failure
- * means the original is left exactly where it was, and the caller must not
- * proceed to write a fresh file over it.
+ * moveAside is a store's recovery for a file it cannot trust: it is never
+ * overwritten in place, only renamed out of the way, because it may hold a
+ * secret the store cannot mint back (a key ring, a page's manage token). A
+ * rename that loses to another reader (ENOENT) is fine — the file is already
+ * moved; any other rename failure means the original is left exactly where
+ * it was, and the caller must not proceed to write a fresh file over it.
+ * `empty` is the value a caller falls back to; `contentsNote` names what the
+ * moved-aside file holds, for the one log line this ever produces.
  */
-async function moveAside(file: string, reason: string, log?: (line: string) => void): Promise<CredentialsFile> {
+export async function moveAside<T>(
+  file: string,
+  reason: string,
+  empty: T,
+  contentsNote: string,
+  log?: (line: string) => void,
+): Promise<T> {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const aside = `${file}.unreadable-${stamp}`;
   try {
     await rename(file, aside);
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") return { ...EMPTY, keys: {} };
+    if (err.code === "ENOENT") return empty;
     throw new Error(`Couldn't read ${file} (${reason}) or move it aside (${err.message}); fmrl-mcp won't overwrite it. Fix or move that file.`);
   }
-  log?.(`fmrl-mcp: couldn't read ${file} (${reason}); moved it to ${aside} and started a new one. Your old key and key ring are in that file.`);
-  return { ...EMPTY, keys: {} };
+  log?.(`fmrl-mcp: couldn't read ${file} (${reason}); moved it to ${aside} and started a new one. ${contentsNote}`);
+  return empty;
 }
 
 /**
@@ -75,13 +83,14 @@ async function moveAside(file: string, reason: string, log?: (line: string) => v
  * malformed rings entry is dropped.
  */
 export async function readCredentials(file: string, log?: (line: string) => void): Promise<CredentialsFile> {
+  const RING_NOTE = "Your old key and key ring are in that file.";
   let raw: string;
   try {
     raw = await readFile(file, "utf8");
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "ENOENT") return { ...EMPTY, keys: {} };
-    return moveAside(file, err.message, log);
+    return moveAside(file, err.message, { ...EMPTY, keys: {} }, RING_NOTE, log);
   }
   let parsed: Partial<CredentialsFile>;
   try {
@@ -89,7 +98,7 @@ export async function readCredentials(file: string, log?: (line: string) => void
   } catch {
     // Not the parse error's own message: V8 quotes a fragment of the
     // offending input in it, which could be part of a ring.
-    return moveAside(file, "not valid JSON", log);
+    return moveAside(file, "not valid JSON", { ...EMPTY, keys: {} }, RING_NOTE, log);
   }
   // keys must be a record: typeof [] is "object" too, and an array would read
   // as holding no key for any base URL, so the next write would replace it.
@@ -100,15 +109,24 @@ export async function readCredentials(file: string, log?: (line: string) => void
     if (sanitized.length > 0) out.rings = Object.fromEntries(sanitized);
     return out;
   }
-  return moveAside(file, "not a version 1 credentials file", log);
+  return moveAside(file, "not a version 1 credentials file", { ...EMPTY, keys: {} }, RING_NOTE, log);
+}
+
+/**
+ * writeJsonFile serializes data as pretty JSON to file, atomically: a
+ * sibling temp file with mode 0600, renamed into place. The parent directory
+ * is created (and, if it already existed, tightened) to mode 0700.
+ */
+export async function writeJsonFile(file: string, data: unknown): Promise<void> {
+  const dir = path.dirname(file);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") await chmod(dir, 0o700);
+  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  await rename(tmp, file);
 }
 
 /** writeCredentials writes to a sibling temp file with mode 0600 and renames it into place. */
 export async function writeCredentials(file: string, data: CredentialsFile): Promise<void> {
-  const dir = path.dirname(file);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  if (process.platform !== "win32") await chmod(dir, 0o700);
-  const tmp = path.join(dir, `.credentials.json.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
-  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
-  await rename(tmp, file);
+  await writeJsonFile(file, data);
 }

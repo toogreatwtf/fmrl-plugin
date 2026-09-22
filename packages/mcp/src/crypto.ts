@@ -51,7 +51,8 @@ export const MAX_SEALED_RECORD = 1024;
 // A nonce, a tag and a two-byte JSON object at the least.
 const MIN_SEALED_RECORD = 12 + 16 + 2;
 const RING_SHAPE = /^[A-Za-z0-9_-]{43}$/;
-const PAGE_KEY_SHAPE = /^[A-Za-z0-9_-]{43}$/;
+/** PAGE_KEY_SHAPE is a private page's content key: 43 base64url characters, the same shape a ring has. */
+export const PAGE_KEY_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 
 /** OpenedRecord is what a sealed record holds: the page's content key and its title. */
 export interface OpenedRecord { key: string; title: string }

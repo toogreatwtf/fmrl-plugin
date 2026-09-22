@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   const api = new FmrlApi(cfg.baseUrl);
   const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, ringFromEnv: cfg.ring, file: credentialsPath(), log });
-  const server = createServer({ api, keys, log });
+  const server = createServer({ api, keys, log, pluginRoot: process.env.CLAUDE_PLUGIN_ROOT });
   await server.connect(new StdioServerTransport());
 }
 

@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { mkdtemp, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, unlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -10,7 +10,7 @@ import { readCredentials, writeCredentials } from "../src/credentials.js";
 import { newRing, openEnvelope, openRecord, sealRecord } from "../src/crypto.js";
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
-import { createServer, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, type ServerDeps } from "../src/server.js";
+import { createServer, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string;
@@ -483,5 +483,59 @@ describe("tools", () => {
     expect(text(got)).toContain(NOT_HELD_LINE);
     expect(text(got)).toContain(SEVEN_DAYS_PRIVATE);
     expect(got.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, private: true, key_held: false });
+  });
+});
+
+describe("plugin freshness", () => {
+  const [major, minor] = VERSION.split(".");
+  /** root is a fake CLAUDE_PLUGIN_ROOT whose manifest carries version. */
+  const root = async (version: string): Promise<string> => {
+    const r = await mkdtemp(path.join(tmpdir(), "fmrl-plugin-"));
+    await mkdir(path.join(r, ".claude-plugin"));
+    await writeFile(path.join(r, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "fmrl", version }));
+    return r;
+  };
+  const withRoot = async (pluginRoot: string | undefined, fn: (c: Client) => Promise<void>) => {
+    const api = new FmrlApi(fake.baseUrl);
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: path.join(dir, "plugin-creds.json") });
+    const c = await connect({ api, keys, pluginRoot });
+    try { await fn(c); } finally { await c.close(); }
+  };
+  const whoami = async (c: Client) => text((await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult);
+
+  it("a stale plugin: the instructions raise it and fmrl_whoami says how to fix it", async () => {
+    await withRoot(await root("0.3.0"), async (c) => {
+      const instructions = c.getInstructions() ?? "";
+      expect(instructions).toContain(`installed 0.3, fmrl-mcp is at ${major}.${minor}`);
+      expect(instructions).toContain("claude plugin update fmrl@fmrl-plugin");
+      expect(await whoami(c)).toContain(`The fmrl plugin is out of date: installed 0.3, fmrl-mcp is at ${major}.${minor}.`);
+    });
+  });
+  it("a plugin a patch behind: no instructions, and fmrl_whoami says it is up to date", async () => {
+    await withRoot(await root(`${major}.${minor}.0`), async (c) => {
+      expect(c.getInstructions()).toBeUndefined();
+      expect(await whoami(c)).toContain(`The fmrl plugin is up to date (plugin ${major}.${minor}.0, fmrl-mcp ${VERSION}).`);
+    });
+  });
+  it("no CLAUDE_PLUGIN_ROOT: no instructions and no plugin line", async () => {
+    await withRoot(undefined, async (c) => {
+      expect(c.getInstructions()).toBeUndefined();
+      expect(await whoami(c)).not.toContain("fmrl plugin");
+    });
+  });
+  it("a malformed plugin.json: no instructions and no plugin line", async () => {
+    const r = await mkdtemp(path.join(tmpdir(), "fmrl-plugin-"));
+    await mkdir(path.join(r, ".claude-plugin"));
+    await writeFile(path.join(r, ".claude-plugin", "plugin.json"), "{ not json");
+    await withRoot(r, async (c) => {
+      expect(c.getInstructions()).toBeUndefined();
+      expect(await whoami(c)).not.toContain("fmrl plugin");
+    });
+  });
+  it("the other tools' results are unchanged by a stale plugin", async () => {
+    await withRoot(await root("0.3.0"), async (c) => {
+      const r = (await c.callTool({ name: "fmrl_publish", arguments: { content: "# hi" } })) as ToolResult;
+      expect(text(r)).not.toContain("plugin");
+    });
   });
 });

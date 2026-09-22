@@ -103,4 +103,124 @@ describe("FmrlApi", () => {
     await api.publish(key, { content: "MARKYENC{}", encrypted: true });
     expect(fake.requests.at(-1)?.body as Record<string, unknown>).not.toHaveProperty("sealed");
   });
+
+  describe("revisions", () => {
+    it("lists the initial revision after publish and reads its content", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi", format: "md", title: "Hi" });
+      const list = await api.revisions(key, pub.id);
+      expect(list.rev).toBe(1);
+      expect(list.pinned_rev).toBeUndefined();
+      expect(list.revisions).toHaveLength(1);
+      expect(list.revisions[0]).toMatchObject({ rev: 1, title: "Hi", source: "api", editor: { kind: "key" } });
+      expect(list.revisions[0].editor.key).toBe(key.slice(0, 9));
+      const rev = await api.getRevision(key, pub.id, 1);
+      expect(rev).toMatchObject({ rev: 1, format: "md", content: "# hi", title: "Hi" });
+    });
+    it("404s a revision that doesn't exist", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi" });
+      await expect(api.getRevision(key, pub.id, 9)).rejects.toMatchObject({ status: 404, code: "not_found" });
+    });
+  });
+
+  describe("update", () => {
+    it("edits as the owner and grows the revision list", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      const updated = await api.update(key, pub.id, { content: "# bye", format: "md" });
+      expect(updated).toMatchObject({ id: pub.id, rev: 2, status: "live" });
+      const list = await api.revisions(key, pub.id);
+      expect(list.rev).toBe(2);
+      expect(list.revisions.map((r) => r.rev)).toEqual([1, 2]);
+      expect((await api.getRevision(key, pub.id, 2)).content).toBe("# bye");
+    });
+    it("sends the manage-token header only when given", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      await api.update(key, pub.id, { content: "# bye", format: "md" });
+      expect(fake.requests.at(-1)?.manageToken).toBeUndefined();
+      const manageToken = pub.manage_url.split("#k=")[1];
+      const stranger = await api.mint("y");
+      await api.update(stranger.key, pub.id, { content: "# again", format: "md" }, manageToken);
+      expect(fake.requests.at(-1)?.manageToken).toBe(manageToken);
+    });
+    it("lets a foreign key edit with the right manage token, and refuses without one", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      const stranger = await api.mint("y");
+      await expect(api.update(stranger.key, pub.id, { content: "# nope", format: "md" })).rejects.toMatchObject({ status: 404, code: "not_found" });
+      const manageToken = pub.manage_url.split("#k=")[1];
+      const updated = await api.update(stranger.key, pub.id, { content: "# yes", format: "md" }, manageToken);
+      expect(updated.rev).toBe(2);
+      await expect(api.update(stranger.key, pub.id, { content: "# wrong token" }, "wrong")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    });
+    it("409s a stale base_rev and carries the current rev in the ApiError", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      await api.update(key, pub.id, { content: "# bye", format: "md", base_rev: 1 });
+      const err = await api.update(key, pub.id, { content: "# stale", format: "md", base_rev: 1 }).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({ status: 409, code: "conflict", rev: 2 });
+    });
+  });
+
+  describe("label", () => {
+    it("sets a name that shows up on me() and on later edits", async () => {
+      const { key } = await api.mint("x");
+      const me1 = await api.setLabel(key, "Aria");
+      expect(me1.label).toBe("Aria");
+      expect(await (await api.me(key)).label).toBe("Aria");
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      const list = await api.revisions(key, pub.id);
+      expect(list.revisions[0].editor.name).toBe("Aria");
+    });
+    it("rejects a label over 64 runes", async () => {
+      const { key } = await api.mint("x");
+      await expect(api.setLabel(key, "x".repeat(65))).rejects.toMatchObject({ status: 400, code: "bad_request" });
+    });
+  });
+
+  describe("watch and inbox", () => {
+    it("watches, sees a stranger's edit in the inbox, marks it seen, and unwatches", async () => {
+      const owner = await api.mint("owner");
+      const editor = await api.mint("editor");
+      const pub = await api.publish(owner.key, { content: "# hi", format: "md" });
+      // auto-watched by the owner at publish; a stranger's edit should show up in the owner's inbox
+      const manageToken = pub.manage_url.split("#k=")[1];
+      await api.update(editor.key, pub.id, { content: "# edited by another" }, manageToken);
+      const inbox = await api.inbox(owner.key);
+      expect(inbox.items).toHaveLength(1);
+      expect(inbox.items[0]).toMatchObject({ id: pub.id, rev: 2, seen_rev: 1 });
+      expect(inbox.items[0].revisions).toHaveLength(1);
+      expect(inbox.items[0].revisions[0].editor.key).toBe(editor.key.slice(0, 9));
+      const seen = await api.inboxSeen(owner.key, pub.id, 2);
+      expect(seen).toMatchObject({ id: pub.id, rev: 2, seen_rev: 2 });
+      expect((await api.inbox(owner.key)).items).toHaveLength(0);
+      await api.unwatch(owner.key, pub.id);
+      await expect(api.unwatch(owner.key, pub.id)).rejects.toMatchObject({ status: 404, code: "not_watching" });
+    });
+    it("does not show the watcher's own edits in their inbox", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      await api.update(key, pub.id, { content: "# still me" });
+      expect((await api.inbox(key)).items).toHaveLength(0);
+    });
+    it("204 resolves on unwatch, and a fresh watch call reports the current rev", async () => {
+      const { key } = await api.mint("x");
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      const w = await api.watch(key, pub.id);
+      expect(w).toMatchObject({ id: pub.id, rev: 1, seen_rev: 1 });
+      await expect(api.unwatch(key, pub.id)).resolves.toBeUndefined();
+    });
+    it("409s watch_limit once a key is already at the cap", async () => {
+      const { key } = await api.mint("x");
+      fake.watchLimit = 1;
+      // publish auto-watches this key at 1/1 already
+      const pub = await api.publish(key, { content: "# hi", format: "md" });
+      const other = await api.publish(key, { content: "# another" });
+      await expect(api.watch(key, other.id)).rejects.toMatchObject({ status: 409, code: "watch_limit" });
+      expect((await api.watch(key, pub.id)).rev).toBe(1); // re-watching an already-watched page never hits the cap
+    });
+  });
 });

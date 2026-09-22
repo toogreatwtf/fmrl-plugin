@@ -65,7 +65,7 @@ export function pluginInstructions(s: PluginStatus | undefined): string | undefi
     "3. If you can't run shell commands, or `claude` isn't on PATH, give them the steps instead. In Claude Code: run `/plugin marketplace update fmrl-plugin`, then open /plugin → Installed → fmrl → Update now, and restart. In the Claude desktop app: Settings → Plugins → Fmrl → Update.",
     `4. Then walk them through turning on auto-update, so the plugin keeps itself current: ${AUTO_UPDATE}. There is no command for this; it is a switch they flip in the plugin manager. Claude Code leaves auto-update off for marketplaces outside Anthropic's own.`,
     "",
-    "Never edit files under ~/.claude/plugins by hand. After the restart, fmrl_whoami says whether the plugin is up to date.",
+    "Never edit files under ~/.claude/plugins by hand. After the restart, /fmrl:whoami (the fmrl_whoami tool) says whether the plugin is up to date.",
   ].join("\n");
 }
 

@@ -32,7 +32,7 @@ curl -sX POST https://fmrl.site/api/v1/publish \
 
 ## What you get
 
-In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page.
+In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page. `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date.
 
 Any MCP client gets six tools:
 

@@ -48,9 +48,9 @@ beforeEach(async () => {
 afterEach(async () => { await client.close(); await fake.close(); });
 
 describe("tools", () => {
-  it("lists exactly the six tools", async () => {
+  it("lists exactly the seven tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["fmrl_delete", "fmrl_get", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_whoami"]);
+    expect(names).toEqual(["fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_whoami"]);
   });
   it("fmrl_publish mints a key on first use and returns url, expiry, the seven-days line and the manage link", async () => {
     const r = await call("fmrl_publish", { content: "# Hello", title: "Hello" });
@@ -64,7 +64,7 @@ describe("tools", () => {
       `Published: https://fmrl.test/${id}`,
       "Expires 2026-09-15T12:00:00Z",
       "This page lasts seven days unless someone keeps it on the page itself.",
-      `Manage link (removes the page; give it only to someone who should be able to): https://fmrl.test/manage/${id}#k=tok${id}`,
+      `Manage link (removes the page; give it only to someone who should be able to): https://fmrl.test/manage/${id}#k=tok${id}manage0`,
       `See your pages on fmrl.site: open https://fmrl.test/link/code${id}#r=${prefix}.${ring} once in your browser (it works for an hour, and once). It also carries the ring that lets that browser open your private pages.`,
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
@@ -482,6 +482,7 @@ describe("tools", () => {
     const priv = await call("fmrl_publish", { content: "# Theirs", private: true });
     const id = (priv.structuredContent as { id: string }).id;
     fake.docs.get(id)!.owner = "fmrl_" + "Z".repeat(32);
+    await unlink(pagesFile); // publishing remembered the key; this machine is one that never held it
     const got = await call("fmrl_get", { id });
     expect(got.isError).toBeFalsy();
     expect(text(got)).toContain(NOT_HELD_LINE);
@@ -598,3 +599,138 @@ describe("fmrl_get reads the page", () => {
     expect(text(got)).not.toContain(key);
   });
 });
+
+describe("fmrl_edit", () => {
+  const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
+  const puts = () => fake.requests.filter((q) => q.method === "PUT");
+  /** second is another agent: its own key, its own credentials and page store, the same API. */
+  const second = async () => {
+    const api2 = new FmrlApi(fake.baseUrl);
+    const keys2 = new KeyStore({ api: api2, baseUrl: fake.baseUrl, file: path.join(dir, "credentials-b.json") });
+    const pages2 = new PageStore(fake.baseUrl, path.join(dir, "pages-b.json"));
+    const c = await connect({ api: api2, keys: keys2, pages: pages2 });
+    return { call: async (name: string, args: Record<string, unknown> = {}) => (await c.callTool({ name, arguments: args })) as ToolResult, pages: pages2 };
+  };
+  const manageTok = (manageUrl: string) => manageUrl.slice(manageUrl.indexOf("#k=") + 3);
+
+  it("describes the tool as the brief words it", async () => {
+    const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_edit")!;
+    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it.");
+  });
+  it("publishing remembers the page's manage token, and a private page's key", async () => {
+    const pub = await call("fmrl_publish", { content: "# Open" });
+    const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
+    expect(await pagesAt().get(id)).toEqual({ manage: manageTok(manage_url) });
+    const priv = await call("fmrl_publish", { content: "# Closed", private: true });
+    const p = priv.structuredContent as { id: string; url: string; manage_url: string };
+    expect(await pagesAt().get(p.id)).toEqual({ key: p.url.split("#p=")[1], manage: manageTok(p.manage_url) });
+  });
+  it("the owner edits its own public page, and the next read is the new revision", async () => {
+    const pub = await call("fmrl_publish", { content: "# One", format: "md" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const r = await call("fmrl_edit", { id, content: "# Two", format: "md", title: "Two", base_rev: 1 });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2 });
+    expect(puts()).toHaveLength(1);
+    expect(puts()[0]).toMatchObject({ path: `/api/v1/docs/${id}`, body: { content: "# Two", format: "md", title: "Two", base_rev: 1 } });
+    const got = await call("fmrl_get", { id });
+    expect(got.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two" });
+  });
+  it("another key edits with the manage link passed once, then by bare id, the token remembered only once it worked", async () => {
+    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
+    const b = await second();
+
+    const bare = await b.call("fmrl_edit", { id, content: "# Nope" });
+    expect(bare.isError).toBe(true);
+    expect(text(bare)).toBe(`You can edit this page with its manage link (https://fmrl.test/manage/${id}#k=…); pass it as id once and it is remembered.`);
+
+    const forged = await b.call("fmrl_edit", { id: `https://fmrl.test/manage/${id}#k=${"f".repeat(22)}`, content: "# Forged" });
+    expect(forged.isError).toBe(true);
+    expect(await b.pages.get(id)).toEqual({});
+
+    const once = await b.call("fmrl_edit", { id: manage_url, content: "# Edited by B", base_rev: 1 });
+    expect(once.isError).toBeFalsy();
+    expect(once.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2 });
+    expect(puts().at(-1)?.manageToken).toBe(manageTok(manage_url));
+    expect(await b.pages.get(id)).toEqual({ manage: manageTok(manage_url) });
+
+    const again = await b.call("fmrl_edit", { id, content: "# Again", base_rev: 2 });
+    expect(again.isError).toBeFalsy();
+    expect(again.structuredContent).toMatchObject({ rev: 3 });
+    expect(puts().at(-1)?.manageToken).toBe(manageTok(manage_url));
+  });
+  it("re-seals a private page under its same key, so the original link reads the new revision", async () => {
+    const priv = await call("fmrl_publish", { content: "# Plan\n\nfirst", private: true });
+    const { id, url, manage_url } = priv.structuredContent as { id: string; url: string; manage_url: string };
+    const key = url.split("#p=")[1];
+    const b = await second();
+
+    const r = await b.call("fmrl_edit", { id: `https://fmrl.test/manage/${id}#p=${key}&k=${manageTok(manage_url)}`, content: "# Plan v2\n\nsecond", format: "md", title: "Plan v2", base_rev: 1 });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}#p=${key}`, rev: 2 });
+    const put = puts().at(-1)!;
+    const body = put.body as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["base_rev", "content", "encrypted", "format"]);
+    expect(body).toMatchObject({ encrypted: true, format: "html", base_rev: 1 });
+    const html = await openEnvelope(body.content as string, { key });
+    expect(html).toContain("<h1>Plan v2</h1>");
+    expect(html).toContain("<title>Plan v2</title>");
+    // The key stays here; the token is remembered because the edit worked.
+    expect(JSON.stringify(fake.requests)).not.toContain(key);
+    expect(await b.pages.get(id)).toEqual({ key, manage: manageTok(manage_url) });
+
+    const got = await call("fmrl_get", { id: url });
+    expect(got.structuredContent).toMatchObject({ rev: 2, latest_rev: 2 });
+    expect((got.structuredContent as { content: string }).content).toContain("<h1>Plan v2</h1>");
+  });
+  it("the owner edits its own private page through its ring, without a manage token and without sealed", async () => {
+    const priv = await call("fmrl_publish", { content: "# Mine", private: true });
+    const { id, url, manage_url } = priv.structuredContent as { id: string; url: string; manage_url: string };
+    // Forget the key publishing remembered, keeping its manage token: the ring opens the page, and the owner has no use for the token.
+    await writeFile(pagesFile, JSON.stringify({ version: 1, pages: { [fake.baseUrl]: { [id]: { manage: manageTok(manage_url) } } } }));
+    const r = await call("fmrl_edit", { id, content: "# Mine, again", base_rev: 1 });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toEqual({ id, url, rev: 2 });
+    const put = puts().at(-1)!;
+    expect(put.manageToken).toBeUndefined();
+    expect(put.body).not.toHaveProperty("sealed");
+    expect(await openEnvelope((put.body as { content: string }).content, { key: url.split("#p=")[1] })).toContain("<h1>Mine, again</h1>");
+  });
+  it("a private page with no key here fails with the sentence, and nothing is sent", async () => {
+    const priv = await call("fmrl_publish", { content: "# Sealed", private: true });
+    const { id, manage_url } = priv.structuredContent as { id: string; manage_url: string };
+    const b = await second();
+    const r = await b.call("fmrl_edit", { id: manage_url, content: "# Mine now" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toBe(PRIVATE_NEEDS_KEY);
+    expect(puts()).toHaveLength(0);
+    expect(await b.pages.get(id)).toEqual({});
+  });
+  it("a stale base_rev fails naming the latest revision", async () => {
+    const pub = await call("fmrl_publish", { content: "# One", format: "md" });
+    const id = (pub.structuredContent as { id: string }).id;
+    await call("fmrl_edit", { id, content: "# Two", base_rev: 1 });
+    const r = await call("fmrl_edit", { id, content: "# Also two", base_rev: 1 });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toBe("Revision 2 is the latest; read it with fmrl_get and edit from there.");
+    expect(r.structuredContent).toMatchObject({ latest_rev: 2 });
+  });
+  it("no edit ever sends sealed", async () => {
+    const priv = await call("fmrl_publish", { content: "# S", private: true });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    await call("fmrl_edit", { id: url, content: "# S2" });
+    const pub = await call("fmrl_publish", { content: "# P" });
+    await call("fmrl_edit", { id: (pub.structuredContent as { id: string }).id, content: "# P2" });
+    expect(puts()).toHaveLength(2);
+    for (const q of puts()) expect(q.body).not.toHaveProperty("sealed");
+  });
+  it("refuses blank content before any request", async () => {
+    const pub = await call("fmrl_publish", { content: "# One" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const r = await call("fmrl_edit", { id, content: "   " });
+    expect(r.isError).toBe(true);
+    expect(puts()).toHaveLength(0);
+  });
+});
+

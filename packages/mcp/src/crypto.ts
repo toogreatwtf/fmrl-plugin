@@ -17,12 +17,19 @@ function unb64url(s: string): Uint8Array<ArrayBuffer> { return new Uint8Array(Bu
 /** seal encrypts a complete HTML document under a fresh random key and returns the key (43 base64url chars) for the link's fragment. */
 export async function seal(html: string): Promise<Sealed> {
   if (html.length === 0) throw new Error("nothing to encrypt");
+  const key = b64url(globalThis.crypto.getRandomValues(new Uint8Array(32)));
+  return { envelope: await sealWithKey(html, key), key };
+}
+
+/** sealWithKey encrypts a complete HTML document under an existing page key (43 base64url chars) with a fresh nonce: a new revision of a private page, which every link carrying that key keeps opening. */
+export async function sealWithKey(html: string, pageKey: string): Promise<string> {
+  if (html.length === 0) throw new Error("nothing to encrypt");
+  if (!PAGE_KEY_SHAPE.test(pageKey)) throw new Error("A page key is 43 base64url characters.");
   const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12));
-  const rawKey = globalThis.crypto.getRandomValues(new Uint8Array(32));
-  const key = await subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
+  const key = await subtle.importKey("raw", unb64url(pageKey), "AES-GCM", false, ["encrypt"]);
   const data = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, new TextEncoder().encode(html)));
   const env = { v: 2, alg: "aes-256-gcm", kdf: "none", salt: "", nonce: b64(nonce), data: b64(data) };
-  return { envelope: "MARKYENC" + JSON.stringify(env), key: b64url(rawKey) };
+  return "MARKYENC" + JSON.stringify(env);
 }
 
 /** openEnvelope decrypts a v2 kdf-none envelope with its key; it rejects for the wrong key, which is how a candidate key is proved. */

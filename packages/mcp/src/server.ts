@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, type DocResponse, type Editor, type FmrlApi, type MeResponse, type PublishRequest, type PublishResponse } from "./api.js";
-import { openRecord, seal, sealRecord, type OpenedRecord } from "./crypto.js";
+import { ApiError, type DocResponse, type Editor, type FmrlApi, type MeResponse, type PublishRequest, type PublishResponse, type UpdateResponse } from "./api.js";
+import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef } from "./ids.js";
 import { prefixOf, type KeyStore } from "./keys.js";
@@ -80,8 +80,8 @@ function publishText(p: PublishResponse): string {
 export const SEVEN_DAYS_PRIVATE = "This page lasts seven days; a private page cannot be kept.";
 export const PRIVATE_LINE = "This page is private: it was encrypted here before upload, and the key is the part of the link after #p=. fmrl.site cannot read or recover it.";
 
-/** preparePrivate renders (if Markdown) and seals content, returning the request body, the link key, and the title the sealed record carries: the title given, else the first heading for Markdown, else the document's <title> or first heading for HTML. The request body never carries a title. */
-async function preparePrivate(content: string, format: "html" | "md" | undefined, title: string | undefined): Promise<{ body: { content: string; format: "html"; encrypted: true }; key: string; title: string }> {
+/** preparePrivate renders (if Markdown) and seals content — under pageKey when one is given (a new revision of a private page), else under a fresh key — returning the request body, the link key, and the title the sealed record carries: the title given, else the first heading for Markdown, else the document's <title> or first heading for HTML. The request body never carries a title. */
+async function preparePrivate(content: string, format: "html" | "md" | undefined, title: string | undefined, pageKey?: string): Promise<{ body: { content: string; format: "html"; encrypted: true }; key: string; title: string }> {
   let html = content;
   let name: string;
   if (format === "md" || (format === undefined && !looksLikeHTML(content))) {
@@ -94,7 +94,7 @@ async function preparePrivate(content: string, format: "html" | "md" | undefined
   } else {
     name = title || documentTitle(content);
   }
-  const sealed = await seal(html);
+  const sealed = pageKey ? { envelope: await sealWithKey(html, pageKey), key: pageKey } : await seal(html);
   const envBytes = Buffer.byteLength(sealed.envelope, "utf8");
   if (envBytes > MAX_BYTES) {
     throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits.`);
@@ -174,6 +174,17 @@ function readText(r: PageRead, at: string): string {
   return [meta, `Revision ${r.rev} of ${r.latest_rev}, edited by ${editorText(r.editor)} at ${at}.`, ...rest, "", r.content ?? r.content_note ?? ""].join("\n");
 }
 
+export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
+export const MANAGE_HINT = (origin: string, id: string) => `You can edit this page with its manage link (${origin}/manage/${id}#k=…); pass it as id once and it is remembered.`;
+export const CONFLICT = (rev: number) => `Revision ${rev} is the latest; read it with fmrl_get and edit from there.`;
+
+/** EditConflict is a 409 on fmrl_edit: someone saved revision latest after the base_rev the caller read. */
+class EditConflict extends Error {
+  constructor(public readonly latest: number) { super(CONFLICT(latest)); }
+}
+
+type EditResult = { id: string; url: string; rev: number };
+
 export const LIST_EMPTY = "This key has no pages right now; removed and expired pages are not listed.";
 
 function when(r: PageRow): string {
@@ -213,6 +224,10 @@ const readOutput = {
   editor: z.object({ kind: z.string(), key: z.string().optional(), name: z.string().optional() }),
   content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
 };
+const editOutput = {
+  // On a conflict the tool fails with only id and latest_rev; url and rev come with every saved edit.
+  id: z.string(), url: z.string().optional(), rev: z.number().optional(), latest_rev: z.number().optional(),
+};
 const listOutput = { docs: z.array(z.object(pageOutput)) };
 const meOutput = {
   prefix: z.string(), created_at: z.string(),
@@ -220,7 +235,7 @@ const meOutput = {
   linked_at: z.string().nullable().optional(), link_url: z.string().optional(),
 };
 
-/** createServer registers the six tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
+/** createServer registers the seven tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
@@ -257,6 +272,19 @@ export function createServer(deps: ServerDeps): McpServer {
     return ring ? { ...p, link_url: withRing(p.link_url, k, ring) } : p;
   };
 
+  /** remember stores what this machine may keep about a page; a store that can't be written costs a log line, never the tool call, and the line never carries the secret. */
+  const remember = async (id: string, s: { key?: string; manage?: string }): Promise<void> => {
+    try {
+      await pages.remember(id, s);
+    } catch (e) {
+      log?.(`fmrl-mcp: couldn't remember page ${id}: ${errorText(e)}`);
+    }
+  };
+  /** manageTokenOf is the #k= token of a publish's manage_url. */
+  const manageTokenOf = (manageUrl: string): string | undefined => {
+    try { return parsePageRef(manageUrl).manage; } catch { return undefined; }
+  };
+
   const run = async <T extends Record<string, unknown>>(fn: (key: string) => Promise<T>, render: (v: T) => string): Promise<ToolResult> => {
     try {
       const v = await keys.withKey(fn);
@@ -277,7 +305,11 @@ export function createServer(deps: ServerDeps): McpServer {
       return fail("Nothing to publish: the content is empty.");
     }
     if (!priv) {
-      return run<PublishResponse & Record<string, unknown>>(async (k) => (await publishAs(k, { content, format, title })) as PublishResponse & Record<string, unknown>, publishText);
+      return run<PublishResponse & Record<string, unknown>>(async (k) => {
+        const p = await publishAs(k, { content, format, title });
+        await remember(p.id, { manage: manageTokenOf(p.manage_url) });
+        return p as PublishResponse & Record<string, unknown>;
+      }, publishText);
     }
     let prepared: Awaited<ReturnType<typeof preparePrivate>>;
     try {
@@ -286,7 +318,11 @@ export function createServer(deps: ServerDeps): McpServer {
       return fail(errorText(e));
     }
     return run<PublishResponse & Record<string, unknown>>(
-      async (k) => withFragment(await publishAs(k, prepared.body, { key: prepared.key, title: prepared.title }), prepared.key) as PublishResponse & Record<string, unknown>,
+      async (k) => {
+        const p = await publishAs(k, prepared.body, { key: prepared.key, title: prepared.title });
+        await remember(p.id, { key: prepared.key, manage: manageTokenOf(p.manage_url) });
+        return withFragment(p, prepared.key) as PublishResponse & Record<string, unknown>;
+      },
       privateText,
     );
   };
@@ -379,6 +415,66 @@ export function createServer(deps: ServerDeps): McpServer {
         const src = readSource(opened.html);
         return src ? { ...row, content: src.source, content_format: src.format } : { ...row, content: opened.html, content_format: "html" };
       }, (v) => readText(v, at));
+    },
+  );
+
+  server.registerTool(
+    "fmrl_edit",
+    {
+      title: "Edit a fmrl.site page",
+      description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it.",
+      inputSchema: {
+        id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=), which are remembered here once they work."),
+        content: z.string().min(1).describe("The page's new HTML or Markdown (2 MiB at most)."),
+        format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it. A private page is always sent as HTML, rendered here from Markdown."),
+        title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
+        base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),
+      },
+      outputSchema: editOutput,
+    },
+    async ({ id, content, format, title, base_rev }) => {
+      let ref: ReturnType<typeof parsePageRef>;
+      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      if (content.trim() === "") return fail("Nothing to save: the content is empty.");
+      try {
+        const v = await keys.withKey(async (k): Promise<EditResult> => {
+          let stored: { key?: string; manage?: string } = {};
+          try {
+            stored = await pages.get(ref.id);
+          } catch (e) {
+            log?.(`fmrl-mcp: couldn't read the page store: ${errorText(e)}`);
+          }
+          const d = await api.get(k, ref.id);
+          let body: Parameters<FmrlApi["update"]>[2] = { content, format, title, base_rev };
+          let pageKey: string | undefined;
+          if (d.private) {
+            const current = await api.getRevision(k, ref.id, d.rev ?? 1);
+            // The link's manage token is left out here: it is remembered only once an edit made with it is accepted.
+            const opened = await openPrivatePage({ id: ref.id, key: ref.key }, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+            if (!opened) throw new Error(PRIVATE_NEEDS_KEY);
+            pageKey = opened.key;
+            body = { ...(await preparePrivate(content, format, title, pageKey)).body, base_rev };
+          }
+          // The server hands a page's sealed record only to the key that owns it; that key needs no token.
+          // Where it can't be told (a public page), the token goes whenever there is one: the server takes both.
+          const owned = d.sealed !== undefined;
+          const token = owned ? undefined : (ref.manage ?? stored.manage);
+          let u: UpdateResponse;
+          try {
+            u = await api.update(k, ref.id, body, token);
+          } catch (e) {
+            if (e instanceof ApiError && e.status === 409 && e.code === "conflict" && e.rev !== undefined) throw new EditConflict(e.rev);
+            if (e instanceof ApiError && e.status === 404 && token === undefined) throw new Error(MANAGE_HINT(new URL(d.url).origin, ref.id));
+            throw e;
+          }
+          if (token !== undefined && token === ref.manage && token !== stored.manage) await remember(ref.id, { manage: token });
+          return { id: u.id, url: pageKey ? `${u.url}#p=${pageKey}` : u.url, rev: u.rev };
+        });
+        return ok(`Saved revision ${v.rev} of ${v.url}`, v);
+      } catch (e) {
+        if (e instanceof EditConflict) return { ...fail(e.message), structuredContent: { id: ref.id, latest_rev: e.latest } };
+        return fail(errorText(e));
+      }
     },
   );
 

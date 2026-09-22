@@ -171,7 +171,8 @@ export async function startFakeApi(): Promise<FakeApi> {
         rev: 1, at: isoAt(0), size, sha256: sha256hex(b.content), title: b.title ?? "", source: "api", format, content: b.content,
         editor: editorFor(api, key),
       };
-      const manageToken = `tok${id}`;
+      // A real manage token is 22 base64url characters; parsePageRef drops any other shape.
+      const manageToken = `tok${id}manage0`;
       api.docs.set(id, {
         id, owner: key, format, size, title: b.title, encrypted: b.encrypted === true, sealed: typeof b.sealed === "string" ? b.sealed : undefined,
         rev: 1, revisions: [initialRevision], manageToken,

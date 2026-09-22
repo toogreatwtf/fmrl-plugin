@@ -7,9 +7,10 @@ export interface PublishResponse { id: string; url: string; raw_url: string; man
  * DocResponse is a page as GET /api/v1/docs/{id} and each GET /api/v1/docs row
  * describe it. rev and private come from servers with sealed records
  * (markymd #71); sealed is present only on a private page that has one, and
- * only to the key that owns the page.
+ * only to the key that owns the page. owned is true when the calling key is
+ * the page's owner key (always, on a GET /api/v1/docs row).
  */
-export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string; rev?: number; private?: boolean; sealed?: string }
+export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string; rev?: number; private?: boolean; sealed?: string; owned?: boolean }
 /** DocsResponse is GET /api/v1/docs: this key's pages, newest first, 50 at most, removed and expired left out. */
 export interface DocsResponse { docs: DocResponse[] }
 /** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. */

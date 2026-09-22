@@ -75,6 +75,7 @@ function docRow(d: FakeDoc, caller: string): Record<string, unknown> {
   return {
     id: d.id, url: `https://fmrl.test/${d.id}`, status: d.status ?? "live", format: d.format, size: d.size, rev: d.rev ?? 1,
     private: d.encrypted === true,
+    owned: d.owner === caller,
     ...(d.sealed && d.owner === caller ? { sealed: d.sealed } : {}),
     expires_at: pinned ? null : "2026-09-15T12:00:00Z",
     pinned,

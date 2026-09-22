@@ -205,6 +205,11 @@ export async function startFakeApi(): Promise<FakeApi> {
       const n = parseInt(revisionMatch[2], 10);
       const rev = (d.revisions ?? []).find((r) => r.rev === n);
       if (!rev) return fail(res, 404, "not_found", "No such revision of that page.");
+      // Seen-on-read: reading a revision of a page this key watches counts
+      // as having seen up through it, the same way the server clears an
+      // inbox entry without a separate POST /inbox/seen.
+      const seenRev = d.watchers?.get(key);
+      if (seenRev !== undefined && n > seenRev) d.watchers!.set(key, n);
       return json(res, 200, rev);
     }
     const watchMatch = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)\/watch$/);
@@ -220,7 +225,10 @@ export async function startFakeApi(): Promise<FakeApi> {
         }
         const wb = (body ?? {}) as { seen_rev?: unknown };
         const currentRev = d.rev ?? 1;
-        const seenRev = typeof wb.seen_rev === "number" ? wb.seen_rev : currentRev;
+        // Idempotent: an explicit seen_rev always wins; otherwise a fresh
+        // watch starts caught up at the current rev, and re-watching an
+        // already-watched page leaves its seen_rev exactly where it was.
+        const seenRev = typeof wb.seen_rev === "number" ? wb.seen_rev : (d.watchers?.get(key) ?? currentRev);
         d.watchers = d.watchers ?? new Map();
         d.watchers.set(key, seenRev);
         return json(res, 200, { id: d.id, url: `https://fmrl.test/${d.id}`, private: d.encrypted === true, rev: currentRev, seen_rev: seenRev });

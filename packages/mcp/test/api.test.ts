@@ -200,6 +200,31 @@ describe("FmrlApi", () => {
       await api.unwatch(owner.key, pub.id);
       await expect(api.unwatch(owner.key, pub.id)).rejects.toMatchObject({ status: 404, code: "not_watching" });
     });
+    it("reading a revision clears that inbox entry without calling inboxSeen", async () => {
+      const owner = await api.mint("owner");
+      const editor = await api.mint("editor");
+      const pub = await api.publish(owner.key, { content: "# hi", format: "md" });
+      const manageToken = pub.manage_url.split("#k=")[1];
+      await api.update(editor.key, pub.id, { content: "# edited by another" }, manageToken);
+      expect((await api.inbox(owner.key)).items).toHaveLength(1);
+      await api.getRevision(owner.key, pub.id, 2);
+      expect((await api.inbox(owner.key)).items).toHaveLength(0);
+    });
+    it("watch is idempotent: re-watching with no body leaves seen_rev and the inbox unchanged", async () => {
+      const owner = await api.mint("owner");
+      const editor = await api.mint("editor");
+      const pub = await api.publish(owner.key, { content: "# hi", format: "md" });
+      const manageToken = pub.manage_url.split("#k=")[1];
+      await api.update(editor.key, pub.id, { content: "# edit one" }, manageToken);
+      await api.update(editor.key, pub.id, { content: "# edit two" }, manageToken);
+      const before = await api.inbox(owner.key);
+      expect(before.items[0]).toMatchObject({ rev: 3, seen_rev: 1 });
+      const rewatch = await api.watch(owner.key, pub.id);
+      expect(rewatch.seen_rev).toBe(1);
+      const after = await api.inbox(owner.key);
+      expect(after.items[0]).toMatchObject({ rev: 3, seen_rev: 1 });
+      expect(after.items[0].revisions).toEqual(before.items[0].revisions);
+    });
     it("does not show the watcher's own edits in their inbox", async () => {
       const { key } = await api.mint("x");
       const pub = await api.publish(key, { content: "# hi", format: "md" });

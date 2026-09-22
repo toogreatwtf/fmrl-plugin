@@ -1,7 +1,7 @@
 {
   "name": "fmrl",
-  "description": "Share anything your AI made: publish a page to fmrl.site and get a link. Adds /fmrl:share and the fmrl_publish, fmrl_publish_file, fmrl_get, fmrl_edit, fmrl_watch, fmrl_inbox, fmrl_list, fmrl_delete and fmrl_whoami tools.",
-  "version": "0.6.0",
+  "description": "Share anything your AI made: publish a page to fmrl.site and get a link. Adds /fmrl:share, /fmrl:whoami and the fmrl_publish, fmrl_publish_file, fmrl_get, fmrl_edit, fmrl_watch, fmrl_inbox, fmrl_list, fmrl_delete and fmrl_whoami tools.",
+  "version": "0.7.0",
   "author": { "name": "Too Great LLC", "url": "https://fmrl.site" },
   "homepage": "https://fmrl.site/install",
   "repository": "https://github.com/toogreatwtf/fmrl-plugin",

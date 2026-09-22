@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   const api = new FmrlApi(cfg.baseUrl);
   const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, ringFromEnv: cfg.ring, file: credentialsPath(), log });
   const pages = new PageStore(cfg.baseUrl, pagesPath());
-  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName });
+  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName, pluginRoot: process.env.CLAUDE_PLUGIN_ROOT });
   await server.connect(new StdioServerTransport());
 }
 

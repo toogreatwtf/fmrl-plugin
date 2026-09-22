@@ -11,6 +11,8 @@ Claude Code:
 /plugin install fmrl@fmrl-plugin
 ```
 
+Keep it current: Claude Code leaves auto-update off for this marketplace, so turn it on in /plugin → Marketplaces → fmrl-plugin → Enable auto-update, or update by hand with claude plugin marketplace update fmrl-plugin and then claude plugin update fmrl@fmrl-plugin, and restart Claude Code.
+
 Any MCP client (Claude Desktop, Cursor, Codex, Windsurf, and the rest):
 
 ```json
@@ -30,7 +32,7 @@ curl -sX POST https://fmrl.site/api/v1/publish \
 
 ## What you get
 
-In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page.
+In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page. `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date.
 
 Any MCP client gets nine tools:
 
@@ -44,7 +46,7 @@ Any MCP client gets nine tools:
 | `fmrl_inbox` | nothing → pages you watch that someone else has revised since you last read them, newest first; read each with `fmrl_get`, which marks it seen |
 | `fmrl_list` | nothing → every page this key owns, newest first (50 at most); a private page with its title and keyed link when this machine holds the key ring |
 | `fmrl_delete` | an id or a viewer URL → removes a page this key published |
-| `fmrl_whoami` | the key's prefix, this month's quota, whether it is named and by what, whether a browser is linked to it, a fresh link to link one when the server offers it (carrying the key ring after `#r=`), and where the key ring is kept |
+| `fmrl_whoami` | the key's prefix, this month's quota, whether it is named and by what, whether a browser is linked to it, a fresh link to link one when the server offers it (carrying the key ring after `#r=`), where the key ring is kept, and, when the Claude Code plugin launched it and its manifest reads, whether that plugin is up to date |
 
 ## Keys and limits
 

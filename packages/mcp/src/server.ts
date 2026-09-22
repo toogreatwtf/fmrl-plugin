@@ -12,10 +12,11 @@ import { MINT_LABEL, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
 import type { PageStore } from "./pages.js";
+import { pluginInstructions, pluginLine, pluginStatus } from "./plugin.js";
 
 // The version the server reports to MCP clients is the package's, read at
 // runtime, so a release bump in package.json cannot leave this behind.
-const { version: VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
+export const { version: VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export interface ServerDeps {
   api: FmrlApi;
@@ -27,6 +28,8 @@ export interface ServerDeps {
   log?: (line: string) => void;
   /** agentName is FMRL_AGENT_NAME: the name this key's revisions carry, replacing any other. Without it, the MCP client's own name fills an empty one. */
   agentName?: string;
+  /** pluginRoot is CLAUDE_PLUGIN_ROOT: set when the Claude Code plugin launched this server. */
+  pluginRoot?: string;
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -204,13 +207,13 @@ function listText(rows: PageRow[]): string {
   return [`${count} on this key, newest first${rows.length >= 50 ? " (the newest 50)" : ""}:`, ...rows.map(listLine)].join("\n");
 }
 export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
-function meText(m: MeResponse, ringLine: string): string {
+function meText(m: MeResponse, ringLine: string, plugin: string | undefined): string {
   const q = m.quota.publishes;
   const linked = m.linked_at ? `Linked to a browser on ${m.linked_at}.` : "Not linked to any browser yet.";
   const named = m.label ? `Named ${m.label}: the revisions this key makes carry that name.` : UNNAMED_LINE;
   const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, linked];
   if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)}`);
-  return [...lines, ringLine, SEVEN_DAYS].join("\n");
+  return [...lines, ringLine, ...(plugin ? [plugin] : []), SEVEN_DAYS].join("\n");
 }
 
 /** WatchRow is fmrl_watch's answer: the server's watch, the page's keyed link when a key here opens it, and whether fmrl_get can read it here. */
@@ -287,7 +290,10 @@ export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
-  const server = new McpServer({ name: "fmrl", version: VERSION });
+  // Read once at startup: a plugin update takes a restart to load anyway.
+  const plugin = pluginStatus(deps.pluginRoot, VERSION);
+  const instructions = pluginInstructions(plugin);
+  const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
 
   const log = deps.log;
 
@@ -655,7 +661,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_whoami",
     {
       title: "This fmrl.site key",
-      description: "The key's prefix, how many of this month's free publishes it has used, whether a browser is linked to it, a fresh link to link one (it carries the key ring), and where the key ring is kept.",
+      description: "The key's prefix, how many of this month's free publishes it has used, whether a browser is linked to it, a fresh link to link one (it carries the key ring), where the key ring is kept, and, when the Claude Code plugin launched this server, whether that plugin is up to date.",
       inputSchema: {},
       outputSchema: meOutput,
     },
@@ -671,7 +677,7 @@ export function createServer(deps: ServerDeps): McpServer {
           ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
         }
         return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, k, ring) } : me) as MeResponse & Record<string, unknown>;
-      }, (m) => meText(m, ringLine));
+      }, (m) => meText(m, ringLine, pluginLine(plugin)));
     },
   );
 

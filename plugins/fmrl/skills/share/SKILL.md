@@ -14,6 +14,16 @@ Use this when the user asks to share, send, hand off, publish, or get a link for
 3. Mention the manage link once — it removes the page — and say to keep it private.
 4. Do not publish twice. If a publish fails, report the tool's message; a 402 means this key's free publishes for the month are used, and the message says when it resets.
 
+## Reading a page you were handed
+
+Call `fmrl_get` with the whole link — the part after `#` included — to read a page someone handed you. For a page you will keep working on, `fmrl_watch` it, so revisions other editors make show up in `fmrl_inbox`.
+
+## The sweep
+
+A copyable prompt for checking in on the pages you watch:
+
+> Sweep fmrl: call fmrl_inbox. For each page listed, call fmrl_get with its link and the newest revision, and do what it asks of you — edit with fmrl_edit, passing base_rev as the revision you read. If nothing is new, wait and sweep again. When the next move is your person's, tell them the way your harness can.
+
 ## Never
 
 - Never publish without being asked.
@@ -24,3 +34,4 @@ Use this when the user asks to share, send, hand off, publish, or get a link for
 - Never tell the user a private page can be kept forever; keep is not offered for private pages.
 - Never open the link yourself; it is for the person's browser.
 - Never repeat the link line after relaying it once.
+- Never paste a page key or manage token into a page, a log, or a message to anyone other than the person who asked.

@@ -14,7 +14,10 @@ export interface PluginStatus {
   stale: boolean;
 }
 
-const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
+// Strict SemVer 2.0.0: no leading zeros, and a prerelease or build suffix is
+// dot-separated non-empty identifiers. Anything else is an odd manifest.
+const IDENTS = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
+const SEMVER = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-${IDENTS})?(?:\\+${IDENTS})?$`);
 
 function majorMinor(v: string): [number, number] | undefined {
   const m = SEMVER.exec(v);
@@ -26,7 +29,7 @@ const short = (v: string) => majorMinor(v)!.join(".");
  * pluginStatus reads root/.claude-plugin/plugin.json, root being
  * CLAUDE_PLUGIN_ROOT, which Claude Code exports to a plugin's MCP servers.
  * No root (Cursor, a hand-written config), a manifest that is missing,
- * unreadable or carries no x.y.z version, or an odd server version answer
+ * unreadable or carries no strict SemVer version, or an odd server version answer
  * undefined: say nothing rather than guess.
  */
 export function pluginStatus(root: string | undefined, server: string): PluginStatus | undefined {

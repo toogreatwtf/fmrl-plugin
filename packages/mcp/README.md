@@ -43,7 +43,7 @@ Any MCP client gets six tools:
 | `fmrl_get` | an id or a viewer URL → status, format, size, expiry, whether it was kept; for a private page this key owns, its title and its link with the key after `#p=` |
 | `fmrl_list` | nothing → every page this key owns, newest first (50 at most); a private page with its title and keyed link when this machine holds the key ring |
 | `fmrl_delete` | an id or a viewer URL → removes a page this key published |
-| `fmrl_whoami` | the key's prefix, this month's quota, whether a browser is linked to it, a fresh link to link one when the server offers it (carrying the key ring after `#r=`), where the key ring is kept, and, when the Claude Code plugin launched it, whether that plugin is up to date |
+| `fmrl_whoami` | the key's prefix, this month's quota, whether a browser is linked to it, a fresh link to link one when the server offers it (carrying the key ring after `#r=`), where the key ring is kept, and, when the Claude Code plugin launched it and its manifest reads, whether that plugin is up to date |
 
 ## Keys and limits
 

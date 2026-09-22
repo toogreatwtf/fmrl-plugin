@@ -38,6 +38,15 @@ describe("pluginStatus", () => {
     expect(pluginStatus(await fakeRoot({ version: "latest" }), "0.5.1")).toBeUndefined();
     expect(pluginStatus(await fakeRoot("null"), "0.5.1")).toBeUndefined();
   });
+  it("a version that is not strict SemVer says nothing", async () => {
+    for (const version of ["0.3.0-", "0.3.0+", "0.3.0-?", "0.3.0-a..b", "0.3.0\n", "00.3.0", "0.3"]) {
+      expect(pluginStatus(await fakeRoot({ version }), "0.5.1"), JSON.stringify(version)).toBeUndefined();
+    }
+  });
+  it("prerelease and build suffixes compare on major.minor", async () => {
+    expect(pluginStatus(await fakeRoot({ version: "0.3.0-rc.1+build.5" }), "0.5.1")?.stale).toBe(true);
+    expect(pluginStatus(await fakeRoot({ version: "0.5.0-beta" }), "0.5.1")?.stale).toBe(false);
+  });
   it("an odd server version says nothing", async () => {
     expect(pluginStatus(await fakeRoot({ version: "0.3.0" }), "dev")).toBeUndefined();
   });

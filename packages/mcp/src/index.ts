@@ -4,6 +4,7 @@ import { FmrlApi } from "./api.js";
 import { loadConfig } from "./config.js";
 import { credentialsPath } from "./credentials.js";
 import { KeyStore } from "./keys.js";
+import { PageStore, pagesPath } from "./pages.js";
 import { createServer } from "./server.js";
 
 // stdout is the JSON-RPC channel; everything we say goes to stderr.
@@ -13,7 +14,8 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   const api = new FmrlApi(cfg.baseUrl);
   const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, ringFromEnv: cfg.ring, file: credentialsPath(), log });
-  const server = createServer({ api, keys, log });
+  const pages = new PageStore(cfg.baseUrl, pagesPath());
+  const server = createServer({ api, keys, pages, log });
   await server.connect(new StdioServerTransport());
 }
 

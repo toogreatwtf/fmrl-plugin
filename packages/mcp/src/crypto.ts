@@ -25,7 +25,7 @@ export async function seal(html: string): Promise<Sealed> {
   return { envelope: "MARKYENC" + JSON.stringify(env), key: b64url(rawKey) };
 }
 
-/** openEnvelope decrypts a v2 kdf-none envelope with its key. Used by tests; the plugin never reads pages. */
+/** openEnvelope decrypts a v2 kdf-none envelope with its key; it rejects for the wrong key, which is how a candidate key is proved. */
 export async function openEnvelope(envelope: string, opts: { key: string }): Promise<string> {
   if (!envelope.startsWith("MARKYENC")) throw new Error("not an envelope");
   const env = JSON.parse(envelope.slice("MARKYENC".length)) as { v: number; alg: string; kdf: string; nonce: string; data: string };

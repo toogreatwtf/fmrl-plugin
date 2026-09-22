@@ -7,13 +7,14 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FmrlApi } from "../src/api.js";
 import { readCredentials, writeCredentials } from "../src/credentials.js";
-import { newRing, openEnvelope, openRecord, sealRecord } from "../src/crypto.js";
+import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/crypto.js";
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
+import { PageStore } from "../src/pages.js";
 import { createServer, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, type ServerDeps } from "../src/server.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
 
-let fake: FakeApi; let client: Client; let dir: string; let credFile: string;
+let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;
 type ToolResult = { content: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown>; isError?: boolean };
 const call = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => (await client.callTool({ name, arguments: args })) as ToolResult;
 const text = (r: ToolResult) => r.content.map((c) => c.text ?? "").join("\n");
@@ -21,8 +22,9 @@ const ringInFile = async () => (await readCredentials(credFile)).keys[fake.baseU
 // The browser's #r= grammar (static/fmrl.js ringsFromFragment).
 const RING_PAIR = /#r=([A-Za-z0-9_]{1,16})\.([A-Za-z0-9_-]{43})$/;
 const keyOf = (q: { auth?: string }) => (q.auth as string).slice("Bearer ".length);
-const connect = async (deps: ServerDeps): Promise<Client> => {
-  const s = createServer(deps);
+const pagesAt = () => new PageStore(fake.baseUrl, pagesFile);
+const connect = async (deps: Omit<ServerDeps, "pages"> & Partial<Pick<ServerDeps, "pages">>): Promise<Client> => {
+  const s = createServer({ pages: pagesAt(), ...deps });
   const [c, t] = InMemoryTransport.createLinkedPair();
   await s.connect(t);
   const cl = new Client({ name: "extra", version: "0" });
@@ -34,9 +36,10 @@ beforeEach(async () => {
   fake = await startFakeApi();
   dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
   credFile = path.join(dir, "credentials.json");
+  pagesFile = path.join(dir, "pages.json");
   const api = new FmrlApi(fake.baseUrl);
   const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
-  const server = createServer({ api, keys });
+  const server = createServer({ api, keys, pages: pagesAt() });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   await server.connect(st);
   client = new Client({ name: "test", version: "0" });
@@ -104,7 +107,7 @@ describe("tools", () => {
     const api2 = new FmrlApi(fake.baseUrl);
     const keys2 = new KeyStore({ api: api2, baseUrl: fake.baseUrl, file: path.join(dir, "credentials2.json") });
     const lyingStat = (async () => ({ size: 10 }) as unknown as Stats) as unknown as ServerDeps["stat"];
-    const server2 = createServer({ api: api2, keys: keys2, stat: lyingStat });
+    const server2 = createServer({ api: api2, keys: keys2, pages: pagesAt(), stat: lyingStat });
     const [ct2, st2] = InMemoryTransport.createLinkedPair();
     await server2.connect(st2);
     const client2 = new Client({ name: "test3", version: "0" });
@@ -135,7 +138,7 @@ describe("tools", () => {
     expect(text(again)).toBe("That page was removed.");
     const junk = await call("fmrl_get", { id: "nope" });
     expect(junk.isError).toBe(true);
-    expect(text(junk)).toMatch(/not a document id/);
+    expect(text(junk)).toMatch(/not a page id/);
   });
   it("fmrl_whoami reports the quota", async () => {
     const r = await call("fmrl_whoami");
@@ -190,7 +193,7 @@ describe("tools", () => {
     const badDir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
     const badApi = new FmrlApi("http://127.0.0.1:9");
     const badKeys = new KeyStore({ api: badApi, baseUrl: "http://127.0.0.1:9", file: path.join(badDir, "credentials.json") });
-    const badServer = createServer({ api: badApi, keys: badKeys });
+    const badServer = createServer({ api: badApi, keys: badKeys, pages: new PageStore("http://127.0.0.1:9", path.join(badDir, "pages.json")) });
     const [ct2, st2] = InMemoryTransport.createLinkedPair();
     await badServer.connect(st2);
     const badClient = new Client({ name: "test2", version: "0" });
@@ -466,11 +469,12 @@ describe("tools", () => {
     const { id, url } = priv.structuredContent as { id: string; url: string };
     const got = await call("fmrl_get", { id });
     expect(got.isError).toBeFalsy();
-    const [first, second, extra] = text(got).split("\n");
+    const [first, revLine, second, blank] = text(got).split("\n");
     expect(first.startsWith(`Quiet — ${url}: live, html, `)).toBe(true);
     expect(first.endsWith(" bytes, expires 2026-09-15T12:00:00Z.")).toBe(true);
+    expect(revLine).toMatch(/^Revision 1 of 1, edited by fmrl-mcp \(fmrl_\w{4}…\) at 2026-09-08T12:00:00\.000Z\.$/);
     expect(second).toBe(SEVEN_DAYS_PRIVATE);
-    expect(extra).toBeUndefined();
+    expect(blank).toBe("");
     expect(got.structuredContent).toMatchObject({ id, url, private: true, key_held: true, title: "Quiet" });
     expect(got.structuredContent).not.toHaveProperty("sealed");
   });
@@ -483,5 +487,114 @@ describe("tools", () => {
     expect(text(got)).toContain(NOT_HELD_LINE);
     expect(text(got)).toContain(SEVEN_DAYS_PRIVATE);
     expect(got.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, private: true, key_held: false });
+  });
+});
+
+describe("fmrl_get reads the page", () => {
+  const OTHER = "fmrl_" + "Z".repeat(32);
+  const MANAGE = "m".repeat(22);
+  const NOTE = "private: pass the link with #p=<key> to read it";
+  // sourceBlock is static/fmrl.js's: "&" as &amp; then "<" as &lt;.
+  const sourceBlock = (src: string) => `<script type="text/x-fmrl-source" data-format="md">${src.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</script>`;
+  /** plantPrivate puts a private page another key owns into the fake, sealed under a fresh key, the way a browser share would leave it. */
+  const plantPrivate = async (html: string, extra: { owner?: string; sealed?: string } = {}) => {
+    const { envelope, key } = await seal(html);
+    const id = "pppppppppppp";
+    fake.docs.set(id, {
+      id, owner: extra.owner ?? OTHER, format: "html", size: envelope.length, encrypted: true, sealed: extra.sealed, rev: 1, manageToken: MANAGE,
+      revisions: [{ rev: 1, at: "2026-09-08T12:00:00.000Z", size: envelope.length, sha256: "x", title: "", source: "browser", format: "html", content: envelope, editor: { kind: "session" } }],
+    });
+    return { id, key };
+  };
+  const stored = (id: string) => pagesAt().get(id);
+
+  it("describes the tool as the brief words it", async () => {
+    const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_get")!;
+    expect(tool.description).toBe("Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen.");
+  });
+  it("reads a public Markdown page's latest revision: its source, its format, and who wrote it", async () => {
+    const pub = await call("fmrl_publish", { content: "# Hello\n\nworld", format: "md" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const prefix = keyOf(fake.requests.at(-1)!).slice(0, 9);
+    const got = await call("fmrl_get", { id: `https://fmrl.test/${id}` });
+    expect(got.isError).toBeFalsy();
+    expect(got.structuredContent).toMatchObject({
+      id, url: `https://fmrl.test/${id}`, private: false, rev: 1, latest_rev: 1,
+      editor: { kind: "key", key: prefix, name: "fmrl-mcp" }, content: "# Hello\n\nworld", content_format: "md",
+    });
+    expect(got.structuredContent).not.toHaveProperty("content_note");
+    expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: `/api/v1/docs/${id}/revisions/1` });
+    const lines = text(got).split("\n");
+    expect(lines[0]).toMatch(new RegExp(`^https://fmrl\\.test/${id}: live, md, `));
+    expect(lines[1]).toBe(`Revision 1 of 1, edited by fmrl-mcp (${prefix}…) at 2026-09-08T12:00:00.000Z.`);
+    expect(text(got).endsWith("\n\n# Hello\n\nworld")).toBe(true);
+  });
+  it("reads an older revision when rev is given, and the latest otherwise", async () => {
+    const pub = await call("fmrl_publish", { content: "# One", format: "md" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const key = keyOf(fake.requests.at(-1)!);
+    fake.labels.set(key, "claude-code");
+    await new FmrlApi(fake.baseUrl).update(key, id, { content: "# Two", format: "md" });
+    const old = await call("fmrl_get", { id, rev: 1 });
+    expect(old.structuredContent).toMatchObject({ rev: 1, latest_rev: 2, content: "# One", content_format: "md" });
+    const latest = await call("fmrl_get", { id });
+    expect(latest.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two", editor: { kind: "key", key: key.slice(0, 9), name: "claude-code" } });
+    expect(text(latest)).toContain(`Revision 2 of 2, edited by claude-code (${key.slice(0, 9)}…) at `);
+    const bad = await call("fmrl_get", { id, rev: 0 });
+    expect(bad.isError).toBe(true);
+    const missing = await call("fmrl_get", { id, rev: 9 });
+    expect(missing.isError).toBe(true);
+    expect(text(missing)).toBe("No such revision of that page.");
+  });
+  it("opens a private page with the key in the link it was handed, then remembers that key and the manage token", async () => {
+    const { id, key } = await plantPrivate("<!DOCTYPE html><html><head><title>Plan</title></head><body><h1>Plan</h1></body></html>");
+    const got = await call("fmrl_get", { id: `https://fmrl.test/manage/${id}#k=${MANAGE}&p=${key}` });
+    expect(got.isError).toBeFalsy();
+    expect(got.structuredContent).toMatchObject({
+      id, private: true, key_held: true, url: `https://fmrl.test/${id}#p=${key}`, title: "Plan",
+      rev: 1, latest_rev: 1, editor: { kind: "session" }, content_format: "html",
+    });
+    expect((got.structuredContent as { content: string }).content).toContain("<h1>Plan</h1>");
+    expect(await stored(id)).toEqual({ key, manage: MANAGE });
+    // The key was never sent anywhere.
+    expect(JSON.stringify(fake.requests)).not.toContain(key);
+  });
+  it("opens a private page with a key this machine already holds", async () => {
+    const { id, key } = await plantPrivate("<p>held</p>");
+    await pagesAt().remember(id, { key });
+    const got = await call("fmrl_get", { id });
+    expect(got.structuredContent).toMatchObject({ key_held: true, url: `https://fmrl.test/${id}#p=${key}`, content: "<p>held</p>", content_format: "html" });
+  });
+  it("opens the owner's private page through its ring, and returns the HTML when there is no source block", async () => {
+    const priv = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    const got = await call("fmrl_get", { id });
+    expect(got.structuredContent).toMatchObject({ url, key_held: true, title: "Quiet", content_format: "html" });
+    expect((got.structuredContent as { content: string }).content).toContain("<h1>Quiet</h1>");
+  });
+  it("a fragment key that doesn't open the page is not remembered, and the page reads as metadata and a note", async () => {
+    const { id } = await plantPrivate("<p>secret</p>");
+    const wrong = "W".repeat(43);
+    const got = await call("fmrl_get", { id: `https://fmrl.test/${id}#p=${wrong}&k=${MANAGE}` });
+    expect(got.isError).toBeFalsy();
+    expect(got.structuredContent).toMatchObject({ id, private: true, key_held: false, url: `https://fmrl.test/${id}`, rev: 1, latest_rev: 1, content_note: NOTE });
+    expect(got.structuredContent).not.toHaveProperty("content");
+    expect(got.structuredContent).not.toHaveProperty("content_format");
+    expect(text(got).endsWith(`\n\n${NOTE}`)).toBe(true);
+    expect(text(got)).not.toContain(wrong);
+    expect(await stored(id)).toEqual({});
+  });
+  it("returns the Markdown source block of a private page, entity-unescaped exactly as the browser wrote it", async () => {
+    const src = "# Title\n\na <b>bold</b> & c &lt; d &amp; e </script> f";
+    const { id, key } = await plantPrivate(`<!DOCTYPE html><html><body><h1>Title</h1>\n${sourceBlock(src)}\n</body></html>`);
+    const got = await call("fmrl_get", { id: `https://fmrl.test/${id}#p=${key}` });
+    expect(got.structuredContent).toMatchObject({ content: src, content_format: "md" });
+    expect(text(got).endsWith(`\n\n${src}`)).toBe(true);
+  });
+  it("an invalid link never echoes the key it carries", async () => {
+    const key = "Q".repeat(43);
+    const got = await call("fmrl_get", { id: `https://fmrl.test/about#p=${key}` });
+    expect(got.isError).toBe(true);
+    expect(text(got)).not.toContain(key);
   });
 });

@@ -22,11 +22,18 @@ function extractId(input: string): string | undefined {
   return undefined;
 }
 
+/** withoutFragment is input up to its first "#": what a refusal may repeat, since a fragment can carry a page key or a manage token. */
+function withoutFragment(input: string): string {
+  const s = input.trim();
+  const i = s.indexOf("#");
+  return i === -1 ? s : s.slice(0, i);
+}
+
 /** parseDocId accepts a 12-character document id or any fmrl URL that contains one as a path segment. */
 export function parseDocId(input: string): string {
   const id = extractId(input);
   if (id !== undefined) return id;
-  throw new Error(`${JSON.stringify(input)} is not a document id or a fmrl.site URL.`);
+  throw new Error(`${JSON.stringify(withoutFragment(input))} is not a document id or a fmrl.site URL.`);
 }
 
 export interface PageRef {
@@ -52,7 +59,7 @@ export function parsePageRef(input: string): PageRef {
 
   const id = extractId(main);
   if (id === undefined) {
-    throw new Error(`${JSON.stringify(input)} is not a page id or a fmrl.site URL.`);
+    throw new Error(`${JSON.stringify(main)} is not a page id or a fmrl.site URL.`);
   }
 
   const ref: PageRef = { id };

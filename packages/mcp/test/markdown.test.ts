@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { documentTitle, firstHeading, looksLikeHTML, toHTML, wrapDocument } from "../src/markdown.js";
+import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "../src/markdown.js";
 
 describe("markdown", () => {
   it("looksLikeHTML matches share.DetectFormat", () => {
@@ -56,5 +56,20 @@ describe("markdown", () => {
     expect(documentTitle("<html><head><title> A &amp; <b>B</b>\n </title></head><body><h1>H</h1></body></html>")).toBe("A & B");
     expect(documentTitle("<html><head><title> </title></head><body><h2>Two <em>words</em></h2></body></html>")).toBe("Two words");
     expect(documentTitle("<p>none</p>")).toBe("");
+  });
+});
+
+describe("readSource", () => {
+  it("undoes exactly static/fmrl.js's escaping: &lt; then &amp;, in that order", () => {
+    expect(readSource('<body><p>x</p><script type="text/x-fmrl-source" data-format="md">a &lt;b> &amp;lt; &amp;amp;</script></body>'))
+      .toEqual({ format: "md", source: "a <b> &lt; &amp;" });
+  });
+  it("reads a block without data-format as Markdown, and an html block as HTML, as the edit page does", () => {
+    expect(readSource('<script type="text/x-fmrl-source">x</script>')).toEqual({ format: "md", source: "x" });
+    expect(readSource('<script data-format="html" type="text/x-fmrl-source">&lt;p></script>')).toEqual({ format: "html", source: "<p>" });
+  });
+  it("is undefined for a document with no block, or a block of a format it can't name", () => {
+    expect(readSource("<p>no block</p><script>var x = 1;</script>")).toBeUndefined();
+    expect(readSource('<script type="text/x-fmrl-source" data-format="rst">x</script>')).toBeUndefined();
   });
 });

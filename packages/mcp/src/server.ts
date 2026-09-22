@@ -4,12 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, type DocResponse, type FmrlApi, type MeResponse, type PublishRequest, type PublishResponse } from "./api.js";
+import { ApiError, type DocResponse, type Editor, type FmrlApi, type MeResponse, type PublishRequest, type PublishResponse } from "./api.js";
 import { openRecord, seal, sealRecord, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
-import { parseDocId } from "./ids.js";
+import { parseDocId, parsePageRef } from "./ids.js";
 import { prefixOf, type KeyStore } from "./keys.js";
-import { documentTitle, firstHeading, looksLikeHTML, toHTML, wrapDocument } from "./markdown.js";
+import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
+import { openPrivatePage } from "./opener.js";
+import type { PageStore } from "./pages.js";
 
 // The version the server reports to MCP clients is the package's, read at
 // runtime, so a release bump in package.json cannot leave this behind.
@@ -18,6 +20,8 @@ const { version: VERSION } = createRequire(import.meta.url)("../package.json") a
 export interface ServerDeps {
   api: FmrlApi;
   keys: KeyStore;
+  /** pages holds the content keys and manage tokens of pages this machine has opened. */
+  pages: PageStore;
   open?: typeof fsOpen;
   stat?: typeof fsStat;
   log?: (line: string) => void;
@@ -148,6 +152,28 @@ function docText(r: PageRow): string {
   return lines.join("\n");
 }
 
+/** PageRead is fmrl_get's answer: the page row, the revision read and who made it, and its content — or, for a private page no key here opens, a note saying how to read it. */
+type PageRead = PageRow & {
+  rev: number; latest_rev: number; editor: Editor;
+  content?: string; content_format?: "html" | "md"; content_note?: string;
+};
+
+export const PRIVATE_NOTE = "private: pass the link with #p=<key> to read it";
+
+function editorText(e: Editor): string {
+  const key = e.key ? `${e.key}…` : undefined;
+  if (e.name) return key ? `${e.name} (${key})` : e.name;
+  if (key) return key;
+  if (e.kind === "session") return "a linked browser";
+  if (e.kind === "manage") return "a manage link";
+  return "someone unknown";
+}
+
+function readText(r: PageRead, at: string): string {
+  const [meta, ...rest] = docText(r).split("\n");
+  return [meta, `Revision ${r.rev} of ${r.latest_rev}, edited by ${editorText(r.editor)} at ${at}.`, ...rest, "", r.content ?? r.content_note ?? ""].join("\n");
+}
+
 export const LIST_EMPTY = "This key has no pages right now; removed and expired pages are not listed.";
 
 function when(r: PageRow): string {
@@ -181,6 +207,12 @@ const pageOutput = {
   expires_at: z.string().nullable(), pinned: z.boolean(), cid: z.string().optional(),
   private: z.boolean(), key_held: z.boolean().optional(), title: z.string().optional(),
 };
+const readOutput = {
+  ...pageOutput,
+  rev: z.number(), latest_rev: z.number(),
+  editor: z.object({ kind: z.string(), key: z.string().optional(), name: z.string().optional() }),
+  content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
+};
 const listOutput = { docs: z.array(z.object(pageOutput)) };
 const meOutput = {
   prefix: z.string(), created_at: z.string(),
@@ -190,7 +222,7 @@ const meOutput = {
 
 /** createServer registers the six tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
-  const { api, keys } = deps;
+  const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
   const server = new McpServer({ name: "fmrl", version: VERSION });
@@ -322,18 +354,31 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "fmrl_get",
     {
-      title: "Describe a fmrl.site page",
-      description: "Look up a page by id or URL: status, format, size, expiry, and whether it has been kept. For a private page this key owns, also its title and its link with the key after #p=, when this machine holds the key ring.",
-      inputSchema: { id: z.string().min(1).describe("A document id or any fmrl.site URL for it.") },
-      outputSchema: pageOutput,
+      title: "Read a fmrl.site page",
+      description: "Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen.",
+      inputSchema: {
+        id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=)."),
+        rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
+      },
+      outputSchema: readOutput,
     },
-    async ({ id }) => {
-      let docId: string;
-      try { docId = parseDocId(id); } catch (e) { return fail(errorText(e)); }
-      return run<PageRow>(async (k) => {
-        const d = await api.get(k, docId);
-        return pageRow(d, d.private ? await unseal(await keys.ringsFor(k), d.sealed) : undefined);
-      }, docText);
+    async ({ id, rev }) => {
+      let ref: ReturnType<typeof parsePageRef>;
+      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      let at = "";
+      return run<PageRead>(async (k) => {
+        const d = await api.get(k, ref.id);
+        const latest = d.rev ?? 1;
+        const r = await api.getRevision(k, ref.id, rev ?? latest);
+        at = r.at;
+        const read = (row: PageRow): PageRead => ({ ...row, rev: r.rev, latest_rev: latest, editor: r.editor });
+        if (!d.private) return { ...read(pageRow(d, undefined)), content: r.content, content_format: r.format };
+        const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+        if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
+        const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
+        const src = readSource(opened.html);
+        return src ? { ...row, content: src.source, content_format: src.format } : { ...row, content: opened.html, content_format: "html" };
+      }, (v) => readText(v, at));
     },
   );
 

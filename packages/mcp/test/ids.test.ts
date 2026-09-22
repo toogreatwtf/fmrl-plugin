@@ -72,3 +72,17 @@ describe("parsePageRef", () => {
     }
   });
 });
+
+describe("parsePageRef's refusal", () => {
+  it("never repeats the fragment, which may carry a page key", () => {
+    const key = "Q".repeat(43);
+    expect(() => parsePageRef(`https://fmrl.site/about#p=${key}`)).toThrow(/^"https:\/\/fmrl\.site\/about" is not a page id/);
+  });
+});
+
+describe("parseDocId's refusal", () => {
+  it("never repeats the fragment either", () => {
+    const key = "Q".repeat(43);
+    expect(() => parseDocId(`https://fmrl.site/about#p=${key}`)).toThrow(/^"https:\/\/fmrl\.site\/about" is not a document id/);
+  });
+});

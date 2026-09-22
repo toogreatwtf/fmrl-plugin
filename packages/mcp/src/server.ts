@@ -8,7 +8,7 @@ import { ApiError, type DocResponse, type Editor, type FmrlApi, type InboxItem, 
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef } from "./ids.js";
-import { prefixOf, type KeyStore } from "./keys.js";
+import { MINT_LABEL, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
 import type { PageStore } from "./pages.js";
@@ -335,13 +335,15 @@ export function createServer(deps: ServerDeps): McpServer {
   /**
    * named holds, per key, the one attempt this process makes to name it:
    * FMRL_AGENT_NAME replaces any other name; without it the MCP client's own
-   * name (from initialize) fills an empty one. A failure costs one log line.
+   * name (from initialize) fills an empty one, or the one a minted key starts with. A failure costs one log line.
    */
   const named = new Map<string, Promise<void>>();
   const nameKey = async (k: string): Promise<void> => {
     try {
       const me = await api.me(k);
-      const want = deps.agentName ?? (me.label ? undefined : server.server.getClientVersion()?.name);
+      // The name a minted key starts with counts as no name at all.
+      const unnamed = !me.label || me.label === MINT_LABEL;
+      const want = deps.agentName ?? (unnamed ? server.server.getClientVersion()?.name : undefined);
       if (want && want !== me.label) await api.setLabel(k, want);
     } catch (e) {
       log?.(`fmrl-mcp: couldn't name key ${prefixOf(k)}…: ${errorText(e)}`);

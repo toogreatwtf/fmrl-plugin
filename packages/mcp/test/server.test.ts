@@ -71,7 +71,7 @@ describe("tools", () => {
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
     expect(r.structuredContent).toMatchObject({ link_url: `https://fmrl.test/link/code${id}#r=${prefix}.${ring}` });
-    expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/publish"]);
+    expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/me", "/api/v1/publish"]);
     expect(firstPublish().body).toEqual({ content: "# Hello", title: "Hello" });
   });
   it("fmrl_publish passes an explicit format", async () => {
@@ -474,7 +474,7 @@ describe("tools", () => {
     const [first, revLine, second, blank] = text(got).split("\n");
     expect(first.startsWith(`Quiet — ${url}: live, html, `)).toBe(true);
     expect(first.endsWith(" bytes, expires 2026-09-15T12:00:00Z.")).toBe(true);
-    expect(revLine).toMatch(/^Revision 1 of 1, edited by fmrl-mcp \(fmrl_\w{4}…\) at 2026-09-08T12:00:00\.000Z\.$/);
+    expect(revLine).toMatch(/^Revision 1 of 1, edited by test \(fmrl_\w{4}…\) at 2026-09-08T12:00:00\.000Z\.$/);
     expect(second).toBe(SEVEN_DAYS_PRIVATE);
     expect(blank).toBe("");
     expect(got.structuredContent).toMatchObject({ id, url, private: true, key_held: true, title: "Quiet" });
@@ -523,13 +523,13 @@ describe("fmrl_get reads the page", () => {
     expect(got.isError).toBeFalsy();
     expect(got.structuredContent).toMatchObject({
       id, url: `https://fmrl.test/${id}`, private: false, rev: 1, latest_rev: 1,
-      editor: { kind: "key", key: prefix, name: "fmrl-mcp" }, content: "# Hello\n\nworld", content_format: "md",
+      editor: { kind: "key", key: prefix, name: "test" }, content: "# Hello\n\nworld", content_format: "md",
     });
     expect(got.structuredContent).not.toHaveProperty("content_note");
     expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: `/api/v1/docs/${id}/revisions/1` });
     const lines = text(got).split("\n");
     expect(lines[0]).toMatch(new RegExp(`^https://fmrl\\.test/${id}: live, md, `));
-    expect(lines[1]).toBe(`Revision 1 of 1, edited by fmrl-mcp (${prefix}…) at 2026-09-08T12:00:00.000Z.`);
+    expect(lines[1]).toBe(`Revision 1 of 1, edited by test (${prefix}…) at 2026-09-08T12:00:00.000Z.`);
     expect(text(got).endsWith("\n\n# Hello\n\nworld")).toBe(true);
   });
   it("reads an older revision when rev is given, and the latest otherwise", async () => {
@@ -916,6 +916,18 @@ describe("the key's name", () => {
     await b.call("fmrl_list");
     expect(patches().map((q) => q.body)).toEqual([{ label: "claude-code" }]);
     expect(fake.labels.get(k)).toBe("claude-code");
+  });
+  it("the MCP client's name fills the name a minted key starts with", async () => {
+    const k = plantKey("fmrl-mcp");
+    const b = await agent({ file: "b", clientName: "claude-code", apiKey: k });
+    await b.call("fmrl_list");
+    expect(patches().map((q) => q.body)).toEqual([{ label: "claude-code" }]);
+    expect(fake.labels.get(k)).toBe("claude-code");
+  });
+  it("a key this plugin mints takes the MCP client's name on its first call", async () => {
+    const b = await agent({ file: "b", clientName: "claude-code" });
+    await b.call("fmrl_whoami");
+    expect(patches().map((q) => q.body)).toEqual([{ label: "claude-code" }]);
   });
   it("the MCP client's name never replaces a name already set", async () => {
     const k = plantKey("Existing");

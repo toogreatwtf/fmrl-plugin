@@ -523,7 +523,11 @@ export function createServer(deps: ServerDeps): McpServer {
           let body: Parameters<FmrlApi["update"]>[2] = { content, format, title, base_rev };
           let pageKey: string | undefined;
           if (d.private) {
-            const current = await api.getRevision(k, ref.id, d.rev ?? 1);
+            // Prove the key against base_rev (the revision the caller edits
+            // from and has genuinely read), not the latest: reading marks a
+            // revision seen, so a conflicting edit must not advance seen past
+            // the revisions between base_rev and latest that were never read.
+            const current = await api.getRevision(k, ref.id, base_rev ?? d.rev ?? 1);
             // The link's manage token is left out here: it is remembered only once an edit made with it is accepted.
             const opened = await openPrivatePage({ id: ref.id, key: ref.key }, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
             if (!opened) throw new Error(PRIVATE_NEEDS_KEY);

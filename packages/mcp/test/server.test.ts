@@ -734,6 +734,26 @@ describe("fmrl_edit", () => {
     expect(r.isError).toBe(true);
     expect(puts()).toHaveLength(0);
   });
+  it("a conflicting private edit leaves the watched page in the inbox at the revisions it hasn't read", async () => {
+    // The owner publishes (auto-watched at rev 1); another key revises past
+    // its base_rev; the owner's stale edit conflicts. seen_rev must not have
+    // advanced past base_rev, so the page stays in the owner's inbox.
+    const priv = await call("fmrl_publish", { content: "# Plan\n\nv1", private: true });
+    const { id, url, manage_url } = priv.structuredContent as { id: string; url: string; manage_url: string };
+    const key = url.split("#p=")[1];
+    const b = await agent({ file: "b2", agentName: "Bee" });
+    const bEdit = await b.call("fmrl_edit", { id: `${manage_url}&p=${key}`, content: "# Plan\n\nv2 by B", base_rev: 1 });
+    expect(bEdit.isError).toBeFalsy();
+
+    const conflict = await call("fmrl_edit", { id: url, content: "# Plan\n\nv2 by owner", base_rev: 1 });
+    expect(conflict.isError).toBe(true);
+    expect(conflict.structuredContent).toMatchObject({ id, latest_rev: 2 });
+
+    const inbox = await call("fmrl_inbox");
+    const items = (inbox.structuredContent as { items: Array<Record<string, unknown>> }).items;
+    expect(items).toMatchObject([{ id, rev: 2, seen_rev: 1 }]);
+    expect((items[0].revisions as Array<{ rev: number }>).map((r) => r.rev)).toEqual([2]);
+  });
   it("a private edit that renders to nothing is refused as nothing to save", async () => {
     const priv = await call("fmrl_publish", { content: "# S", private: true });
     const { url } = priv.structuredContent as { url: string };

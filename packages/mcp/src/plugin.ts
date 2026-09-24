@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import type { AutoUpdate } from "./autoupdate.js";
+import { MARKETPLACE } from "./autoupdate.js";
+
 /**
  * PluginStatus is how the Claude Code plugin that launched this server
  * compares with the server itself. Claude Code leaves auto-update off for
@@ -52,9 +55,41 @@ const MARKETPLACE_UPDATE = "claude plugin marketplace update fmrl-plugin";
 const PLUGIN_UPDATE = "claude plugin update fmrl@fmrl-plugin";
 const AUTO_UPDATE = "/plugin → Marketplaces → fmrl-plugin → Enable auto-update";
 
-/** pluginInstructions is the MCP server instructions for a stale plugin, sent at initialize; undefined otherwise. */
-export function pluginInstructions(s: PluginStatus | undefined): string | undefined {
-  if (!s?.stale) return undefined;
+/**
+ * autoUpdateSteps is how an agent turns auto-update on for this
+ * marketplace, when the user's settings say it is off. There is no command
+ * and no field a marketplace author can set — it is a key in the user's own
+ * settings file, so the agent asks first and writes it only on a yes.
+ */
+function autoUpdateSteps(a: AutoUpdate, n: number): string[] {
+  return [
+    `${n}. ${n === 1 ? "Offer" : "Then offer"} to keep the plugin current, so this does not come up again. Claude Code leaves auto-update off for marketplaces outside Anthropic's own, and a marketplace cannot turn it on for its users: it is the user's switch.`,
+    `${n + 1}. Only once the user says yes, set \`autoUpdate\` to true on the \`${MARKETPLACE}\` entry under \`extraKnownMarketplaces\` in ${a.file}, leaving the rest of that file as it is. They can do the same by hand in /plugin → Marketplaces → ${MARKETPLACE} → Enable auto-update. Either way it takes effect at the next Claude Code start, and updates land on the start after the one that fetches them — so a long-running session can still be a release behind, which is what this notice is for.`,
+  ];
+}
+
+/**
+ * pluginInstructions is the MCP server instructions sent at initialize:
+ * the plugin is out of date, or it is current but nothing is keeping it
+ * that way. Both end in the same offer, and a machine where auto-update is
+ * already on is told neither — which is the common case worth getting
+ * right, since the switch being on is not a promise of a current plugin.
+ *
+ * undefined when there is nothing to say, including whenever no plugin
+ * launched this server (another client, a hand-written config).
+ */
+export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdate): string | undefined {
+  if (!s) return undefined;
+  const offer = auto && !auto.on ? auto : undefined;
+  if (!s.stale) {
+    if (!offer) return undefined;
+    return [
+      "The fmrl plugin that launched this server is current, but nothing is keeping it that way: auto-update is off for its marketplace.",
+      "",
+      "Raise this with the user once, after you have finished their current request: never before it or instead of it. Do not raise it again if they say no.",
+      ...autoUpdateSteps(offer, 1),
+    ].join("\n");
+  }
   const versions = `installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}`;
   return [
     `The fmrl plugin that launched this server is out of date (${versions}). The fmrl tools are current, because npx runs the latest fmrl-mcp; the /fmrl:share skill and the plugin manifest are not.`,
@@ -63,15 +98,23 @@ export function pluginInstructions(s: PluginStatus | undefined): string | undefi
     `1. Say that the fmrl plugin is out of date: ${versions}.`,
     `2. Offer to update it. Run these only once the user says yes, and only if you can run shell commands and \`claude\` is on PATH: \`${MARKETPLACE_UPDATE}\`, then \`${PLUGIN_UPDATE}\`. Then tell them to restart Claude Code to load it.`,
     "3. If you can't run shell commands, or `claude` isn't on PATH, give them the steps instead. In Claude Code: run `/plugin marketplace update fmrl-plugin`, then open /plugin → Installed → fmrl → Update now, and restart. In the Claude desktop app: Settings → Plugins → Fmrl → Update.",
-    `4. Then walk them through turning on auto-update, so the plugin keeps itself current: ${AUTO_UPDATE}. There is no command for this; it is a switch they flip in the plugin manager. Claude Code leaves auto-update off for marketplaces outside Anthropic's own.`,
+    ...(offer ? autoUpdateSteps(offer, 4) : []),
     "",
     "Never edit files under ~/.claude/plugins by hand. After the restart, /fmrl:whoami (the fmrl_whoami tool) says whether the plugin is up to date.",
   ].join("\n");
 }
 
-/** pluginLine is fmrl_whoami's line about the plugin, whenever there is a status to report. */
-export function pluginLine(s: PluginStatus | undefined): string | undefined {
+/**
+ * pluginLine is fmrl_whoami's line about the plugin, whenever there is a
+ * status to report. Asked directly, it also says whether anything is
+ * keeping the plugin current — which a current plugin does not imply.
+ */
+export function pluginLine(s: PluginStatus | undefined, auto?: AutoUpdate): string | undefined {
   if (!s) return undefined;
-  if (!s.stale) return `The fmrl plugin is up to date (plugin ${s.installed}, fmrl-mcp ${s.server}).`;
-  return `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}. Update it with \`${MARKETPLACE_UPDATE}\` then \`${PLUGIN_UPDATE}\`, and restart Claude Code; ${AUTO_UPDATE} keeps it current.`;
+  const keeping = auto === undefined ? "" : auto.on
+    ? " Auto-update is on for its marketplace."
+    : ` Auto-update is off for its marketplace: ${AUTO_UPDATE} keeps it current from the next start.`;
+  if (!s.stale) return `The fmrl plugin is up to date (plugin ${s.installed}, fmrl-mcp ${s.server}).${keeping}`;
+  const fix = `Update it with \`${MARKETPLACE_UPDATE}\` then \`${PLUGIN_UPDATE}\`, and restart Claude Code.`;
+  return `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}. ${fix}${keeping === "" ? ` ${AUTO_UPDATE} keeps it current.` : keeping}`;
 }

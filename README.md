@@ -11,7 +11,7 @@ Claude Code:
 /plugin install fmrl@fmrl-plugin
 ```
 
-Keep it current: Claude Code leaves auto-update off for this marketplace, so turn it on in /plugin → Marketplaces → fmrl-plugin → Enable auto-update, or update by hand with claude plugin marketplace update fmrl-plugin and then claude plugin update fmrl@fmrl-plugin, and restart Claude Code.
+Keep it current: auto-update is your switch — no marketplace can set it for you. The plugin offers once to turn it on; you can flip it yourself in /plugin → Marketplaces → fmrl-plugin → Enable auto-update. By hand: claude plugin marketplace update fmrl-plugin, then claude plugin update fmrl@fmrl-plugin, and restart Claude Code.
 
 Any MCP client (Claude Desktop, Cursor, Codex, Windsurf, and the rest):
 

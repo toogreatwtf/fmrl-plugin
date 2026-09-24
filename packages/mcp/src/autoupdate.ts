@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -83,35 +84,69 @@ export async function alreadyOffered(file: string): Promise<boolean> {
 }
 
 /**
- * markOffered records that the offer has been made, keeping whatever else
- * the file holds. It never throws: a machine where this cannot be written
- * is one that is offered again, which is better than a server that fails
- * to start over a note to self.
+ * claimOffer is the check and the mark in one: it reports whether this
+ * start is the one that makes the offer, and records it so no later start
+ * does.
+ *
+ * The file is created by writing a sibling temp file and hard-linking it
+ * into place, which is atomic in both senses: only one start can win the
+ * link, and the file never exists half-written, so a racing reader cannot
+ * see an empty file and claim as well. (An exclusive create would settle
+ * the name but not the content — three concurrent starts offered twice
+ * before this was a link.) An existing file without the marker is merged
+ * and renamed over, keeping what else it holds.
+ *
+ * It never throws: a machine that cannot record this is one that asks
+ * again, which is better than a server that fails to start.
  */
-export async function markOffered(file: string): Promise<void> {
-  try {
-    let state: Record<string, unknown> = {};
+export async function claimOffer(file: string): Promise<boolean> {
+  const dir = path.dirname(file);
+  const body = (state: Record<string, unknown>) => JSON.stringify({ ...state, version: 1, autoUpdateOfferedAt: new Date().toISOString() }, null, 2) + "\n";
+  const read = async (): Promise<{ state: Record<string, unknown>; marked: boolean; exists: boolean }> => {
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) state = parsed as Record<string, unknown>;
-    } catch {
-      // A file that is missing or unreadable is replaced, not merged.
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return { state: {}, marked: false, exists: true };
+      const state = parsed as Record<string, unknown>;
+      return { state, marked: typeof state.autoUpdateOfferedAt === "string", exists: true };
+    } catch (e) {
+      // Missing is a file to create; anything else unreadable is replaced.
+      return { state: {}, marked: false, exists: (e as NodeJS.ErrnoException).code !== "ENOENT" };
     }
-    state.version = 1;
-    state.autoUpdateOfferedAt = new Date().toISOString();
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(state, null, 2) + "\n");
+  };
+  let tmp: string | undefined;
+  try {
+    const before = await read();
+    if (before.marked) return false;
+    await mkdir(dir, { recursive: true });
+    tmp = path.join(dir, `.state.json.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+    await writeFile(tmp, body(before.state));
+    if (!before.exists) {
+      try {
+        await link(tmp, file);
+        return true;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        // Another start got there first: its file decides.
+        if ((await read()).marked) return false;
+      }
+    }
+    await rename(tmp, file);
+    tmp = undefined;
+    return true;
   } catch {
-    // Nothing here is worth failing a session for.
+    return false;
+  } finally {
+    if (tmp !== undefined) await unlink(tmp).catch(() => undefined);
   }
 }
 
 /**
- * shouldOffer decides whether this start is the one that offers the
- * switch: only when the settings say it is off, and only the first time on
- * a machine. A user who says no is not asked again; a user who says yes
- * has nothing left to be asked about.
+ * shouldOffer decides whether this start is one that would carry the
+ * offer at all: the settings say it is off, and the plugin's own version
+ * could be read, since a start that cannot read it sends no instructions
+ * for the offer to ride in. Whether it is the first such start is
+ * claimOffer's question, not this one's.
  */
-export function shouldOffer(auto: AutoUpdate | undefined, offered: boolean): boolean {
-  return auto !== undefined && !auto.on && !offered;
+export function shouldOffer(auto: AutoUpdate | undefined, offered: boolean, pluginKnown = true): boolean {
+  return auto !== undefined && !auto.on && !offered && pluginKnown;
 }

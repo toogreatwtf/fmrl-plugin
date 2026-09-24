@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { alreadyOffered, autoUpdateState, markOffered, settingsPath, shouldOffer, statePath } from "../src/autoupdate.js";
+import { alreadyOffered, autoUpdateState, claimOffer, settingsPath, shouldOffer, statePath } from "../src/autoupdate.js";
 
 /** fakeSettings writes settings (as-is when a string) and answers its directory, a CLAUDE_CONFIG_DIR. */
 async function fakeSettings(settings: unknown): Promise<string> {
@@ -65,29 +65,52 @@ describe("statePath and the offer marker", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "fmrl-state-"));
     expect(statePath({ XDG_CONFIG_HOME: dir }, "darwin", () => "/home/x")).toBe(path.join(dir, "fmrl", "state.json"));
   });
-  it("is not offered before it is marked, and is after; an unwritable path is not fatal", async () => {
+  it("reads as not offered until something claims it, and as offered after", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "fmrl-state-"));
     const file = path.join(dir, "fmrl", "state.json");
     expect(await alreadyOffered(file)).toBe(false);
-    await markOffered(file);
+    await claimOffer(file);
     expect(await alreadyOffered(file)).toBe(true);
-    // A directory where the file should be: marking fails, quietly.
-    const blocked = path.join(dir, "blocked");
-    await mkdir(path.join(blocked, "state.json"), { recursive: true });
-    await expect(markOffered(path.join(blocked, "state.json"))).resolves.toBeUndefined();
   });
-  it("keeps what else the state file holds, and survives junk in it", async () => {
+  it("reads junk, and a file that is really a directory, as not offered", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-state-"));
+    const file = path.join(dir, "state.json");
+    await writeFile(file, "{ not json");
+    expect(await alreadyOffered(file)).toBe(false);
+    const blocked = path.join(dir, "blocked", "state.json");
+    await mkdir(blocked, { recursive: true });
+    expect(await alreadyOffered(blocked)).toBe(false);
+  });
+});
+
+describe("claimOffer", () => {
+  it("is won once: the winner offers, every later start does not", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-state-"));
+    const file = path.join(dir, "fmrl", "state.json");
+    expect(await claimOffer(file)).toBe(true);
+    expect(await claimOffer(file)).toBe(false);
+  });
+  it("is won by exactly one of two starts racing for it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-state-"));
+    const file = path.join(dir, "fmrl", "state.json");
+    const won = await Promise.all([claimOffer(file), claimOffer(file), claimOffer(file)]);
+    expect(won.filter(Boolean)).toHaveLength(1);
+  });
+  it("keeps what else the file holds, and leaves no litter behind", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "fmrl-state-"));
     const file = path.join(dir, "state.json");
     await writeFile(file, JSON.stringify({ version: 1, somethingElse: "keep me" }));
-    await markOffered(file);
+    expect(await claimOffer(file)).toBe(true);
     const after = JSON.parse(await readFile(file, "utf8"));
     expect(after.somethingElse).toBe("keep me");
     expect(typeof after.autoUpdateOfferedAt).toBe("string");
-    await writeFile(file, "{ not json");
-    expect(await alreadyOffered(file)).toBe(false);
-    await markOffered(file);
-    expect(await alreadyOffered(file)).toBe(true);
+    expect(await readdir(dir)).toEqual(["state.json"]);
+  });
+  it("does not claim when it cannot write: a machine that cannot remember is asked again", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-state-"));
+    const blocked = path.join(dir, "blocked", "state.json");
+    await mkdir(blocked, { recursive: true });
+    expect(await claimOffer(blocked)).toBe(false);
   });
 });
 
@@ -102,5 +125,11 @@ describe("shouldOffer", () => {
   it("never offers what is already on, or what it cannot see", () => {
     expect(shouldOffer({ on: true, file: "/s.json" }, false)).toBe(false);
     expect(shouldOffer(undefined, false)).toBe(false);
+  });
+  it("does not offer when the plugin's own version is unreadable: the notice it would ride in is not sent", () => {
+    // pluginStatus undefined means no instructions go out at all, so an
+    // offer counted here would be spent on a message nobody sees.
+    expect(shouldOffer(off, false, false)).toBe(false);
+    expect(shouldOffer(off, false, true)).toBe(true);
   });
 });

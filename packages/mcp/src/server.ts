@@ -12,6 +12,7 @@ import { MINT_LABEL, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
 import type { PageStore } from "./pages.js";
+import type { AutoUpdate } from "./autoupdate.js";
 import { pluginInstructions, pluginLine, pluginStatus } from "./plugin.js";
 
 // The version the server reports to MCP clients is the package's, read at
@@ -30,6 +31,10 @@ export interface ServerDeps {
   agentName?: string;
   /** pluginRoot is CLAUDE_PLUGIN_ROOT: set when the Claude Code plugin launched this server. */
   pluginRoot?: string;
+  /** autoUpdate is what the user's settings say about keeping this marketplace current; undefined when they say nothing. */
+  autoUpdate?: AutoUpdate;
+  /** offerAutoUpdate is whether this start is the one that offers the switch (autoupdate.shouldOffer). */
+  offerAutoUpdate?: boolean;
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -292,7 +297,9 @@ export function createServer(deps: ServerDeps): McpServer {
   const stat = deps.stat ?? fsStat;
   // Read once at startup: a plugin update takes a restart to load anyway.
   const plugin = pluginStatus(deps.pluginRoot, VERSION);
-  const instructions = pluginInstructions(plugin);
+  // The facts reach fmrl_whoami whenever they are known; the offer only on
+  // the start that makes it, so nobody is asked twice.
+  const instructions = pluginInstructions(plugin, deps.offerAutoUpdate ? deps.autoUpdate : undefined);
   const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
 
   const log = deps.log;
@@ -677,7 +684,7 @@ export function createServer(deps: ServerDeps): McpServer {
           ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
         }
         return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, k, ring) } : me) as MeResponse & Record<string, unknown>;
-      }, (m) => meText(m, ringLine, pluginLine(plugin)));
+      }, (m) => meText(m, ringLine, pluginLine(plugin, deps.autoUpdate)));
     },
   );
 

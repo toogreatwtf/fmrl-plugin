@@ -78,11 +78,15 @@ describe("pluginInstructions", () => {
     expect(t).toContain("/plugin → Installed → fmrl → Update now");
     expect(t).toContain("Settings → Plugins → Fmrl → Update");
   });
-  it("walks them through the auto-update switch and never has the agent edit plugin files", () => {
+  it("never has the agent edit plugin files, and says nothing about auto-update it cannot know", () => {
+    // Without the user's settings there is no telling whether auto-update
+    // is already on, and telling someone to turn on a switch they have had
+    // on for months is how this notice loses its credibility. The switch is
+    // named only when the settings say it is off (see "the auto-update
+    // offer" below).
     const t = pluginInstructions(stale)!;
-    expect(t).toContain("/plugin → Marketplaces → fmrl-plugin → Enable auto-update");
-    expect(t).toMatch(/no command/i);
     expect(t).toContain("Never edit files under ~/.claude/plugins");
+    expect(t).not.toContain("Enable auto-update");
   });
 });
 
@@ -92,10 +96,72 @@ describe("pluginLine", () => {
   });
   it("a stale plugin: both versions and how to fix it", () => {
     expect(pluginLine({ installed: "0.3.0", server: "0.5.1", stale: true })).toBe(
-      "The fmrl plugin is out of date: installed 0.3, fmrl-mcp is at 0.5. Update it with `claude plugin marketplace update fmrl-plugin` then `claude plugin update fmrl@fmrl-plugin`, and restart Claude Code; /plugin → Marketplaces → fmrl-plugin → Enable auto-update keeps it current.",
+      "The fmrl plugin is out of date: installed 0.3, fmrl-mcp is at 0.5. Update it with `claude plugin marketplace update fmrl-plugin` then `claude plugin update fmrl@fmrl-plugin`, and restart Claude Code. /plugin → Marketplaces → fmrl-plugin → Enable auto-update keeps it current.",
     );
   });
   it("a current plugin says so", () => {
     expect(pluginLine({ installed: "0.5.0", server: "0.5.1", stale: false })).toBe("The fmrl plugin is up to date (plugin 0.5.0, fmrl-mcp 0.5.1).");
+  });
+});
+
+describe("the auto-update offer", () => {
+  const settings = "/home/x/.claude/settings.json";
+  const current = { installed: "0.6.0", server: "0.6.0", stale: false };
+  const stale = { installed: "0.5.0", server: "0.6.0", stale: true };
+
+  it("is made when the plugin is current but auto-update is off", () => {
+    const out = pluginInstructions(current, { on: false, file: settings }) ?? "";
+    expect(out).toContain("auto-update");
+    expect(out).toContain(settings);
+    expect(out).toContain("extraKnownMarketplaces");
+    expect(out).toContain("fmrl-plugin");
+    // It is the user's switch and their file: consent first, and it is not
+    // a thing that takes effect this session.
+    expect(out).toMatch(/only once the user says yes|once they say yes/i);
+    expect(out).toMatch(/next [\w ]*start|restart/i);
+    // Nothing to update: this is not the stale nag.
+    expect(out).not.toContain("out of date");
+  });
+
+  it("is not made when auto-update is already on, nor when the settings say nothing", () => {
+    expect(pluginInstructions(current, { on: true, file: settings })).toBeUndefined();
+    expect(pluginInstructions(current, undefined)).toBeUndefined();
+  });
+
+  it("is not made at all without a plugin: another client's server says nothing", () => {
+    expect(pluginInstructions(undefined, { on: false, file: settings })).toBeUndefined();
+  });
+
+  it("rides along with the stale nag rather than arriving as a second message", () => {
+    const out = pluginInstructions(stale, { on: false, file: settings }) ?? "";
+    expect(out).toContain("out of date");
+    expect(out).toContain(settings);
+    expect(out.match(/^The fmrl plugin/gm)?.length).toBe(1);
+  });
+
+  it("leaves the stale nag alone when auto-update is already on: nothing to turn on", () => {
+    const out = pluginInstructions(stale, { on: true, file: settings }) ?? "";
+    expect(out).toContain("out of date");
+    expect(out).not.toContain("Enable auto-update");
+    expect(out).not.toContain(settings);
+  });
+});
+
+describe("pluginLine and auto-update", () => {
+  const current = { installed: "0.6.0", server: "0.6.0", stale: false };
+  it("says auto-update is keeping it current when it is on", () => {
+    const line = pluginLine(current, { on: true, file: "/s.json" }) ?? "";
+    expect(line).toContain("up to date");
+    expect(line).toMatch(/auto-update is on/i);
+  });
+  it("says it is not being kept current when the switch is off, and where the switch is", () => {
+    const line = pluginLine(current, { on: false, file: "/s.json" }) ?? "";
+    expect(line).toMatch(/auto-update is off/i);
+    expect(line).toContain("/plugin → Marketplaces → fmrl-plugin → Enable auto-update");
+  });
+  it("says nothing about a switch it cannot see", () => {
+    const line = pluginLine(current) ?? "";
+    expect(line).toContain("up to date");
+    expect(line).not.toMatch(/auto-update/i);
   });
 });

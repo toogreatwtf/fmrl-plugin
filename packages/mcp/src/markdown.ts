@@ -99,17 +99,55 @@ export function decodeEntities(s: string): string {
   });
 }
 
+/**
+ * stripTags drops every "<…>" from html, as html.replace(/<[^>]+>/g, "")
+ * does, but in linear time: that regex rescans to the end of the string from
+ * every "<" that has no ">" after it. Once there is no ">" left, the rest
+ * stays as it is.
+ */
+export function stripTags(html: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) break;
+    const gt = html.indexOf(">", lt + 1);
+    if (gt < 0) break;
+    out += html.slice(i, lt);
+    // "<>" is not a tag to /<[^>]+>/: it stays.
+    if (gt === lt + 1) out += "<>";
+    i = gt + 1;
+  }
+  return out + html.slice(i);
+}
+
+/**
+ * firstElement is the body of the first element /<open[^>]*>([\s\S]*?)close/i
+ * would match, in linear time. Only the first start tag can match: when it has
+ * no ">" after it, or no close after that, neither does any later one.
+ */
+function firstElement(html: string, open: RegExp, close: RegExp): string | undefined {
+  const o = open.exec(html);
+  if (!o) return undefined;
+  const gt = html.indexOf(">", o.index + o[0].length);
+  if (gt < 0) return undefined;
+  close.lastIndex = gt + 1;
+  const c = close.exec(html);
+  return c ? html.slice(gt + 1, c.index) : undefined;
+}
+
+const plainText = (html: string) => decodeEntities(stripTags(html).replace(/\s+/g, " ").trim());
+
 /** firstHeading is the text of the first h1..h6 in an HTML fragment, tags stripped, entities decoded, or "". */
 export function firstHeading(html: string): string {
-  const m = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(html);
-  return m ? decodeEntities(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()) : "";
+  const body = firstElement(html, /<h[1-6]/i, /<\/h[1-6]>/gi);
+  return body === undefined ? "" : plainText(body);
 }
 
 /** documentTitle is the browser's pageTitle (static/fmrl.js): the <title> text, tags stripped, whitespace collapsed and entities decoded, else the first heading, else "". It names a private HTML page in its sealed record. */
 export function documentTitle(html: string): string {
-  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  const t = m ? decodeEntities(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()) : "";
-  return t || firstHeading(html);
+  const body = firstElement(html, /<title/i, /<\/title>/gi);
+  return (body === undefined ? "" : plainText(body)) || firstHeading(html);
 }
 
 /** wrapDocument is render.WrapDocument: a complete document with the Markdown stylesheet inlined. */

@@ -95,6 +95,13 @@ describe("readProfile stays linear on hostile HTML", () => {
     ["unclosed script start tags and no profile", junk("<script ")],
     ["scripts that never close and no profile", junk("<script>")],
     ["unclosed comments", script(prof) + junk("<!-- <h2>")],
+    // One far ">" after the junk: every start tag would rescan to it.
+    ["unclosed h2 start tags and one far >", script(prof) + junk("<h2 ") + ">"],
+    ["interleaved h1 h2 h3 start tags and one far >", script(prof) + junk("<h1 <h2 <h3 ") + ">"],
+    ["data-fmrl-section start tags and one far >", script(prof) + junk("<a data-fmrl-section=x ") + ">"],
+    ["script start tags and one far > before the profile", junk("<script ") + ">" + script(prof)],
+    ["script start tags and one far > with no profile", junk("<script ") + ">"],
+    ["style start tags and one far >", script(prof) + junk("<style ") + ">"],
   ];
   for (const [name, html] of cases) {
     it(`returns within 500 ms on ~2 MiB of ${name}`, () => {
@@ -102,6 +109,32 @@ describe("readProfile stays linear on hostile HTML", () => {
       expect(ms).toBeLessThan(500);
     });
   }
+  // Matching: sections × headings, and marks × headings, near the 2 MiB cap.
+  const many = (n: number, id: (i: number) => string) => ({ profile: "p", v: 1, sections: Array.from({ length: n }, (_, i) => ({ id: id(i) })) });
+  it("returns within 500 ms matching 16k sections against 165k headings none of them match", () => {
+    const { r, ms } = timed(script(many(16000, (i) => `s${i}`)) + junk("<h2>z</h2>").slice(0, 165000 * 11));
+    expect(r.missing).toHaveLength(16000);
+    expect(ms).toBeLessThan(500);
+  });
+  it("returns within 500 ms matching 16k sections by prefix against 16k headings in reverse order", () => {
+    const heads = Array.from({ length: 16000 }, (_, i) => `<h2>s${15999 - i} x</h2>`).join("");
+    const { r, ms } = timed(script(many(16000, (i) => `s${i}`)) + heads);
+    expect(r.missing).toEqual([]);
+    expect(r.section_map?.s0).toEqual({ heading: "s0 x", position: 16000 });
+    expect(ms).toBeLessThan(500);
+  });
+  it("returns within 500 ms placing 16k marks after 130k headings", () => {
+    const marks = Array.from({ length: 16000 }, (_, i) => `<i data-fmrl-section="s${i}">`).join("");
+    const { r, ms } = timed(script(many(16000, (i) => `s${i}`)) + junk("<h2>z</h2>").slice(0, 130000 * 11) + marks);
+    expect(r.missing).toHaveLength(16000);
+    expect(ms).toBeLessThan(500);
+  });
+  it("returns within 500 ms placing 16k marks on the same heading", () => {
+    const marks = Array.from({ length: 16000 }, (_, i) => `<i data-fmrl-section="s${i}">`).join("");
+    const { r, ms } = timed(script(many(16000, (i) => `s${i}`)) + marks + "<h2>z</h2>" + junk("<h2>z</h2>").slice(0, 100000 * 11));
+    expect(r.section_map).toEqual({ s0: { heading: "z", position: 1 } });
+    expect(ms).toBeLessThan(500);
+  });
   it("still reads the profile after the junk", () => {
     expect(timed(script(prof) + junk("<h2 ")).r.profile?.profile).toBe("handoff-review");
   });
@@ -119,6 +152,28 @@ describe("readProfile, HTML bodies that are not markup", () => {
     const r = readProfile(block({ profile: "p", v: 1, sections: [{ id: "a", purpose: "first" }, { id: "a", purpose: "second" }] }), "md");
     expect(r.profile?.sections).toEqual([{ id: "a", purpose: "first", by: "", required: false }]);
     expect(r.missing).toEqual(["a"]);
+  });
+});
+
+describe("readProfile, the order claims are made in", () => {
+  const html = (p: unknown, rest: string) => `<script type="application/fmrl-profile+json">${JSON.stringify(p)}</script>${rest}`;
+  it("an exact slug beats a prefix, whichever heading comes first", () => {
+    const r = readProfile(html({ sections: [{ id: "a" }, { id: "a-b" }] }, "<h2>A b c</h2><h2>A</h2><h2>A b</h2>"), "html");
+    expect(r.section_map).toEqual({ a: { heading: "A", position: 2 }, "a-b": { heading: "A b", position: 3 } });
+  });
+  it("prefix claims go in profile order, and a heading is claimed once", () => {
+    const r = readProfile(html({ sections: [{ id: "x" }, { id: "x-y" }] }, "<h2>X y 1</h2><h2>X 2</h2>"), "html");
+    expect(r.section_map).toEqual({ x: { heading: "X y 1", position: 1 } });
+    expect(r.missing).toEqual(["x-y"]);
+  });
+  it("a mark whose next heading is already claimed is ignored, not moved on", () => {
+    const r = readProfile(html({ sections: [{ id: "a" }, { id: "b" }] }, '<div data-fmrl-section="a"><div data-fmrl-section="b"><h2>H</h2><h2>Other</h2>'), "html");
+    expect(r.section_map).toEqual({ a: { heading: "H", position: 1 } });
+    expect(r.missing).toEqual(["b"]);
+  });
+  it("a mark with no heading after it claims nothing, and its section can still match by slug", () => {
+    const r = readProfile(html({ sections: [{ id: "a" }] }, '<h2>A</h2><div data-fmrl-section="a">'), "html");
+    expect(r.section_map).toEqual({ a: { heading: "A", position: 1 } });
   });
 });
 

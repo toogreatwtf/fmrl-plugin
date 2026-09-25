@@ -70,6 +70,33 @@ describe("markdown", () => {
   });
 });
 
+describe("documentTitle and firstHeading stay linear on hostile HTML", () => {
+  const junk = (unit: string) => unit.repeat(Math.ceil((2 * 1024 * 1024) / unit.length));
+  const cases: Array<[string, string]> = [
+    ["title start tags and one far >", junk("<title ") + ">"],
+    ["titles that never close", junk("<title>")],
+    ["h2 start tags and one far >", junk("<h2 ") + ">"],
+    ["h2 elements that never close", junk("<h2>")],
+    ["a title full of unclosed tags", "<title>" + junk("<a ") + "</title>"],
+  ];
+  for (const [name, html] of cases) {
+    it(`returns within 500 ms on ~2 MiB of ${name}`, () => {
+      const t0 = performance.now();
+      documentTitle(html);
+      firstHeading(html);
+      expect(performance.now() - t0).toBeLessThan(500);
+    });
+  }
+  it("still matches the same tags the regexes did", () => {
+    expect(documentTitle("<TITLE lang=en>Up</TITLE>")).toBe("Up");
+    expect(firstHeading("<h2 class=x>a</h3>")).toBe("a");
+    expect(firstHeading("<h2>open <h3>b</h3>")).toBe("open b");
+    expect(documentTitle("<title>no close")).toBe("");
+    expect(firstHeading("<h1>no close")).toBe("");
+    expect(firstHeading("<h1 no gt")).toBe("");
+  });
+});
+
 describe("toHTML and the fmrl-profile fence", () => {
   const open = '<script type="application/fmrl-profile+json" id="fmrl-profile">';
   for (const c of profileCases) {

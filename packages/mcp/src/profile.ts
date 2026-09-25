@@ -1,5 +1,5 @@
 import { Marked, type Tokens } from "marked";
-import { PROFILE_TYPE, decodeEntities, scriptBlocks } from "./markdown.js";
+import { PROFILE_TYPE, decodeEntities, scriptBlocks, stripTags } from "./markdown.js";
 
 /**
  * A canvas profile is a page's agreed section shape, carried in the page
@@ -22,28 +22,6 @@ const md = new Marked({ gfm: true, async: false });
 
 type Heading = { text: string; start: number };
 type Found = { body: string; headings: Heading[]; marks: Array<{ id: string; at: number }> };
-
-/**
- * stripTags drops every "<…>" from html, as html.replace(/<[^>]+>/g, "")
- * does, but in linear time: that regex rescans to the end of the string from
- * every "<" that has no ">" after it. Once there is no ">" left, the rest
- * stays as it is.
- */
-function stripTags(html: string): string {
-  let out = "";
-  let i = 0;
-  for (;;) {
-    const lt = html.indexOf("<", i);
-    if (lt < 0) break;
-    const gt = html.indexOf(">", lt + 1);
-    if (gt < 0) break;
-    out += html.slice(i, lt);
-    // "<>" is not a tag to /<[^>]+>/: it stays.
-    if (gt === lt + 1) out += "<>";
-    i = gt + 1;
-  }
-  return out + html.slice(i);
-}
 
 const plain = (html: string) => decodeEntities(stripTags(html).replace(/\s+/g, " ").trim());
 
@@ -97,9 +75,10 @@ function blank(html: string): string {
 /**
  * headingsOf is every <h1>…</h1> to <h6>…</h6> in document order, as
  * /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi finds them, in linear time. A
- * start tag with no ">" after it ends the scan; where no close for a level is
- * left, it is remembered, so a page of unclosed <h2> is not rescanned from
- * every one.
+ * start tag with no ">" after it ends the scan. The last ">" found, and each
+ * level's next close, are remembered while they still lie ahead, so a page of
+ * unclosed <h2 tags with one far ">", or of <h2> with no close, is not
+ * rescanned from every one.
  */
 function headingsOf(html: string): Heading[] {
   const open = /<h([1-6])\b/gi;
@@ -118,11 +97,13 @@ function headingsOf(html: string): Heading[] {
   };
   const out: Heading[] = [];
   let from = 0;
+  // gt is the first ">" at or after some earlier point; while it lies at or after this tag's name, it is this tag's too.
+  let gt = -1;
   for (;;) {
     open.lastIndex = from;
     const o = open.exec(html);
     if (!o) break;
-    const gt = html.indexOf(">", o.index + o[0].length);
+    if (gt < o.index + o[0].length) gt = html.indexOf(">", o.index + o[0].length);
     if (gt < 0) break;
     const c = closeFor(o[1], gt + 1);
     if (!c) { from = o.index + o[0].length; continue; }
@@ -158,6 +139,49 @@ function fromHTML(content: string): Found | undefined {
   if (body === undefined) return undefined;
   const visible = blank(content);
   return { body, headings: headingsOf(visible), marks: marksOf(visible) };
+}
+
+/** lowerBound is the first index in [0, n) where the monotone test holds, or n. */
+function lowerBound(n: number, test: (i: number) => boolean): number {
+  let lo = 0, hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (test(mid)) hi = mid; else lo = mid + 1;
+  }
+  return lo;
+}
+
+/**
+ * FirstUnclaimed is a min segment tree over headings in slug order: first(lo,
+ * hi) is the smallest unclaimed heading index among slug ranks [lo, hi), or
+ * -1, and remove(i) claims heading i; both O(log n).
+ */
+class FirstUnclaimed {
+  private readonly size: number;
+  private readonly min: Float64Array;
+  private readonly rank: Int32Array;
+  constructor(order: number[], claimed: Uint8Array) {
+    let size = 1;
+    while (size < order.length) size *= 2;
+    this.size = size;
+    this.min = new Float64Array(2 * size).fill(Infinity);
+    this.rank = new Int32Array(order.length);
+    order.forEach((h, r) => { this.rank[h] = r; if (!claimed[h]) this.min[size + r] = h; });
+    for (let p = size - 1; p >= 1; p--) this.min[p] = Math.min(this.min[2 * p], this.min[2 * p + 1]);
+  }
+  remove(h: number): void {
+    let p = this.size + this.rank[h];
+    this.min[p] = Infinity;
+    for (p >>= 1; p >= 1; p >>= 1) this.min[p] = Math.min(this.min[2 * p], this.min[2 * p + 1]);
+  }
+  first(lo: number, hi: number): number {
+    let m = Infinity;
+    for (let l = lo + this.size, r = hi + this.size; l < r; l >>= 1, r >>= 1) {
+      if (l & 1) m = Math.min(m, this.min[l++]);
+      if (r & 1) m = Math.min(m, this.min[--r]);
+    }
+    return m === Infinity ? -1 : m;
+  }
 }
 
 /** parse reads a profile block's JSON into a Profile, or says why it is not one. */
@@ -208,23 +232,39 @@ export function readProfile(content: string, format: "html" | "md"): ProfileRead
   if (typeof profile === "string") return { profile_error: profile };
 
   const ids = new Set(profile.sections.map((s) => s.id));
-  const claimed = new Set<number>();
+  const { headings } = found;
+  const claimed = new Uint8Array(headings.length);
   // A Map, not an object: an id may be "__proto__" or "toString".
   const map = new Map<string, { heading: string; position: number }>();
+  let onClaim = (_i: number) => {};
   const claim = (id: string, i: number) => {
-    claimed.add(i);
-    map.set(id, { heading: found.headings[i].text, position: i + 1 });
+    claimed[i] = 1;
+    onClaim(i);
+    map.set(id, { heading: headings[i].text, position: i + 1 });
   };
+  // Marks: the first heading at or after the mark (headings are in document order), when it is still unclaimed.
   for (const { id, at } of found.marks) {
     if (!ids.has(id) || map.has(id)) continue;
-    const i = found.headings.findIndex((h) => h.start >= at);
-    if (i >= 0 && !claimed.has(i)) claim(id, i);
+    const i = lowerBound(headings.length, (j) => headings[j].start >= at);
+    if (i < headings.length && !claimed[i]) claim(id, i);
   }
-  const slugs = found.headings.map((h) => slug(h.text));
-  for (const match of [(s: string, id: string) => s === id, (s: string, id: string) => s.startsWith(id + "-")]) {
+  // Slugs: sort the headings by slug, so the headings whose slug equals X, or
+  // starts with X + "-", are one run of that order; a min-tree over the run
+  // gives the first unclaimed heading in document order.
+  const slugs = headings.map((h) => slug(h.text));
+  const order = slugs.map((_, i) => i).sort((a, b) => (slugs[a] < slugs[b] ? -1 : slugs[a] > slugs[b] ? 1 : a - b));
+  const tree = new FirstUnclaimed(order, claimed);
+  onClaim = (i) => tree.remove(i);
+  const run = (lo: string, hi: string) => tree.first(
+    lowerBound(order.length, (r) => slugs[order[r]] >= lo),
+    lowerBound(order.length, (r) => slugs[order[r]] >= hi),
+  );
+  // Slugs hold no "\0", so [X, X + "\0") is X alone; "-" is followed by ".", so [X + "-", X + ".") is every slug starting X + "-".
+  const passes: Array<(id: string) => number> = [(id) => run(id, id + "\0"), (id) => run(id + "-", id + ".")];
+  for (const find of passes) {
     for (const { id } of profile.sections) {
       if (map.has(id)) continue;
-      const i = slugs.findIndex((s, j) => !claimed.has(j) && match(s, id));
+      const i = find(id);
       if (i >= 0) claim(id, i);
     }
   }

@@ -25,13 +25,41 @@ type Found = { body: string; headings: Heading[]; marks: Array<{ id: string; at:
 
 const plain = (html: string) => decodeEntities(stripTags(html).replace(/\s+/g, " ").trim());
 
+type AnyToken = { type: string; tokens?: AnyToken[]; items?: AnyToken[] };
+
+/**
+ * walkMarkdownTokens visits every token in document order: each token, then
+ * its children (a blockquote's or list item's `tokens`, a list's `items`)
+ * before its next sibling. A `code` token's `text` is raw fence content, not
+ * Markdown, so its children — it has none, but a future extension might add
+ * some — are never walked.
+ */
+function walkMarkdownTokens(tokens: AnyToken[], visit: (t: AnyToken) => void): void {
+  for (const t of tokens) {
+    visit(t);
+    if (t.type === "code") continue;
+    if (t.tokens) walkMarkdownTokens(t.tokens, visit);
+    if (t.items) walkMarkdownTokens(t.items, visit);
+  }
+}
+
 function fromMarkdown(content: string): Found | undefined {
-  const tokens = md.lexer(content);
-  const block = tokens.find((t): t is Tokens.Code => t.type === "code" && /^\S*/.exec((t as Tokens.Code).lang ?? "")?.[0] === "fmrl-profile");
+  const tokens = md.lexer(content) as unknown as AnyToken[];
+  let block: Tokens.Code | undefined;
+  const headings: Heading[] = [];
+  walkMarkdownTokens(tokens, (t) => {
+    if (t.type === "code") {
+      if (block) return;
+      const code = t as unknown as Tokens.Code;
+      if (/^\S*/.exec(code.lang ?? "")?.[0] === "fmrl-profile") block = code;
+      return;
+    }
+    if (t.type === "heading") {
+      const heading = t as unknown as Tokens.Heading;
+      headings.push({ text: plain(md.parseInline(heading.text) as string), start: headings.length });
+    }
+  });
   if (!block) return undefined;
-  const headings = tokens
-    .filter((t): t is Tokens.Heading => t.type === "heading")
-    .map((t, i) => ({ text: plain(md.parseInline(t.text) as string), start: i }));
   return { body: block.text, headings, marks: [] };
 }
 

@@ -49,6 +49,36 @@ describe("readProfile, Markdown", () => {
   });
 });
 
+describe("readProfile, Markdown nesting", () => {
+  it("parses a profile fence inside a blockquote", () => {
+    const md = "# Title\n\n> ```fmrl-profile\n> " + JSON.stringify(prof) + "\n> ```\n\n## Header\n";
+    const r = readProfile(md, "md");
+    expect(r.profile_error).toBeUndefined();
+    expect(r.profile?.profile).toBe("handoff-review");
+  });
+  it("parses a profile fence inside a list item", () => {
+    const md = "# Title\n\n- ```fmrl-profile\n  " + JSON.stringify(prof) + "\n  ```\n\n## Header\n";
+    const r = readProfile(md, "md");
+    expect(r.profile_error).toBeUndefined();
+    expect(r.profile?.profile).toBe("handoff-review");
+  });
+  it("maps a heading nested in a blockquote, its position counted in document order among all headings", () => {
+    const md = "# Title\n\n" + block(prof) + "\n## Header\n\n> ## Review\n\n## Footer\n";
+    const r = readProfile(md, "md");
+    // Document order: Title(1), Header(2), Review(3, nested in the blockquote), Footer(4).
+    expect(r.section_map).toMatchObject({
+      header: { heading: "Header", position: 2 },
+      review: { heading: "Review", position: 3 },
+    });
+  });
+  it("still does not treat a '## heading' line inside an ordinary fence as a heading, even nested in a blockquote", () => {
+    const md = block(prof) + "\n> ```\n> ## Header\n> ```\n";
+    const r = readProfile(md, "md");
+    expect(r.section_map?.header).toBeUndefined();
+    expect(r.missing).toContain("header");
+  });
+});
+
 describe("readProfile, HTML", () => {
   it("reads the rendered script (with \\u003c) and heading slugs", () => {
     const html = wrapDocument(toHTML("# T\n\n" + block({ ...prof, note: "</script>" }) + "\n## Header\n\n## Context gaps\n"), "T");

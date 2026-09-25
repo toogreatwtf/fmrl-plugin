@@ -513,7 +513,7 @@ describe("fmrl_get reads the page", () => {
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_get")!;
-    expect(tool.description).toBe("Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen.");
+    expect(tool.description).toBe("Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.");
   });
   it("reads a public Markdown page's latest revision: its source, its format, and who wrote it", async () => {
     const pub = await call("fmrl_publish", { content: "# Hello\n\nworld", format: "md" });
@@ -593,6 +593,52 @@ describe("fmrl_get reads the page", () => {
     const got = await call("fmrl_get", { id: `https://fmrl.test/${id}#p=${key}` });
     expect(got.structuredContent).toMatchObject({ content: src, content_format: "md" });
     expect(text(got).endsWith(`\n\n${src}`)).toBe(true);
+  });
+  const PROFILE = {
+    profile: "handoff-review", v: 1,
+    sections: [{ id: "header", purpose: "who and what", by: "author", required: true }, { id: "review-map", purpose: "where to look", by: "author", required: true }],
+    norms: ["evidence is a results table, not a transcript"],
+  };
+  const withProfile = (p: unknown) => "# Handoff\n\n```fmrl-profile\n" + JSON.stringify(p) + "\n```\n\n## Header\n\nx\n";
+  it("reads a public page's profile and section map, and says so in the text", async () => {
+    const pub = await call("fmrl_publish", { content: withProfile(PROFILE), format: "md" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const got = await call("fmrl_get", { id });
+    expect(got.isError).toBeFalsy();
+    expect(got.structuredContent).toMatchObject({
+      profile: { ...PROFILE, sections: PROFILE.sections },
+      section_map: { header: { heading: "Header", position: 2 } },
+      missing: ["review-map"],
+    });
+    expect(got.structuredContent).not.toHaveProperty("profile_error");
+    const lines = text(got).split("\n");
+    expect(lines[2]).toBe("Profile handoff-review v1: 1 of 2 sections found; missing: review-map (required).");
+    expect(lines[3]).toBe("Norm: evidence is a results table, not a transcript");
+  });
+  it("reads a private page's profile after opening it, from its Markdown source", async () => {
+    const src = withProfile(PROFILE);
+    const { id, key } = await plantPrivate(`<!DOCTYPE html><html><body><h1>Handoff</h1>\n${sourceBlock(src)}\n</body></html>`);
+    const got = await call("fmrl_get", { id: `https://fmrl.test/${id}#p=${key}` });
+    expect(got.structuredContent).toMatchObject({
+      content: src, content_format: "md",
+      profile: { profile: "handoff-review", v: 1 }, section_map: { header: { heading: "Header", position: 2 } }, missing: ["review-map"],
+    });
+    expect(text(got)).toContain("\nProfile handoff-review v1: 1 of 2 sections found; missing: review-map (required).\n");
+  });
+  it("a page with no profile block carries no profile keys at all", async () => {
+    const pub = await call("fmrl_publish", { content: "# Plain\n\n## Header\n", format: "md" });
+    const got = await call("fmrl_get", { id: (pub.structuredContent as { id: string }).id });
+    for (const k of ["profile", "section_map", "missing", "profile_error"]) expect(got.structuredContent).not.toHaveProperty(k);
+    expect(text(got)).not.toContain("Profile");
+  });
+  it("a page whose profile block is broken says so", async () => {
+    const pub = await call("fmrl_publish", { content: "# Broken\n\n```fmrl-profile\n{nope\n```\n", format: "md" });
+    const got = await call("fmrl_get", { id: (pub.structuredContent as { id: string }).id });
+    expect(got.isError).toBeFalsy();
+    const err = (got.structuredContent as { profile_error: string }).profile_error;
+    expect(err).toMatch(/^the fmrl-profile block is not valid JSON: /);
+    for (const k of ["profile", "section_map", "missing"]) expect(got.structuredContent).not.toHaveProperty(k);
+    expect(text(got).split("\n")[2]).toBe(`Profile block unreadable: ${err}.`);
   });
   it("an invalid link never echoes the key it carries", async () => {
     const key = "Q".repeat(43);

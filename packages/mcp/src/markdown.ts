@@ -83,7 +83,7 @@ function codePointToChar(n: number): string {
  * what a textarea does too: "&amp;lt;" decodes to "&lt;", not "<", because
  * the "lt;" left behind by decoding "&amp;" is never looked at again.
  */
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|lt|gt|quot|amp|#39);/gi, (_, body: string) => {
     if (body[0] === "#") {
       const n = body[1]?.toLowerCase() === "x" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);

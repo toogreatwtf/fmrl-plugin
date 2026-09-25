@@ -118,7 +118,32 @@ export function wrapDocument(body: string, title: string): string {
     escapeHTML(title || "Document") + "</title>\n<style>" + MARKDOWN_CSS + "</style>\n</head>\n<body>\n" + body + "\n</body>\n</html>\n";
 }
 
-const SOURCE_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+/**
+ * scriptBlocks yields each <script …>…</script> in html, in order: the
+ * attributes text and the body, with the offsets where the element starts and
+ * its body starts and ends. It finds what /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
+ * finds, in linear time: that regex backtracks quadratically on a page of
+ * unclosed "<script " or "<script>" tags. A start tag with no ">" after it, or
+ * a body with no close after it, means no later script can complete either,
+ * so the scan stops there.
+ */
+export function* scriptBlocks(html: string): Generator<{ attrs: string; body: string; start: number; bodyStart: number; bodyEnd: number }> {
+  const open = /<script\b/gi;
+  const close = /<\/script\s*>/gi;
+  let from = 0;
+  for (;;) {
+    open.lastIndex = from;
+    const o = open.exec(html);
+    if (!o) return;
+    const gt = html.indexOf(">", o.index + o[0].length);
+    if (gt < 0) return;
+    close.lastIndex = gt + 1;
+    const c = close.exec(html);
+    if (!c) return;
+    yield { attrs: html.slice(o.index + o[0].length, gt), body: html.slice(gt + 1, c.index), start: o.index, bodyStart: gt + 1, bodyEnd: c.index };
+    from = c.index + c[0].length;
+  }
+}
 
 /**
  * readSource is static/fmrl.js's readSource: the source a private page was
@@ -130,12 +155,11 @@ const SOURCE_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
  * other than md or html, or no block at all, is undefined.
  */
 export function readSource(html: string): { format: "md" | "html"; source: string } | undefined {
-  for (const m of html.matchAll(SOURCE_BLOCK)) {
-    const attrs = m[1];
+  for (const { attrs, body } of scriptBlocks(html)) {
     if (!/\btype\s*=\s*["']?text\/x-fmrl-source["']?(?=[\s>]|$)/i.test(attrs)) continue;
     const format = /\bdata-format\s*=\s*["']?([^"'\s>]*)/i.exec(attrs)?.[1] || "md";
     if (format !== "md" && format !== "html") return undefined;
-    return { format, source: m[2].replace(/&lt;/g, "<").replace(/&amp;/g, "&") };
+    return { format, source: body.replace(/&lt;/g, "<").replace(/&amp;/g, "&") };
   }
   return undefined;
 }

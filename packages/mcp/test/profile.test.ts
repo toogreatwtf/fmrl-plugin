@@ -75,3 +75,68 @@ describe("readProfile, HTML", () => {
     expect(readProfile('<script type="application/json">{"profile":"x"}</script>', "html")).toEqual({});
   });
 });
+
+describe("readProfile stays linear on hostile HTML", () => {
+  const script = (o: unknown) => `<script type="application/fmrl-profile+json" id="fmrl-profile">${JSON.stringify(o)}</script>`;
+  const MiB2 = 2 * 1024 * 1024;
+  const junk = (unit: string) => unit.repeat(Math.ceil(MiB2 / unit.length));
+  const timed = (html: string) => {
+    const t0 = performance.now();
+    const r = readProfile(html, "html");
+    return { r, ms: performance.now() - t0 };
+  };
+  const cases: Array<[string, string]> = [
+    ["unclosed data-fmrl-section start tags", script(prof) + junk("<a data-fmrl-section=x ")],
+    ["unclosed h2 start tags", script(prof) + junk("<h2 ")],
+    ["h2 elements that never close", script(prof) + junk("<h2>")],
+    ["a heading full of unclosed tags", script(prof) + "<h2>" + junk("<a ") + "</h2>"],
+    ["unclosed script start tags after the profile", script(prof) + junk("<script ")],
+    ["unclosed script start tags before the profile", junk("<script ") + script(prof)],
+    ["unclosed script start tags and no profile", junk("<script ")],
+    ["scripts that never close and no profile", junk("<script>")],
+    ["unclosed comments", script(prof) + junk("<!-- <h2>")],
+  ];
+  for (const [name, html] of cases) {
+    it(`returns within 500 ms on ~2 MiB of ${name}`, () => {
+      const { ms } = timed(html);
+      expect(ms).toBeLessThan(500);
+    });
+  }
+  it("still reads the profile after the junk", () => {
+    expect(timed(script(prof) + junk("<h2 ")).r.profile?.profile).toBe("handoff-review");
+  });
+});
+
+describe("readProfile, HTML bodies that are not markup", () => {
+  it("ignores headings and marks inside scripts, styles and comments", () => {
+    const html = `${`<script type="application/fmrl-profile+json">${JSON.stringify(prof)}</script>`}` +
+      `<script>document.write("<h2>Review</h2>")</script><style>/* <h2>Review</h2> */</style>` +
+      `<!-- <h2>Review</h2> <div data-fmrl-section="header"> --><h2>Header</h2><h2>Review</h2>`;
+    const r = readProfile(html, "html");
+    expect(r.section_map).toEqual({ header: { heading: "Header", position: 1 }, review: { heading: "Review", position: 2 } });
+  });
+  it("lists a repeated section id once", () => {
+    const r = readProfile(block({ profile: "p", v: 1, sections: [{ id: "a", purpose: "first" }, { id: "a", purpose: "second" }] }), "md");
+    expect(r.profile?.sections).toEqual([{ id: "a", purpose: "first", by: "", required: false }]);
+    expect(r.missing).toEqual(["a"]);
+  });
+});
+
+describe("readProfile, ids that are Object.prototype names", () => {
+  it("maps and misses them like any other id", () => {
+    const p = { profile: "p", v: 1, sections: [{ id: "tostring" }, { id: "toString" }, { id: "__proto__" }, { id: "constructor" }] };
+    const r = readProfile(block(p) + "\n## toString\n", "md");
+    // slug("toString") is "tostring": the lowercase id claims it, and the three names are missing.
+    expect(JSON.parse(JSON.stringify(r.section_map))).toEqual({ tostring: { heading: "toString", position: 1 } });
+    expect(r.missing).toEqual(["toString", "__proto__", "constructor"]);
+    const html = `<script type="application/fmrl-profile+json">${JSON.stringify(p)}</script>` +
+      `<h2 data-fmrl-section="__proto__">Proto</h2><h2 data-fmrl-section="constructor">Ctor</h2><h2 data-fmrl-section="toString">TS</h2>`;
+    const h = readProfile(html, "html");
+    expect(Object.getPrototypeOf(h.section_map)).toBe(Object.prototype);
+    expect(Object.hasOwn(h.section_map!, "__proto__")).toBe(true);
+    // A "__proto__" key in an object literal sets the prototype, so the expected value is parsed, as the actual one is.
+    expect(JSON.parse(JSON.stringify(h.section_map))).toEqual(JSON.parse(
+      '{"__proto__":{"heading":"Proto","position":1},"constructor":{"heading":"Ctor","position":2},"toString":{"heading":"TS","position":3}}'));
+    expect(h.missing).toEqual(["tostring"]);
+  });
+});

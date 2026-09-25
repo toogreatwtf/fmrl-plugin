@@ -1,5 +1,5 @@
 import { Marked, type Tokens } from "marked";
-import { PROFILE_TYPE, decodeEntities } from "./markdown.js";
+import { PROFILE_TYPE, decodeEntities, scriptBlocks } from "./markdown.js";
 
 /**
  * A canvas profile is a page's agreed section shape, carried in the page
@@ -23,7 +23,29 @@ const md = new Marked({ gfm: true, async: false });
 type Heading = { text: string; start: number };
 type Found = { body: string; headings: Heading[]; marks: Array<{ id: string; at: number }> };
 
-const plain = (html: string) => decodeEntities(html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+/**
+ * stripTags drops every "<…>" from html, as html.replace(/<[^>]+>/g, "")
+ * does, but in linear time: that regex rescans to the end of the string from
+ * every "<" that has no ">" after it. Once there is no ">" left, the rest
+ * stays as it is.
+ */
+function stripTags(html: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) break;
+    const gt = html.indexOf(">", lt + 1);
+    if (gt < 0) break;
+    out += html.slice(i, lt);
+    // "<>" is not a tag to /<[^>]+>/: it stays.
+    if (gt === lt + 1) out += "<>";
+    i = gt + 1;
+  }
+  return out + html.slice(i);
+}
+
+const plain = (html: string) => decodeEntities(stripTags(html).replace(/\s+/g, " ").trim());
 
 function fromMarkdown(content: string): Found | undefined {
   const tokens = md.lexer(content);
@@ -35,21 +57,107 @@ function fromMarkdown(content: string): Found | undefined {
   return { body: block.text, headings, marks: [] };
 }
 
-const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const TYPE_ATTR = /(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
-const HEADING = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi;
-const MARK = /<[A-Za-z][^>]*?\sdata-fmrl-section\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/g;
+const MARK_ATTR = /\sdata-fmrl-section\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/;
+const HIDDEN = /<!--|<(script|style)\b/gi;
+const CLOSE: Record<string, RegExp> = { script: /<\/script\s*>/gi, style: /<\/style\s*>/gi };
+
+/**
+ * blank replaces with spaces what a browser never reads as markup — the
+ * bodies of <script> and <style>, and whole <!-- --> comments — so headings
+ * and marks inside them are not found, and every offset stays where it was.
+ * An unclosed comment or body runs to the end, as it does in a browser. One
+ * left-to-right pass, so "<!--" inside a script is not a comment, nor a
+ * "<script" inside a comment a script.
+ */
+function blank(html: string): string {
+  let out = "";
+  let i = 0;
+  const hide = (from: number, to: number) => { out += html.slice(i, from) + " ".repeat(to - from); i = to; };
+  for (;;) {
+    HIDDEN.lastIndex = i;
+    const m = HIDDEN.exec(html);
+    if (!m) break;
+    if (m[0] === "<!--") {
+      const end = html.indexOf("-->", m.index + 4);
+      hide(m.index, end < 0 ? html.length : end + 3);
+      continue;
+    }
+    const gt = html.indexOf(">", m.index + m[0].length);
+    if (gt < 0) break;
+    const close = CLOSE[m[1].toLowerCase()];
+    close.lastIndex = gt + 1;
+    const c = close.exec(html);
+    hide(gt + 1, c ? c.index : html.length);
+    if (c) { out += html.slice(i, c.index + c[0].length); i = c.index + c[0].length; }
+  }
+  return out + html.slice(i);
+}
+
+/**
+ * headingsOf is every <h1>…</h1> to <h6>…</h6> in document order, as
+ * /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi finds them, in linear time. A
+ * start tag with no ">" after it ends the scan; where no close for a level is
+ * left, it is remembered, so a page of unclosed <h2> is not rescanned from
+ * every one.
+ */
+function headingsOf(html: string): Heading[] {
+  const open = /<h([1-6])\b/gi;
+  const closes = new Map<string, { re: RegExp; at: number; len: number }>();
+  const closeFor = (level: string, from: number) => {
+    let c = closes.get(level);
+    if (!c) { c = { re: new RegExp(`<\\/h${level}\\s*>`, "gi"), at: 0, len: 0 }; closes.set(level, c); c.at = from - 1; }
+    // at < from: search again from here; at === -Infinity: none left anywhere after an earlier point.
+    if (c.at !== -Infinity && c.at < from) {
+      c.re.lastIndex = from;
+      const m = c.re.exec(html);
+      c.at = m ? m.index : -Infinity;
+      c.len = m ? m[0].length : 0;
+    }
+    return c.at === -Infinity ? undefined : c;
+  };
+  const out: Heading[] = [];
+  let from = 0;
+  for (;;) {
+    open.lastIndex = from;
+    const o = open.exec(html);
+    if (!o) break;
+    const gt = html.indexOf(">", o.index + o[0].length);
+    if (gt < 0) break;
+    const c = closeFor(o[1], gt + 1);
+    if (!c) { from = o.index + o[0].length; continue; }
+    out.push({ text: plain(html.slice(gt + 1, c.at)), start: o.index });
+    from = c.at + c.len;
+  }
+  return out;
+}
+
+/** marksOf is each start tag's data-fmrl-section value and where the tag starts, found with indexOf rather than a backtracking regex. */
+function marksOf(html: string): Array<{ id: string; at: number }> {
+  const out: Array<{ id: string; at: number }> = [];
+  let i = 0;
+  for (;;) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) break;
+    if (!/[A-Za-z]/.test(html[lt + 1] ?? "")) { i = lt + 1; continue; }
+    const gt = html.indexOf(">", lt + 1);
+    if (gt < 0) break;
+    const m = MARK_ATTR.exec(html.slice(lt, gt));
+    if (m) out.push({ id: m[1] ?? m[2] ?? m[3], at: lt });
+    i = gt + 1;
+  }
+  return out;
+}
 
 function fromHTML(content: string): Found | undefined {
   let body: string | undefined;
-  for (const m of content.matchAll(SCRIPT)) {
-    const t = TYPE_ATTR.exec(m[1]);
-    if (t && (t[1] ?? t[2] ?? t[3]) === PROFILE_TYPE) { body = m[2]; break; }
+  for (const s of scriptBlocks(content)) {
+    const t = TYPE_ATTR.exec(s.attrs);
+    if (t && (t[1] ?? t[2] ?? t[3]) === PROFILE_TYPE) { body = s.body; break; }
   }
   if (body === undefined) return undefined;
-  const headings = [...content.matchAll(HEADING)].map((m) => ({ text: plain(m[2]), start: m.index! }));
-  const marks = [...content.matchAll(MARK)].map((m) => ({ id: m[1] ?? m[2] ?? m[3], at: m.index! }));
-  return { body, headings, marks };
+  const visible = blank(content);
+  return { body, headings: headingsOf(visible), marks: marksOf(visible) };
 }
 
 /** parse reads a profile block's JSON into a Profile, or says why it is not one. */
@@ -63,10 +171,14 @@ function parse(body: string): Profile | string {
   const o = v as Record<string, unknown>;
   if (!Array.isArray(o.sections)) return not("sections is not an array");
   const sections: ProfileSection[] = [];
+  const seen = new Set<string>();
   for (const [i, s] of o.sections.entries()) {
     if (typeof s !== "object" || s === null || Array.isArray(s)) return not(`section ${i + 1} is not an object`);
     const r = s as Record<string, unknown>;
     if (typeof r.id !== "string" || r.id === "") return not(`section ${i + 1} has no id`);
+    // A repeated id is the first one's: it is looked for, and missed, once.
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
     sections.push({
       id: r.id,
       purpose: typeof r.purpose === "string" ? r.purpose : "",
@@ -97,24 +209,26 @@ export function readProfile(content: string, format: "html" | "md"): ProfileRead
 
   const ids = new Set(profile.sections.map((s) => s.id));
   const claimed = new Set<number>();
-  const section_map: SectionMap = {};
+  // A Map, not an object: an id may be "__proto__" or "toString".
+  const map = new Map<string, { heading: string; position: number }>();
   const claim = (id: string, i: number) => {
     claimed.add(i);
-    section_map[id] = { heading: found.headings[i].text, position: i + 1 };
+    map.set(id, { heading: found.headings[i].text, position: i + 1 });
   };
   for (const { id, at } of found.marks) {
-    if (!ids.has(id) || id in section_map) continue;
+    if (!ids.has(id) || map.has(id)) continue;
     const i = found.headings.findIndex((h) => h.start >= at);
     if (i >= 0 && !claimed.has(i)) claim(id, i);
   }
   const slugs = found.headings.map((h) => slug(h.text));
   for (const match of [(s: string, id: string) => s === id, (s: string, id: string) => s.startsWith(id + "-")]) {
     for (const { id } of profile.sections) {
-      if (id in section_map) continue;
+      if (map.has(id)) continue;
       const i = slugs.findIndex((s, j) => !claimed.has(j) && match(s, id));
       if (i >= 0) claim(id, i);
     }
   }
-  const missing = profile.sections.map((s) => s.id).filter((id) => !(id in section_map));
-  return { profile, section_map, missing };
+  const missing = profile.sections.map((s) => s.id).filter((id) => !map.has(id));
+  // Object.fromEntries defines own properties, so a "__proto__" id is a key, not the prototype.
+  return { profile, section_map: Object.fromEntries(map), missing };
 }

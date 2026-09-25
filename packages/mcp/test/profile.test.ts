@@ -178,6 +178,14 @@ describe("readProfile, HTML bodies that are not markup", () => {
     const r = readProfile(html, "html");
     expect(r.section_map).toEqual({ header: { heading: "Header", position: 1 }, review: { heading: "Review", position: 2 } });
   });
+  it("a profile block inside a comment is not the profile", () => {
+    const html = `<!-- <script type="application/fmrl-profile+json">${JSON.stringify(prof)}</script> --><h2>Header</h2>`;
+    expect(readProfile(html, "html")).toEqual({});
+  });
+  it("a commented-out script tag does not swallow the real profile after it", () => {
+    const html = `<!-- <script type="text/plain"> --><script type="application/fmrl-profile+json">${JSON.stringify(prof)}</script><h2>Header</h2>`;
+    expect(readProfile(html, "html").section_map).toEqual({ header: { heading: "Header", position: 1 } });
+  });
   it("lists a repeated section id once", () => {
     const r = readProfile(block({ profile: "p", v: 1, sections: [{ id: "a", purpose: "first" }, { id: "a", purpose: "second" }] }), "md");
     expect(r.profile?.sections).toEqual([{ id: "a", purpose: "first", by: "", required: false }]);

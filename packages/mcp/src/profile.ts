@@ -159,13 +159,17 @@ function marksOf(html: string): Array<{ id: string; at: number }> {
 }
 
 function fromHTML(content: string): Found | undefined {
+  // Scripts are found in the blanked text, where a commented-out one is gone
+  // and a real one keeps its tags at the same offsets (only its body is
+  // blanked), so a "<script" inside a comment is neither read nor lets its
+  // scan run on into a real block's close. The body is read from the content.
+  const visible = blank(content);
   let body: string | undefined;
-  for (const s of scriptBlocks(content)) {
+  for (const s of scriptBlocks(visible)) {
     const t = TYPE_ATTR.exec(s.attrs);
-    if (t && (t[1] ?? t[2] ?? t[3]) === PROFILE_TYPE) { body = s.body; break; }
+    if (t && (t[1] ?? t[2] ?? t[3]) === PROFILE_TYPE) { body = content.slice(s.bodyStart, s.bodyEnd); break; }
   }
   if (body === undefined) return undefined;
-  const visible = blank(content);
   return { body, headings: headingsOf(visible), marks: marksOf(visible) };
 }
 

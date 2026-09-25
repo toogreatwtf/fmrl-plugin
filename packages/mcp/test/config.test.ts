@@ -30,4 +30,36 @@ describe("loadConfig", () => {
     try { loadConfig({ FMRL_RING: secret }); } catch (e) { message = (e as Error).message; }
     expect(message).not.toContain(secret);
   });
+  describe("FMRL_AGENT_NAME", () => {
+    const load = (v: string) => {
+      const lines: string[] = [];
+      const cfg = loadConfig({ FMRL_AGENT_NAME: v }, (l) => lines.push(l));
+      return { name: cfg.agentName, lines };
+    };
+    it("is trimmed and passed through", () => {
+      expect(load("  Bee the agent ")).toEqual({ name: "Bee the agent", lines: [] });
+    });
+    it("is absent when unset or blank, without a warning", () => {
+      expect(loadConfig({}).agentName).toBeUndefined();
+      expect(load("   ")).toEqual({ name: undefined, lines: [] });
+    });
+    it("takes 64 code points, counting an emoji as one", () => {
+      const name = "🐝".repeat(64);
+      expect(load(name)).toEqual({ name, lines: [] });
+    });
+    it("ignores a name over 64 code points, with one warning that does not echo it", () => {
+      const name = "b".repeat(65);
+      const { name: got, lines } = load(name);
+      expect(got).toBeUndefined();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("FMRL_AGENT_NAME");
+      expect(lines[0]).not.toContain(name);
+    });
+    it("ignores a name with a control character, with one warning that does not echo it", () => {
+      const { name, lines } = load("Bee\u0007secret");
+      expect(name).toBeUndefined();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).not.toContain("secret");
+    });
+  });
 });

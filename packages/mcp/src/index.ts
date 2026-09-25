@@ -5,6 +5,7 @@ import { alreadyOffered, autoUpdateState, claimOffer, shouldOffer, statePath } f
 import { loadConfig } from "./config.js";
 import { credentialsPath } from "./credentials.js";
 import { KeyStore } from "./keys.js";
+import { PageStore, pagesPath } from "./pages.js";
 import { pluginStatus } from "./plugin.js";
 import { createServer, VERSION } from "./server.js";
 
@@ -12,9 +13,10 @@ import { createServer, VERSION } from "./server.js";
 const log = (line: string) => process.stderr.write(line + "\n");
 
 async function main(): Promise<void> {
-  const cfg = loadConfig();
+  const cfg = loadConfig(process.env, log);
   const api = new FmrlApi(cfg.baseUrl);
   const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, ringFromEnv: cfg.ring, file: credentialsPath(), log });
+  const pages = new PageStore(cfg.baseUrl, pagesPath());
   // Whether anything is keeping the plugin current. Read once at startup,
   // as the plugin manifest is: neither changes without a restart.
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
@@ -28,7 +30,7 @@ async function main(): Promise<void> {
   // the offer, which the server cannot see. Asking once too few beats
   // asking every day.
   const offerAutoUpdate = shouldOffer(autoUpdate, await alreadyOffered(state), plugin !== undefined) && (await claimOffer(state));
-  const server = createServer({ api, keys, log, pluginRoot, autoUpdate, offerAutoUpdate });
+  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName, pluginRoot, autoUpdate, offerAutoUpdate });
   await server.connect(new StdioServerTransport());
 }
 

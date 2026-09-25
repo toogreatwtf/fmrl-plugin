@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { openEnvelope, seal } from "../src/crypto.js";
+import { openEnvelope, seal, sealWithKey } from "../src/crypto.js";
 
 const fixture = async () => JSON.parse(await readFile(new URL("./fixtures/v2.json", import.meta.url), "utf8")) as {
   plaintext: string; key: string; go: { none: string }; js: { none: string };
@@ -31,5 +31,16 @@ describe("seal", () => {
   it("the fixture's js envelope opens (what the Go test checks too)", async () => {
     const fx = await fixture();
     expect(await openEnvelope(fx.js.none, { key: fx.key })).toBe(fx.plaintext);
+  });
+});
+
+describe("sealWithKey", () => {
+  it("seals under the key it is given, with a fresh nonce each time", async () => {
+    const { key } = await seal("<p>first</p>");
+    const a = await sealWithKey("<p>second</p>", key);
+    const b = await sealWithKey("<p>second</p>", key);
+    expect(await openEnvelope(a, { key })).toBe("<p>second</p>");
+    expect(a).not.toBe(b);
+    await expect(sealWithKey("<p>x</p>", "short")).rejects.toThrow();
   });
 });

@@ -4,12 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, type DocResponse, type FmrlApi, type MeResponse, type PublishRequest, type PublishResponse } from "./api.js";
-import { openRecord, seal, sealRecord, type OpenedRecord } from "./crypto.js";
+import { ApiError, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type UpdateResponse } from "./api.js";
+import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
-import { parseDocId } from "./ids.js";
-import { prefixOf, type KeyStore } from "./keys.js";
-import { documentTitle, firstHeading, looksLikeHTML, toHTML, wrapDocument } from "./markdown.js";
+import { parseDocId, parsePageRef } from "./ids.js";
+import { MINT_LABEL, prefixOf, type KeyStore } from "./keys.js";
+import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
+import { openPrivatePage } from "./opener.js";
+import type { PageStore } from "./pages.js";
 import type { AutoUpdate } from "./autoupdate.js";
 import { pluginInstructions, pluginLine, pluginStatus } from "./plugin.js";
 
@@ -20,9 +22,13 @@ export const { version: VERSION } = createRequire(import.meta.url)("../package.j
 export interface ServerDeps {
   api: FmrlApi;
   keys: KeyStore;
+  /** pages holds the content keys and manage tokens of pages this machine has opened. */
+  pages: PageStore;
   open?: typeof fsOpen;
   stat?: typeof fsStat;
   log?: (line: string) => void;
+  /** agentName is FMRL_AGENT_NAME: the name this key's revisions carry, replacing any other. Without it, the MCP client's own name fills an empty one. */
+  agentName?: string;
   /** pluginRoot is CLAUDE_PLUGIN_ROOT: set when the Claude Code plugin launched this server. */
   pluginRoot?: string;
   /** autoUpdate is what the user's settings say about keeping this marketplace current; undefined when they say nothing. */
@@ -84,21 +90,21 @@ function publishText(p: PublishResponse): string {
 export const SEVEN_DAYS_PRIVATE = "This page lasts seven days; a private page cannot be kept.";
 export const PRIVATE_LINE = "This page is private: it was encrypted here before upload, and the key is the part of the link after #p=. fmrl.site cannot read or recover it.";
 
-/** preparePrivate renders (if Markdown) and seals content, returning the request body, the link key, and the title the sealed record carries: the title given, else the first heading for Markdown, else the document's <title> or first heading for HTML. The request body never carries a title. */
-async function preparePrivate(content: string, format: "html" | "md" | undefined, title: string | undefined): Promise<{ body: { content: string; format: "html"; encrypted: true }; key: string; title: string }> {
+/** preparePrivate renders (if Markdown) and seals content — under pageKey when one is given (a new revision of a private page), else under a fresh key — returning the request body, the link key, and the title the sealed record carries: the title given, else the first heading for Markdown, else the document's <title> or first heading for HTML. The request body never carries a title. verb names the act in the refusal of a page that renders empty. */
+async function preparePrivate(content: string, format: "html" | "md" | undefined, title: string | undefined, pageKey?: string, verb: "publish" | "save" = "publish"): Promise<{ body: { content: string; format: "html"; encrypted: true }; key: string; title: string }> {
   let html = content;
   let name: string;
   if (format === "md" || (format === undefined && !looksLikeHTML(content))) {
     const body = toHTML(content);
     if (body.trim() === "") {
-      throw new Error("Nothing to publish: the content rendered to an empty page.");
+      throw new Error(`Nothing to ${verb}: the content rendered to an empty page.`);
     }
     name = title || firstHeading(body);
     html = wrapDocument(body, name);
   } else {
     name = title || documentTitle(content);
   }
-  const sealed = await seal(html);
+  const sealed = pageKey ? { envelope: await sealWithKey(html, pageKey), key: pageKey } : await seal(html);
   const envBytes = Buffer.byteLength(sealed.envelope, "utf8");
   if (envBytes > MAX_BYTES) {
     throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits.`);
@@ -156,6 +162,39 @@ function docText(r: PageRow): string {
   return lines.join("\n");
 }
 
+/** PageRead is fmrl_get's answer: the page row, the revision read and who made it, and its content — or, for a private page no key here opens, a note saying how to read it. */
+type PageRead = PageRow & {
+  rev: number; latest_rev: number; editor: Editor;
+  content?: string; content_format?: "html" | "md"; content_note?: string;
+};
+
+export const PRIVATE_NOTE = "private: pass the link with #p=<key> to read it";
+
+function editorText(e: Editor): string {
+  const key = e.key ? `${e.key}…` : undefined;
+  if (e.name) return key ? `${e.name} (${key})` : e.name;
+  if (key) return key;
+  if (e.kind === "session") return "a linked browser";
+  if (e.kind === "manage") return "a manage link";
+  return "someone unknown";
+}
+
+function readText(r: PageRead, at: string): string {
+  const [meta, ...rest] = docText(r).split("\n");
+  return [meta, `Revision ${r.rev} of ${r.latest_rev}, edited by ${editorText(r.editor)} at ${at}.`, ...rest, "", r.content ?? r.content_note ?? ""].join("\n");
+}
+
+export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
+export const MANAGE_HINT = (origin: string, id: string) => `You can edit this page with its manage link (${origin}/manage/${id}#k=…); pass it as id once and it is remembered.`;
+export const CONFLICT = (rev: number) => `Revision ${rev} is the latest; read it with fmrl_get and edit from there.`;
+
+/** EditConflict is a 409 on fmrl_edit: someone saved revision latest after the base_rev the caller read. */
+class EditConflict extends Error {
+  constructor(public readonly latest: number) { super(CONFLICT(latest)); }
+}
+
+type EditResult = { id: string; url: string; rev: number };
+
 export const LIST_EMPTY = "This key has no pages right now; removed and expired pages are not listed.";
 
 function when(r: PageRow): string {
@@ -172,12 +211,46 @@ function listText(rows: PageRow[]): string {
   const count = rows.length === 1 ? "1 page" : `${rows.length} pages`;
   return [`${count} on this key, newest first${rows.length >= 50 ? " (the newest 50)" : ""}:`, ...rows.map(listLine)].join("\n");
 }
+export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
 function meText(m: MeResponse, ringLine: string, plugin: string | undefined): string {
   const q = m.quota.publishes;
   const linked = m.linked_at ? `Linked to a browser on ${m.linked_at}.` : "Not linked to any browser yet.";
-  const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, linked];
+  const named = m.label ? `Named ${m.label}: the revisions this key makes carry that name.` : UNNAMED_LINE;
+  const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, linked];
   if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)}`);
   return [...lines, ringLine, ...(plugin ? [plugin] : []), SEVEN_DAYS].join("\n");
+}
+
+/** WatchRow is fmrl_watch's answer: the server's watch, the page's keyed link when a key here opens it, and whether fmrl_get can read it here. */
+type WatchRow = { id: string; url: string; private: boolean; rev: number; seen_rev: number; can_open: boolean };
+
+function watchText(w: WatchRow): string {
+  const lines = [`Watching ${w.url}: revision ${w.rev}, read through ${w.seen_rev}. Revisions other editors make show up in fmrl_inbox.`];
+  if (!w.can_open) lines.push(PRIVATE_NEEDS_KEY);
+  return lines.join("\n");
+}
+
+/** InboxRow is one fmrl_inbox item: the server's, plus whether fmrl_get can read it here (a public page, or a private one whose key the page store holds). */
+type InboxRow = InboxItem & { can_open: boolean };
+
+export const INBOX_EMPTY = "Nothing new: no page you watch has a revision someone else made since you last read it.";
+
+/** editorName is who made a revision, as the inbox says it: the key's name, else its prefix, else the kind of editor. */
+function editorName(e: Editor): string {
+  return e.name || (e.key ? `${e.key}…` : e.kind);
+}
+function inboxLine(it: InboxRow): string {
+  const revs = it.revisions.map((r) => `rev ${r.rev} by ${editorName(r.editor)}`).join(", ");
+  const readable = it.status === "live" || it.status === "pinned";
+  const next = !readable
+    ? `${it.status}, so it can no longer be read`
+    : it.can_open ? `read with fmrl_get ${it.url} rev ${it.rev}` : `read with fmrl_get ${it.url}#p=<key> rev ${it.rev} (private; its key is not held here)`;
+  return `- ${it.id} (${it.status}): ${revs} — ${next}`;
+}
+function inboxText(items: InboxRow[]): string {
+  if (items.length === 0) return INBOX_EMPTY;
+  const count = items.length === 1 ? "1 page has" : `${items.length} pages have`;
+  return [`${count} revisions you haven't read, newest first:`, ...items.map(inboxLine)].join("\n");
 }
 
 const publishOutput = {
@@ -189,16 +262,37 @@ const pageOutput = {
   expires_at: z.string().nullable(), pinned: z.boolean(), cid: z.string().optional(),
   private: z.boolean(), key_held: z.boolean().optional(), title: z.string().optional(),
 };
+const readOutput = {
+  ...pageOutput,
+  rev: z.number(), latest_rev: z.number(),
+  editor: z.object({ kind: z.string(), key: z.string().optional(), name: z.string().optional() }),
+  content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
+};
+const editOutput = {
+  // On a conflict the tool fails with only id and latest_rev; url and rev come with every saved edit.
+  id: z.string(), url: z.string().optional(), rev: z.number().optional(), latest_rev: z.number().optional(),
+};
 const listOutput = { docs: z.array(z.object(pageOutput)) };
+const watchOutput = {
+  id: z.string(), url: z.string(), private: z.boolean(), rev: z.number(), seen_rev: z.number(), can_open: z.boolean(),
+};
+const editorOutput = z.object({ kind: z.string(), key: z.string().optional(), name: z.string().optional() });
+const inboxOutput = {
+  items: z.array(z.object({
+    id: z.string(), url: z.string(), private: z.boolean(), status: z.string(), rev: z.number(), seen_rev: z.number(),
+    revisions: z.array(z.object({ rev: z.number(), at: z.string(), editor: editorOutput })),
+    can_open: z.boolean(),
+  })),
+};
 const meOutput = {
-  prefix: z.string(), created_at: z.string(),
+  prefix: z.string(), created_at: z.string(), label: z.string().optional(),
   quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
   linked_at: z.string().nullable().optional(), link_url: z.string().optional(),
 };
 
-/** createServer registers the six tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
+/** createServer registers the nine tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
-  const { api, keys } = deps;
+  const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
   // Read once at startup: a plugin update takes a restart to load anyway.
@@ -238,9 +332,50 @@ export function createServer(deps: ServerDeps): McpServer {
     return ring ? { ...p, link_url: withRing(p.link_url, k, ring) } : p;
   };
 
+  /** remember stores what this machine may keep about a page; a store that can't be written costs a log line, never the tool call, and the line never carries the secret. */
+  const remember = async (id: string, s: { key?: string; manage?: string }): Promise<void> => {
+    try {
+      await pages.remember(id, s);
+    } catch (e) {
+      log?.(`fmrl-mcp: couldn't remember page ${id}: ${errorText(e)}`);
+    }
+  };
+  /** manageTokenOf is the #k= token of a publish's manage_url. */
+  const manageTokenOf = (manageUrl: string): string | undefined => {
+    try { return parsePageRef(manageUrl).manage; } catch { return undefined; }
+  };
+
+  /**
+   * named holds, per key, the one attempt this process makes to name it:
+   * FMRL_AGENT_NAME replaces any other name; without it the MCP client's own
+   * name (from initialize) fills an empty one, or the one a minted key starts with. A failure costs one log line.
+   */
+  const named = new Map<string, Promise<void>>();
+  const nameKey = async (k: string): Promise<void> => {
+    try {
+      const me = await api.me(k);
+      // The name a minted key starts with counts as no name at all.
+      const unnamed = !me.label || me.label === MINT_LABEL;
+      const want = deps.agentName ?? (unnamed ? server.server.getClientVersion()?.name : undefined);
+      if (want && want !== me.label) await api.setLabel(k, want);
+    } catch (e) {
+      log?.(`fmrl-mcp: couldn't name key ${prefixOf(k)}…: ${errorText(e)}`);
+    }
+  };
+  const ensureName = (k: string): Promise<void> => {
+    let p = named.get(k);
+    if (!p) named.set(k, (p = nameKey(k)));
+    return p;
+  };
+  /** withKey is keys.withKey with the key named first; naming never fails the call. */
+  const withKey = <T>(fn: (key: string) => Promise<T>): Promise<T> => keys.withKey(async (k) => {
+    await ensureName(k);
+    return fn(k);
+  });
+
   const run = async <T extends Record<string, unknown>>(fn: (key: string) => Promise<T>, render: (v: T) => string): Promise<ToolResult> => {
     try {
-      const v = await keys.withKey(fn);
+      const v = await withKey(fn);
       return ok(render(v), v);
     } catch (e) {
       return fail(errorText(e));
@@ -258,7 +393,11 @@ export function createServer(deps: ServerDeps): McpServer {
       return fail("Nothing to publish: the content is empty.");
     }
     if (!priv) {
-      return run<PublishResponse & Record<string, unknown>>(async (k) => (await publishAs(k, { content, format, title })) as PublishResponse & Record<string, unknown>, publishText);
+      return run<PublishResponse & Record<string, unknown>>(async (k) => {
+        const p = await publishAs(k, { content, format, title });
+        await remember(p.id, { manage: manageTokenOf(p.manage_url) });
+        return p as PublishResponse & Record<string, unknown>;
+      }, publishText);
     }
     let prepared: Awaited<ReturnType<typeof preparePrivate>>;
     try {
@@ -267,7 +406,11 @@ export function createServer(deps: ServerDeps): McpServer {
       return fail(errorText(e));
     }
     return run<PublishResponse & Record<string, unknown>>(
-      async (k) => withFragment(await publishAs(k, prepared.body, { key: prepared.key, title: prepared.title }), prepared.key) as PublishResponse & Record<string, unknown>,
+      async (k) => {
+        const p = await publishAs(k, prepared.body, { key: prepared.key, title: prepared.title });
+        await remember(p.id, { key: prepared.key, manage: manageTokenOf(p.manage_url) });
+        return withFragment(p, prepared.key) as PublishResponse & Record<string, unknown>;
+      },
       privateText,
     );
   };
@@ -335,19 +478,157 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "fmrl_get",
     {
-      title: "Describe a fmrl.site page",
-      description: "Look up a page by id or URL: status, format, size, expiry, and whether it has been kept. For a private page this key owns, also its title and its link with the key after #p=, when this machine holds the key ring.",
-      inputSchema: { id: z.string().min(1).describe("A document id or any fmrl.site URL for it.") },
-      outputSchema: pageOutput,
+      title: "Read a fmrl.site page",
+      description: "Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen.",
+      inputSchema: {
+        id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=)."),
+        rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
+      },
+      outputSchema: readOutput,
     },
-    async ({ id }) => {
-      let docId: string;
-      try { docId = parseDocId(id); } catch (e) { return fail(errorText(e)); }
-      return run<PageRow>(async (k) => {
-        const d = await api.get(k, docId);
-        return pageRow(d, d.private ? await unseal(await keys.ringsFor(k), d.sealed) : undefined);
-      }, docText);
+    async ({ id, rev }) => {
+      let ref: ReturnType<typeof parsePageRef>;
+      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      let at = "";
+      return run<PageRead>(async (k) => {
+        const d = await api.get(k, ref.id);
+        const latest = d.rev ?? 1;
+        const r = await api.getRevision(k, ref.id, rev ?? latest);
+        at = r.at;
+        const read = (row: PageRow): PageRead => ({ ...row, rev: r.rev, latest_rev: latest, editor: r.editor });
+        if (!d.private) return { ...read(pageRow(d, undefined)), content: r.content, content_format: r.format };
+        const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+        if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
+        const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
+        const src = readSource(opened.html);
+        return src ? { ...row, content: src.source, content_format: src.format } : { ...row, content: opened.html, content_format: "html" };
+      }, (v) => readText(v, at));
     },
+  );
+
+  server.registerTool(
+    "fmrl_edit",
+    {
+      title: "Edit a fmrl.site page",
+      description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it.",
+      inputSchema: {
+        id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=), which are remembered here once they work."),
+        content: z.string().min(1).describe("The page's new HTML or Markdown (2 MiB at most)."),
+        format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it. A private page is always sent as HTML, rendered here from Markdown."),
+        title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
+        base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),
+      },
+      outputSchema: editOutput,
+    },
+    async ({ id, content, format, title, base_rev }) => {
+      let ref: ReturnType<typeof parsePageRef>;
+      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      if (content.trim() === "") return fail("Nothing to save: the content is empty.");
+      try {
+        const v = await withKey(async (k): Promise<EditResult> => {
+          let stored: { key?: string; manage?: string } = {};
+          try {
+            stored = await pages.get(ref.id);
+          } catch (e) {
+            log?.(`fmrl-mcp: couldn't read the page store: ${errorText(e)}`);
+          }
+          const d = await api.get(k, ref.id);
+          let body: Parameters<FmrlApi["update"]>[2] = { content, format, title, base_rev };
+          let pageKey: string | undefined;
+          if (d.private) {
+            // Prove the key against base_rev (the revision the caller edits
+            // from and has genuinely read), not the latest: reading marks a
+            // revision seen, so a conflicting edit must not advance seen past
+            // the revisions between base_rev and latest that were never read.
+            const current = await api.getRevision(k, ref.id, base_rev ?? d.rev ?? 1);
+            // The link's manage token is left out here: it is remembered only once an edit made with it is accepted.
+            const opened = await openPrivatePage({ id: ref.id, key: ref.key }, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+            if (!opened) throw new Error(PRIVATE_NEEDS_KEY);
+            pageKey = opened.key;
+            body = { ...(await preparePrivate(content, format, title, pageKey, "save")).body, base_rev };
+          }
+          // The owner key needs no token and is never given one to store. Anyone
+          // else tries the link's token, then once more the stored one; a link's
+          // token is remembered only after the server accepts an edit made with it.
+          const owned = d.owned === true;
+          const tokens: (string | undefined)[] = owned ? [undefined] : [...new Set([ref.manage, stored.manage].filter((t) => t !== undefined))];
+          if (tokens.length === 0) tokens.push(undefined);
+          let u: UpdateResponse | undefined;
+          let used: string | undefined;
+          for (const token of tokens) {
+            try {
+              u = await api.update(k, ref.id, body, token);
+              used = token;
+              break;
+            } catch (e) {
+              if (e instanceof ApiError && e.status === 409 && e.code === "conflict" && e.rev !== undefined) throw new EditConflict(e.rev);
+              if (!(e instanceof ApiError && e.status === 404 && !owned)) throw e;
+            }
+          }
+          if (!u) throw new Error(MANAGE_HINT(new URL(d.url).origin, ref.id));
+          if (used !== undefined && used === ref.manage && used !== stored.manage) await remember(ref.id, { manage: used });
+          return { id: u.id, url: pageKey ? `${u.url}#p=${pageKey}` : u.url, rev: u.rev };
+        });
+        return ok(`Saved revision ${v.rev} of ${v.url}`, v);
+      } catch (e) {
+        if (e instanceof EditConflict) return { ...fail(e.message), structuredContent: { id: ref.id, latest_rev: e.latest } };
+        return fail(errorText(e));
+      }
+    },
+  );
+
+  server.registerTool(
+    "fmrl_watch",
+    {
+      title: "Watch a fmrl.site page",
+      description: "Watch a page so revisions other editors make show up in fmrl_inbox. Pass the link you were handed; its key stays on this machine. Pages you publish are watched already.",
+      inputSchema: {
+        id: z.string().min(1).describe("A page id or any fmrl.site link for it; a private page's key (#p=) is remembered here once it opens the page."),
+        seen_rev: z.number().int().min(0).optional().describe("The revision you have read through; later ones show up in fmrl_inbox. Leave out to start from the latest (or keep where an existing watch is)."),
+      },
+      outputSchema: watchOutput,
+    },
+    async ({ id, seen_rev }) => {
+      let ref: ReturnType<typeof parsePageRef>;
+      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      return run<WatchRow>(async (k) => {
+        const d = await api.get(k, ref.id);
+        let w = await api.watch(k, ref.id, seen_rev);
+        let key: string | undefined;
+        if (d.private) {
+          // Proving the key means reading a revision, and reading one marks it
+          // seen; the watch is put back where it was when that moved it.
+          const current = await api.getRevision(k, ref.id, w.rev);
+          key = (await openPrivatePage(ref, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log }))?.key;
+          if (w.seen_rev < w.rev) w = await api.watch(k, ref.id, w.seen_rev);
+        }
+        return { ...w, url: key ? `${w.url}#p=${key}` : w.url, can_open: !w.private || key !== undefined };
+      }, watchText);
+    },
+  );
+
+  /** keyHeld says whether the page store holds a content key for id; a store that can't be read costs a log line and reads as no. */
+  const keyHeld = async (id: string): Promise<boolean> => {
+    try {
+      return (await pages.get(id)).key !== undefined;
+    } catch (e) {
+      log?.(`fmrl-mcp: couldn't read the page store: ${errorText(e)}`);
+      return false;
+    }
+  };
+
+  server.registerTool(
+    "fmrl_inbox",
+    {
+      title: "Pages revised since you read them",
+      description: "Pages you watch that someone else has revised since you last read them, newest first. Read each with fmrl_get (which marks it seen). A page that was removed or expired appears once.",
+      inputSchema: {},
+      outputSchema: inboxOutput,
+    },
+    async () => run<{ items: InboxRow[] }>(async (k) => {
+      const { items } = await api.inbox(k);
+      return { items: await Promise.all(items.map(async (it) => ({ ...it, can_open: !it.private || (await keyHeld(it.id)) }))) };
+    }, (v) => inboxText(v.items)),
   );
 
   server.registerTool(

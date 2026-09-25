@@ -17,15 +17,22 @@ function unb64url(s: string): Uint8Array<ArrayBuffer> { return new Uint8Array(Bu
 /** seal encrypts a complete HTML document under a fresh random key and returns the key (43 base64url chars) for the link's fragment. */
 export async function seal(html: string): Promise<Sealed> {
   if (html.length === 0) throw new Error("nothing to encrypt");
-  const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12));
-  const rawKey = globalThis.crypto.getRandomValues(new Uint8Array(32));
-  const key = await subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
-  const data = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, new TextEncoder().encode(html)));
-  const env = { v: 2, alg: "aes-256-gcm", kdf: "none", salt: "", nonce: b64(nonce), data: b64(data) };
-  return { envelope: "MARKYENC" + JSON.stringify(env), key: b64url(rawKey) };
+  const key = b64url(globalThis.crypto.getRandomValues(new Uint8Array(32)));
+  return { envelope: await sealWithKey(html, key), key };
 }
 
-/** openEnvelope decrypts a v2 kdf-none envelope with its key. Used by tests; the plugin never reads pages. */
+/** sealWithKey encrypts a complete HTML document under an existing page key (43 base64url chars) with a fresh nonce: a new revision of a private page, which every link carrying that key keeps opening. */
+export async function sealWithKey(html: string, pageKey: string): Promise<string> {
+  if (html.length === 0) throw new Error("nothing to encrypt");
+  if (!PAGE_KEY_SHAPE.test(pageKey)) throw new Error("A page key is 43 base64url characters.");
+  const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const key = await subtle.importKey("raw", unb64url(pageKey), "AES-GCM", false, ["encrypt"]);
+  const data = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, new TextEncoder().encode(html)));
+  const env = { v: 2, alg: "aes-256-gcm", kdf: "none", salt: "", nonce: b64(nonce), data: b64(data) };
+  return "MARKYENC" + JSON.stringify(env);
+}
+
+/** openEnvelope decrypts a v2 kdf-none envelope with its key; it rejects for the wrong key, which is how a candidate key is proved. */
 export async function openEnvelope(envelope: string, opts: { key: string }): Promise<string> {
   if (!envelope.startsWith("MARKYENC")) throw new Error("not an envelope");
   const env = JSON.parse(envelope.slice("MARKYENC".length)) as { v: number; alg: string; kdf: string; nonce: string; data: string };
@@ -51,7 +58,8 @@ export const MAX_SEALED_RECORD = 1024;
 // A nonce, a tag and a two-byte JSON object at the least.
 const MIN_SEALED_RECORD = 12 + 16 + 2;
 const RING_SHAPE = /^[A-Za-z0-9_-]{43}$/;
-const PAGE_KEY_SHAPE = /^[A-Za-z0-9_-]{43}$/;
+/** PAGE_KEY_SHAPE is a private page's content key: 43 base64url characters, the same shape a ring has. */
+export const PAGE_KEY_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 
 /** OpenedRecord is what a sealed record holds: the page's content key and its title. */
 export interface OpenedRecord { key: string; title: string }

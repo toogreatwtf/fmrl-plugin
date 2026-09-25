@@ -12,7 +12,8 @@ export interface KeyStoreOptions {
   log?: (line: string) => void;
 }
 
-const LABEL = "fmrl-mcp";
+/** MINT_LABEL is the name every key this plugin mints starts with; the MCP client's name replaces it as it fills an empty one. */
+export const MINT_LABEL = "fmrl-mcp";
 
 /** PREFIX_LENGTH is the server's apikey.PrefixLength. A key's prefix is what the link page names, and what a #r= pair pairs a ring with. */
 export const PREFIX_LENGTH = 9;
@@ -144,7 +145,7 @@ export class KeyStore {
   }
 
   private async mint(): Promise<string> {
-    const minted = await this.o.api.mint(LABEL);
+    const minted = await this.o.api.mint(MINT_LABEL);
     await this.serialize(async () => {
       const file = await readCredentials(this.o.file, this.o.log);
       // A replaced key's ring stays, under its prefix: its pages still exist,

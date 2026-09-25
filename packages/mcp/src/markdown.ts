@@ -92,3 +92,25 @@ export function wrapDocument(body: string, title: string): string {
   return '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' +
     escapeHTML(title || "Document") + "</title>\n<style>" + MARKDOWN_CSS + "</style>\n</head>\n<body>\n" + body + "\n</body>\n</html>\n";
 }
+
+const SOURCE_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+
+/**
+ * readSource is static/fmrl.js's readSource: the source a private page was
+ * rendered from, when its sealed document carries one as
+ * <script type="text/x-fmrl-source" data-format="…">. The browser writes the
+ * text with "&" as &amp; and then "<" as &lt;, so no source can close the
+ * block; this undoes exactly that, &lt; first, and nothing else. A block with
+ * no data-format is Markdown, as the edit page reads it; one in a format
+ * other than md or html, or no block at all, is undefined.
+ */
+export function readSource(html: string): { format: "md" | "html"; source: string } | undefined {
+  for (const m of html.matchAll(SOURCE_BLOCK)) {
+    const attrs = m[1];
+    if (!/\btype\s*=\s*["']?text\/x-fmrl-source["']?(?=[\s>]|$)/i.test(attrs)) continue;
+    const format = /\bdata-format\s*=\s*["']?([^"'\s>]*)/i.exec(attrs)?.[1] || "md";
+    if (format !== "md" && format !== "html") return undefined;
+    return { format, source: m[2].replace(/&lt;/g, "<").replace(/&amp;/g, "&") };
+  }
+  return undefined;
+}

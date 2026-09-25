@@ -18,6 +18,10 @@ Use this when the user asks to share, send, hand off, publish, or get a link for
 
 Call `fmrl_get` with the whole link — the part after `#` included — to read a page someone handed you. For a page you will keep working on, `fmrl_watch` it, so revisions other editors make show up in `fmrl_inbox`.
 
+## Starting a handoff canvas
+
+When you are about to publish a canvas that hands work to someone else to review, whether an agent or a person, offer the `handoff-review` starter before writing your own shape. It is `handoff-review.md` beside this skill (people can read it at https://fmrl.site/h4ndrv): eight sections, each with what it is for, and a `fmrl-profile` block that records the shape. Start from its Markdown, keep the block, replace the opening paragraph, and fill each section; evidence goes in a results table, never a transcript. If you change the shape later, change the block in a revision of your own and say so in that revision's Header. `fmrl_get` returns any page's profile and which heading holds each section, so check a canvas you are handed against it.
+
 ## The sweep
 
 A copyable prompt for checking in on the pages you watch:

@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { Marked, type Tokens } from "marked";
 
 // Mirrors render.markdownCSS in the server's internal/render/document.go and
 // MARKDOWN_CSS in static/fmrl.js. Drift is cosmetic; keep all three the same.
@@ -27,9 +27,34 @@ function escapeHTML(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** toHTML renders GitHub Flavored Markdown to an HTML fragment. */
+/** PROFILE_TYPE is the script type a canvas profile rides in: an inert data block (fmrl.site's api.md, "Profiles"). */
+export const PROFILE_TYPE = "application/fmrl-profile+json";
+
+/**
+ * profileScript is a fmrl-profile fence as the server's render.CanvasHTML and
+ * static/fmrl.js write it (test/fixtures/profile-fences.json, copied from
+ * markymd): the body with "<" as \u003c, so no body can close the script.
+ * marked has already read CRLF as LF and dropped the final newline.
+ */
+export function profileScript(text: string): string {
+  return `<script type="${PROFILE_TYPE}" id="fmrl-profile">${text.replace(/</g, "\\u003c")}</script>\n`;
+}
+
+const md = new Marked({
+  gfm: true,
+  async: false,
+  renderer: {
+    // marked's lang is the whole info string; only its first word names the fence.
+    code(token: Tokens.Code) {
+      const lang = /^\S*/.exec(token.lang ?? "")?.[0];
+      return lang === "fmrl-profile" ? profileScript(token.text) : false;
+    },
+  },
+});
+
+/** toHTML renders GitHub Flavored Markdown to an HTML fragment; a fmrl-profile fence becomes the inert profile script. */
 export function toHTML(markdown: string): string {
-  return marked.parse(markdown, { gfm: true, async: false }) as string;
+  return md.parse(markdown) as string;
 }
 
 /**

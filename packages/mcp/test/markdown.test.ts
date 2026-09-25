@@ -1,5 +1,16 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "../src/markdown.js";
+
+// fixtures/profile-fences.json is a byte-for-byte copy of markymd's
+// internal/render/testdata/profile-fences.json: the same cases the server's
+// Go renderer passes, so the plugin's Markdown renderer writes the identical
+// inert script for a ```fmrl-profile fence. Read synchronously (not a JSON
+// import attribute, which this repo's vitest/tsconfig setup rejects) so each
+// case can still become its own named `it`.
+const profileCases = JSON.parse(
+  readFileSync(new URL("./fixtures/profile-fences.json", import.meta.url), "utf8"),
+) as { name: string; md: string; script: string | null }[];
 
 describe("markdown", () => {
   it("looksLikeHTML matches share.DetectFormat", () => {
@@ -57,6 +68,22 @@ describe("markdown", () => {
     expect(documentTitle("<html><head><title> </title></head><body><h2>Two <em>words</em></h2></body></html>")).toBe("Two words");
     expect(documentTitle("<p>none</p>")).toBe("");
   });
+});
+
+describe("toHTML and the fmrl-profile fence", () => {
+  const open = '<script type="application/fmrl-profile+json" id="fmrl-profile">';
+  for (const c of profileCases) {
+    it(c.name, () => {
+      const got = toHTML(c.md);
+      if (c.script === null) {
+        expect(got).not.toContain("fmrl-profile+json");
+        return;
+      }
+      expect(got).toContain(open + c.script + "</script>\n");
+      expect(got).not.toContain("<pre");
+      expect(got.split("</script").length - 1).toBe(1);
+    });
+  }
 });
 
 describe("readSource", () => {

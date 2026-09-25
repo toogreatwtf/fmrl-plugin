@@ -133,10 +133,13 @@ describe("readProfile stays linear on hostile HTML", () => {
     ["script start tags and one far > with no profile", junk("<script ") + ">"],
     ["style start tags and one far >", script(prof) + junk("<style ") + ">"],
   ];
+  // The bar separates linear from quadratic, not fast from slow: a quadratic
+  // scan of 2 MiB takes minutes, while the linear one runs ~150 ms locally and
+  // has run past 500 ms on CI's node 20 runner, which failed the build twice.
   for (const [name, html] of cases) {
-    it(`returns within 500 ms on ~2 MiB of ${name}`, () => {
+    it(`returns within 1500 ms on ~2 MiB of ${name}`, () => {
       const { ms } = timed(html);
-      expect(ms).toBeLessThan(500);
+      expect(ms).toBeLessThan(1500);
     });
   }
   // Matching: sections × headings, and marks × headings, near the 2 MiB cap.

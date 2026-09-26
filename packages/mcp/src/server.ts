@@ -11,6 +11,7 @@ import { parseDocId, parsePageRef } from "./ids.js";
 import { MINT_LABEL, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
+import { readProfile, type ProfileRead } from "./profile.js";
 import type { PageStore } from "./pages.js";
 import type { AutoUpdate } from "./autoupdate.js";
 import { pluginInstructions, pluginLine, pluginStatus } from "./plugin.js";
@@ -162,8 +163,8 @@ function docText(r: PageRow): string {
   return lines.join("\n");
 }
 
-/** PageRead is fmrl_get's answer: the page row, the revision read and who made it, and its content — or, for a private page no key here opens, a note saying how to read it. */
-type PageRead = PageRow & {
+/** PageRead is fmrl_get's answer: the page row, the revision read and who made it, and its content — or, for a private page no key here opens, a note saying how to read it. Content that carries a fmrl-profile block adds what readProfile makes of it. */
+type PageRead = PageRow & ProfileRead & {
   rev: number; latest_rev: number; editor: Editor;
   content?: string; content_format?: "html" | "md"; content_note?: string;
 };
@@ -179,9 +180,21 @@ function editorText(e: Editor): string {
   return "someone unknown";
 }
 
+/** profileText is the profile's lines in fmrl_get's text: how many sections were found and which are missing, then its norms; or why the block could not be read. */
+function profileText(r: ProfileRead): string[] {
+  if (r.profile_error) return [`Profile block unreadable: ${r.profile_error}.`];
+  const p = r.profile;
+  if (!p) return [];
+  const required = new Set(p.sections.filter((s) => s.required).map((s) => s.id));
+  const missing = (r.missing ?? []).map((id) => (required.has(id) ? `${id} (required)` : id));
+  const missingPart = missing.length ? `; missing: ${missing.join(", ")}` : "";
+  const found = Object.keys(r.section_map ?? {}).length;
+  return [`Profile ${p.profile} v${p.v}: ${found} of ${p.sections.length} sections found${missingPart}.`, ...p.norms.map((n) => `Norm: ${n}`)];
+}
+
 function readText(r: PageRead, at: string): string {
   const [meta, ...rest] = docText(r).split("\n");
-  return [meta, `Revision ${r.rev} of ${r.latest_rev}, edited by ${editorText(r.editor)} at ${at}.`, ...rest, "", r.content ?? r.content_note ?? ""].join("\n");
+  return [meta, `Revision ${r.rev} of ${r.latest_rev}, edited by ${editorText(r.editor)} at ${at}.`, ...profileText(r), ...rest, "", r.content ?? r.content_note ?? ""].join("\n");
 }
 
 export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
@@ -267,6 +280,14 @@ const readOutput = {
   rev: z.number(), latest_rev: z.number(),
   editor: z.object({ kind: z.string(), key: z.string().optional(), name: z.string().optional() }),
   content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
+  profile: z.object({
+    profile: z.string(), v: z.number(),
+    sections: z.array(z.object({ id: z.string(), purpose: z.string(), by: z.string(), required: z.boolean() })),
+    norms: z.array(z.string()),
+  }).optional(),
+  section_map: z.record(z.object({ heading: z.string(), position: z.number() })).optional(),
+  missing: z.array(z.string()).optional(),
+  profile_error: z.string().optional(),
 };
 const editOutput = {
   // On a conflict the tool fails with only id and latest_rev; url and rev come with every saved edit.
@@ -479,7 +500,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_get",
     {
       title: "Read a fmrl.site page",
-      description: "Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen.",
+      description: "Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.",
       inputSchema: {
         id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=)."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
@@ -496,12 +517,14 @@ export function createServer(deps: ServerDeps): McpServer {
         const r = await api.getRevision(k, ref.id, rev ?? latest);
         at = r.at;
         const read = (row: PageRow): PageRead => ({ ...row, rev: r.rev, latest_rev: latest, editor: r.editor });
-        if (!d.private) return { ...read(pageRow(d, undefined)), content: r.content, content_format: r.format };
+        // The profile is read here, from the content as it reads after opening: the server never sees a private page's.
+        const withContent = (row: PageRead, content: string, content_format: "html" | "md"): PageRead => ({ ...row, content, content_format, ...readProfile(content, content_format) });
+        if (!d.private) return withContent(read(pageRow(d, undefined)), r.content, r.format);
         const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
         if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
         const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
         const src = readSource(opened.html);
-        return src ? { ...row, content: src.source, content_format: src.format } : { ...row, content: opened.html, content_format: "html" };
+        return src ? withContent(row, src.source, src.format) : withContent(row, opened.html, "html");
       }, (v) => readText(v, at));
     },
   );

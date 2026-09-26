@@ -1,0 +1,11 @@
+[
+  {"name": "basic", "md": "```fmrl-profile\n{\"profile\":\"x\",\"v\":1}\n```\n", "script": "{\"profile\":\"x\",\"v\":1}"},
+  {"name": "multi-line body kept", "md": "# T\n\n```fmrl-profile\n{\n  \"v\": 1\n}\n```\n\nafter\n", "script": "{\n  \"v\": 1\n}"},
+  {"name": "angle brackets cannot close the block", "md": "```fmrl-profile\n{\"n\":\"</script><b>x</b>\"}\n```\n", "script": "{\"n\":\"\\u003c/script>\\u003cb>x\\u003c/b>\"}"},
+  {"name": "ampersands pass through", "md": "```fmrl-profile\n{\"a\":\"&amp; &\"}\n```\n", "script": "{\"a\":\"&amp; &\"}"},
+  {"name": "only the info string's first word counts", "md": "```fmrl-profile json\n{}\n```\n", "script": "{}"},
+  {"name": "empty fence", "md": "```fmrl-profile\n```\n", "script": ""},
+  {"name": "CRLF", "md": "```fmrl-profile\r\n{\"a\":1}\r\n```\r\n", "script": "{\"a\":1}"},
+  {"name": "a near miss is an ordinary fence", "md": "```fmrl-profiles\n{}\n```\n", "script": null},
+  {"name": "no language is an ordinary fence", "md": "```\n{\"profile\":\"x\"}\n```\n", "script": null}
+]

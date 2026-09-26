@@ -1,5 +1,16 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "../src/markdown.js";
+
+// fixtures/profile-fences.json is a byte-for-byte copy of markymd's
+// internal/render/testdata/profile-fences.json: the same cases the server's
+// Go renderer passes, so the plugin's Markdown renderer writes the identical
+// inert script for a ```fmrl-profile fence. Read synchronously (not a JSON
+// import attribute, which this repo's vitest/tsconfig setup rejects) so each
+// case can still become its own named `it`.
+const profileCases = JSON.parse(
+  readFileSync(new URL("./fixtures/profile-fences.json", import.meta.url), "utf8"),
+) as { name: string; md: string; script: string | null }[];
 
 describe("markdown", () => {
   it("looksLikeHTML matches share.DetectFormat", () => {
@@ -57,6 +68,49 @@ describe("markdown", () => {
     expect(documentTitle("<html><head><title> </title></head><body><h2>Two <em>words</em></h2></body></html>")).toBe("Two words");
     expect(documentTitle("<p>none</p>")).toBe("");
   });
+});
+
+describe("documentTitle and firstHeading stay linear on hostile HTML", () => {
+  const junk = (unit: string) => unit.repeat(Math.ceil((2 * 1024 * 1024) / unit.length));
+  const cases: Array<[string, string]> = [
+    ["title start tags and one far >", junk("<title ") + ">"],
+    ["titles that never close", junk("<title>")],
+    ["h2 start tags and one far >", junk("<h2 ") + ">"],
+    ["h2 elements that never close", junk("<h2>")],
+    ["a title full of unclosed tags", "<title>" + junk("<a ") + "</title>"],
+  ];
+  for (const [name, html] of cases) {
+    it(`returns within 500 ms on ~2 MiB of ${name}`, () => {
+      const t0 = performance.now();
+      documentTitle(html);
+      firstHeading(html);
+      expect(performance.now() - t0).toBeLessThan(500);
+    });
+  }
+  it("still matches the same tags the regexes did", () => {
+    expect(documentTitle("<TITLE lang=en>Up</TITLE>")).toBe("Up");
+    expect(firstHeading("<h2 class=x>a</h3>")).toBe("a");
+    expect(firstHeading("<h2>open <h3>b</h3>")).toBe("open b");
+    expect(documentTitle("<title>no close")).toBe("");
+    expect(firstHeading("<h1>no close")).toBe("");
+    expect(firstHeading("<h1 no gt")).toBe("");
+  });
+});
+
+describe("toHTML and the fmrl-profile fence", () => {
+  const open = '<script type="application/fmrl-profile+json" id="fmrl-profile">';
+  for (const c of profileCases) {
+    it(c.name, () => {
+      const got = toHTML(c.md);
+      if (c.script === null) {
+        expect(got).not.toContain("fmrl-profile+json");
+        return;
+      }
+      expect(got).toContain(open + c.script + "</script>\n");
+      expect(got).not.toContain("<pre");
+      expect(got.split("</script").length - 1).toBe(1);
+    });
+  }
 });
 
 describe("readSource", () => {

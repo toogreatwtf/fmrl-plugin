@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { Marked, type Tokens } from "marked";
 
 // Mirrors render.markdownCSS in the server's internal/render/document.go and
 // MARKDOWN_CSS in static/fmrl.js. Drift is cosmetic; keep all three the same.
@@ -27,9 +27,34 @@ function escapeHTML(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** toHTML renders GitHub Flavored Markdown to an HTML fragment. */
+/** PROFILE_TYPE is the script type a canvas profile rides in: an inert data block (fmrl.site's api.md, "Profiles"). */
+export const PROFILE_TYPE = "application/fmrl-profile+json";
+
+/**
+ * profileScript is a fmrl-profile fence as the server's render.CanvasHTML and
+ * static/fmrl.js write it (test/fixtures/profile-fences.json, copied from
+ * markymd): the body with "<" as \u003c, so no body can close the script.
+ * marked has already read CRLF as LF and dropped the final newline.
+ */
+export function profileScript(text: string): string {
+  return `<script type="${PROFILE_TYPE}" id="fmrl-profile">${text.replace(/</g, "\\u003c")}</script>\n`;
+}
+
+const md = new Marked({
+  gfm: true,
+  async: false,
+  renderer: {
+    // marked's lang is the whole info string; only its first word names the fence.
+    code(token: Tokens.Code) {
+      const lang = /^\S*/.exec(token.lang ?? "")?.[0];
+      return lang === "fmrl-profile" ? profileScript(token.text) : false;
+    },
+  },
+});
+
+/** toHTML renders GitHub Flavored Markdown to an HTML fragment; a fmrl-profile fence becomes the inert profile script. */
 export function toHTML(markdown: string): string {
-  return marked.parse(markdown, { gfm: true, async: false }) as string;
+  return md.parse(markdown) as string;
 }
 
 /**
@@ -58,7 +83,7 @@ function codePointToChar(n: number): string {
  * what a textarea does too: "&amp;lt;" decodes to "&lt;", not "<", because
  * the "lt;" left behind by decoding "&amp;" is never looked at again.
  */
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|lt|gt|quot|amp|#39);/gi, (_, body: string) => {
     if (body[0] === "#") {
       const n = body[1]?.toLowerCase() === "x" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
@@ -74,17 +99,55 @@ function decodeEntities(s: string): string {
   });
 }
 
+/**
+ * stripTags drops every "<…>" from html, as html.replace(/<[^>]+>/g, "")
+ * does, but in linear time: that regex rescans to the end of the string from
+ * every "<" that has no ">" after it. Once there is no ">" left, the rest
+ * stays as it is.
+ */
+export function stripTags(html: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) break;
+    const gt = html.indexOf(">", lt + 1);
+    if (gt < 0) break;
+    out += html.slice(i, lt);
+    // "<>" is not a tag to /<[^>]+>/: it stays.
+    if (gt === lt + 1) out += "<>";
+    i = gt + 1;
+  }
+  return out + html.slice(i);
+}
+
+/**
+ * firstElement is the body of the first element /<open[^>]*>([\s\S]*?)close/i
+ * would match, in linear time. Only the first start tag can match: when it has
+ * no ">" after it, or no close after that, neither does any later one.
+ */
+function firstElement(html: string, open: RegExp, close: RegExp): string | undefined {
+  const o = open.exec(html);
+  if (!o) return undefined;
+  const gt = html.indexOf(">", o.index + o[0].length);
+  if (gt < 0) return undefined;
+  close.lastIndex = gt + 1;
+  const c = close.exec(html);
+  return c ? html.slice(gt + 1, c.index) : undefined;
+}
+
+const plainText = (html: string) => decodeEntities(stripTags(html).replace(/\s+/g, " ").trim());
+
 /** firstHeading is the text of the first h1..h6 in an HTML fragment, tags stripped, entities decoded, or "". */
 export function firstHeading(html: string): string {
-  const m = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(html);
-  return m ? decodeEntities(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()) : "";
+  const body = firstElement(html, /<h[1-6]/i, /<\/h[1-6]>/gi);
+  return body === undefined ? "" : plainText(body);
 }
 
 /** documentTitle is the browser's pageTitle (static/fmrl.js): the <title> text, tags stripped, whitespace collapsed and entities decoded, else the first heading, else "". It names a private HTML page in its sealed record. */
 export function documentTitle(html: string): string {
-  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  const t = m ? decodeEntities(m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()) : "";
-  return t || firstHeading(html);
+  const body = firstElement(html, /<title/i, /<\/title>/gi);
+  return (body === undefined ? "" : plainText(body)) || firstHeading(html);
 }
 
 /** wrapDocument is render.WrapDocument: a complete document with the Markdown stylesheet inlined. */
@@ -93,7 +156,32 @@ export function wrapDocument(body: string, title: string): string {
     escapeHTML(title || "Document") + "</title>\n<style>" + MARKDOWN_CSS + "</style>\n</head>\n<body>\n" + body + "\n</body>\n</html>\n";
 }
 
-const SOURCE_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+/**
+ * scriptBlocks yields each <script …>…</script> in html, in order: the
+ * attributes text and the body, with the offsets where the element starts and
+ * its body starts and ends. It finds what /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
+ * finds, in linear time: that regex backtracks quadratically on a page of
+ * unclosed "<script " or "<script>" tags. A start tag with no ">" after it, or
+ * a body with no close after it, means no later script can complete either,
+ * so the scan stops there.
+ */
+export function* scriptBlocks(html: string): Generator<{ attrs: string; body: string; start: number; bodyStart: number; bodyEnd: number }> {
+  const open = /<script\b/gi;
+  const close = /<\/script\s*>/gi;
+  let from = 0;
+  for (;;) {
+    open.lastIndex = from;
+    const o = open.exec(html);
+    if (!o) return;
+    const gt = html.indexOf(">", o.index + o[0].length);
+    if (gt < 0) return;
+    close.lastIndex = gt + 1;
+    const c = close.exec(html);
+    if (!c) return;
+    yield { attrs: html.slice(o.index + o[0].length, gt), body: html.slice(gt + 1, c.index), start: o.index, bodyStart: gt + 1, bodyEnd: c.index };
+    from = c.index + c[0].length;
+  }
+}
 
 /**
  * readSource is static/fmrl.js's readSource: the source a private page was
@@ -105,12 +193,11 @@ const SOURCE_BLOCK = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
  * other than md or html, or no block at all, is undefined.
  */
 export function readSource(html: string): { format: "md" | "html"; source: string } | undefined {
-  for (const m of html.matchAll(SOURCE_BLOCK)) {
-    const attrs = m[1];
+  for (const { attrs, body } of scriptBlocks(html)) {
     if (!/\btype\s*=\s*["']?text\/x-fmrl-source["']?(?=[\s>]|$)/i.test(attrs)) continue;
     const format = /\bdata-format\s*=\s*["']?([^"'\s>]*)/i.exec(attrs)?.[1] || "md";
     if (format !== "md" && format !== "html") return undefined;
-    return { format, source: m[2].replace(/&lt;/g, "<").replace(/&amp;/g, "&") };
+    return { format, source: body.replace(/&lt;/g, "<").replace(/&amp;/g, "&") };
   }
   return undefined;
 }

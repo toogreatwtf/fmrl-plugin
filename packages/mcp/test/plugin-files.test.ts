@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { pluginInstructions } from "../src/plugin.js";
+import { readProfile } from "../src/profile.js";
 
 // The plugin's own files, read from the repo: the manifest, its skills, and
 // the package they ship alongside.
@@ -40,5 +41,25 @@ describe("/fmrl:whoami", () => {
   });
   it("is what a stale plugin's instructions point to after the restart", () => {
     expect(pluginInstructions({ installed: "0.3.0", server: pkg.version, stale: true })).toContain("/fmrl:whoami");
+  });
+});
+
+describe("/fmrl:share and the handoff-review starter", () => {
+  const starter = () => read("plugins/fmrl/skills/share/handoff-review.md");
+  const share = () => read("plugins/fmrl/skills/share/SKILL.md");
+  it("ships the starter, whose profile names the eight sections in order and finds a heading for each", () => {
+    const r = readProfile(starter(), "md");
+    expect(r.profile_error).toBeUndefined();
+    expect(r.profile?.profile).toBe("handoff-review");
+    expect(r.profile?.sections.map((s) => s.id)).toEqual(
+      ["header", "what-changed", "review-map", "decisions", "evidence", "deviations", "questions", "context-gaps"]);
+    expect(r.profile?.sections.every((s) => s.purpose.length > 0)).toBe(true);
+    expect(r.profile?.norms).toContain("evidence is a results table, not a transcript");
+    expect(r.missing).toEqual([]);
+  });
+  it("offers it when a handoff canvas starts, and names the house page", () => {
+    expect(share()).toContain("handoff-review.md");
+    expect(share()).toContain("https://fmrl.site/h4ndrv");
+    expect(share()).toMatch(/fmrl-profile/);
   });
 });

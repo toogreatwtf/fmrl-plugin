@@ -1,0 +1,17 @@
+[
+  {"name": "text, lowercased, runs to one dash", "md": "# Handoff: cut 4\n\n## Review map: where to look hardest\n", "ids": ["handoff-cut-4", "review-map-where-to-look-hardest"]},
+  {"name": "repeats get -1, -2", "md": "## Header\n\n## Header\n\n## Header\n", "ids": ["header", "header-1", "header-2"]},
+  {"name": "a repeat skips an id already taken", "md": "## a\n\n## a-1\n\n## a\n", "ids": ["a", "a-1", "a-2"]},
+  {"name": "a literal heading after a repeat", "md": "## a\n\n## a\n\n## a-1\n", "ids": ["a", "a-1", "a-1-1"]},
+  {"name": "nothing left is section", "md": "## ***\n\n## !!!\n\n##\n", "ids": ["section", "section-1", "section-2"]},
+  {"name": "ascii only", "md": "## Évidence & co\n", "ids": ["vidence-co"]},
+  {"name": "the plain text, not the markup", "md": "## The *new* **`api`** [spec](https://example.com/x)\n", "ids": ["the-new-api-spec"]},
+  {"name": "entities decoded", "md": "## Tom &amp; Jerry &#65;\n", "ids": ["tom-jerry-a"]},
+  {"name": "code keeps its entity text", "md": "## Use `&amp;` here\n", "ids": ["use-amp-here"]},
+  {"name": "inline html is dropped, its text kept", "md": "## <em>Raw</em> html\n", "ids": ["raw-html"]},
+  {"name": "an image adds nothing", "md": "## Logo ![alt text](x.png)\n", "ids": ["logo"]},
+  {"name": "autolinks read as their text", "md": "## See <https://a.example>\n", "ids": ["see-https-a-example"]},
+  {"name": "setext", "md": "Setext title\n============\n\nTwo\nlines\n---\n", "ids": ["setext-title", "two-lines"]},
+  {"name": "nested headings count too", "md": "> ## Quoted\n\n- ## Listed\n", "ids": ["quoted", "listed"]},
+  {"name": "a profile fence is not a heading", "md": "# Title\n\n```fmrl-profile\n{\"v\":1}\n```\n\n## Header\n", "ids": ["title", "header"]}
+]

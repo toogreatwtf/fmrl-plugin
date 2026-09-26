@@ -1,6 +1,6 @@
 {
   "name": "fmrl-mcp",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "MCP server for fmrl.site: publish a page from any agent and get a link.",
   "license": "MIT",
   "type": "module",

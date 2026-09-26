@@ -12,6 +12,23 @@ const profileCases = JSON.parse(
   readFileSync(new URL("./fixtures/profile-fences.json", import.meta.url), "utf8"),
 ) as { name: string; md: string; script: string | null }[];
 
+// fixtures/heading-ids.json is a byte-for-byte copy of markymd's
+// internal/render/testdata/heading-ids.json: the server's Go renderer and
+// fmrl.site's browser renderer give every heading the same id, so the
+// viewer's shape ring can jump to a section of a page this plugin rendered.
+const headingCases = JSON.parse(
+  readFileSync(new URL("./fixtures/heading-ids.json", import.meta.url), "utf8"),
+) as { name: string; md: string; ids: string[] }[];
+
+describe("heading ids", () => {
+  for (const c of headingCases) {
+    it(c.name, () => {
+      const ids = [...toHTML(c.md).matchAll(/<h[1-6](?: id="([^"]*)")?>/g)].map((m) => m[1]);
+      expect(ids).toEqual(c.ids);
+    });
+  }
+});
+
 describe("markdown", () => {
   it("looksLikeHTML matches share.DetectFormat", () => {
     expect(looksLikeHTML("<!doctype html><p>x")).toBe(true);
@@ -24,7 +41,7 @@ describe("markdown", () => {
   });
   it("renders GFM", () => {
     const html = toHTML("# Hi\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n~~gone~~");
-    expect(html).toContain("<h1>Hi</h1>");
+    expect(html).toContain('<h1 id="hi">Hi</h1>');
     expect(html).toContain("<table>");
     expect(html).toContain("<del>gone</del>");
   });

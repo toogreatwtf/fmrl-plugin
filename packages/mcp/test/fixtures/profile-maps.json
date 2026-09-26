@@ -1,0 +1,343 @@
+[
+  {
+    "name": "no block",
+    "html": "<!DOCTYPE html><html><body><h1>Title</h1><p>no profile here</p></body></html>",
+    "want": null
+  },
+  {
+    "name": "bad json",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{not json}</script><h1>Title</h1></body></html>",
+    "want": null
+  },
+  {
+    "name": "sections not an array",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":\"nope\"}</script><h1>Title</h1></body></html>",
+    "want": null
+  },
+  {
+    "name": "h4ndrv shape, all present",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"handoff-review\",\"v\":1,\"sections\":[{\"id\":\"header\",\"purpose\":\"say what this canvas is\",\"by\":\"author\",\"required\":true},{\"id\":\"what-changed\",\"purpose\":\"the intent before the detail\",\"by\":\"author\",\"required\":true},{\"id\":\"review-map\",\"purpose\":\"where to look hardest\",\"by\":\"author\",\"required\":true},{\"id\":\"decisions\",\"purpose\":\"keep settled questions settled\",\"by\":\"any\",\"required\":false},{\"id\":\"evidence\",\"purpose\":\"let a reader check each claim\",\"by\":\"author\",\"required\":true},{\"id\":\"deviations\",\"purpose\":\"surface every departure\",\"by\":\"author\",\"required\":true},{\"id\":\"questions\",\"purpose\":\"collect what only the person can decide\",\"by\":\"any\",\"required\":false},{\"id\":\"context-gaps\",\"purpose\":\"name what you did not know\",\"by\":\"any\",\"required\":false}],\"norms\":[\"evidence is a results table, not a transcript\"]}</script><h2 id=\"h-header\">Header</h2><h2 id=\"h-what-changed\">What changed and why</h2><h2 id=\"h-review-map\">Review map: where to look hardest</h2><h2 id=\"h-decisions\">Decisions (recorded rulings)</h2><h2 id=\"h-evidence\">Evidence</h2><h2 id=\"h-deviations\">Deviations from the spec</h2><h2 id=\"h-questions\">Questions for your person</h2></body></html>",
+    "want": {
+      "name": "handoff-review",
+      "v": 1,
+      "rows": [
+        { "id": "header", "purpose": "say what this canvas is", "by": "author", "required": true, "heading": "Header", "anchor": "h-header" },
+        { "id": "what-changed", "purpose": "the intent before the detail", "by": "author", "required": true, "heading": "What changed and why", "anchor": "h-what-changed" },
+        { "id": "review-map", "purpose": "where to look hardest", "by": "author", "required": true, "heading": "Review map: where to look hardest", "anchor": "h-review-map" },
+        { "id": "decisions", "purpose": "keep settled questions settled", "by": "any", "required": false, "heading": "Decisions (recorded rulings)", "anchor": "h-decisions" },
+        { "id": "evidence", "purpose": "let a reader check each claim", "by": "author", "required": true, "heading": "Evidence", "anchor": "h-evidence" },
+        { "id": "deviations", "purpose": "surface every departure", "by": "author", "required": true, "heading": "Deviations from the spec", "anchor": "h-deviations" },
+        { "id": "questions", "purpose": "collect what only the person can decide", "by": "any", "required": false, "heading": "Questions for your person", "anchor": "h-questions" },
+        { "id": "context-gaps", "purpose": "name what you did not know", "by": "any", "required": false, "heading": null, "anchor": null }
+      ],
+      "unclaimed": [],
+      "norms": ["evidence is a results table, not a transcript"],
+      "required": 5,
+      "found": 5
+    }
+  },
+  {
+    "name": "two required missing",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"handoff-review\",\"v\":1,\"sections\":[{\"id\":\"header\",\"purpose\":\"say what this canvas is\",\"by\":\"author\",\"required\":true},{\"id\":\"what-changed\",\"purpose\":\"the intent before the detail\",\"by\":\"author\",\"required\":true},{\"id\":\"review-map\",\"purpose\":\"where to look hardest\",\"by\":\"author\",\"required\":true},{\"id\":\"decisions\",\"purpose\":\"keep settled questions settled\",\"by\":\"any\",\"required\":false},{\"id\":\"evidence\",\"purpose\":\"let a reader check each claim\",\"by\":\"author\",\"required\":true},{\"id\":\"deviations\",\"purpose\":\"surface every departure\",\"by\":\"author\",\"required\":true},{\"id\":\"questions\",\"purpose\":\"collect what only the person can decide\",\"by\":\"any\",\"required\":false},{\"id\":\"context-gaps\",\"purpose\":\"name what you did not know\",\"by\":\"any\",\"required\":false}],\"norms\":[]}</script><h2 id=\"h-header\">Header</h2><h2 id=\"h-what-changed\">What changed and why</h2><h2 id=\"h-decisions\">Decisions (recorded rulings)</h2><h2 id=\"h-deviations\">Deviations from the spec</h2><h2 id=\"h-questions\">Questions for your person</h2></body></html>",
+    "want": {
+      "name": "handoff-review",
+      "v": 1,
+      "rows": [
+        { "id": "header", "purpose": "say what this canvas is", "by": "author", "required": true, "heading": "Header", "anchor": "h-header" },
+        { "id": "what-changed", "purpose": "the intent before the detail", "by": "author", "required": true, "heading": "What changed and why", "anchor": "h-what-changed" },
+        { "id": "review-map", "purpose": "where to look hardest", "by": "author", "required": true, "heading": null, "anchor": null },
+        { "id": "decisions", "purpose": "keep settled questions settled", "by": "any", "required": false, "heading": "Decisions (recorded rulings)", "anchor": "h-decisions" },
+        { "id": "evidence", "purpose": "let a reader check each claim", "by": "author", "required": true, "heading": null, "anchor": null },
+        { "id": "deviations", "purpose": "surface every departure", "by": "author", "required": true, "heading": "Deviations from the spec", "anchor": "h-deviations" },
+        { "id": "questions", "purpose": "collect what only the person can decide", "by": "any", "required": false, "heading": "Questions for your person", "anchor": "h-questions" },
+        { "id": "context-gaps", "purpose": "name what you did not know", "by": "any", "required": false, "heading": null, "anchor": null }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 5,
+      "found": 3
+    }
+  },
+  {
+    "name": "exact beats prefix",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"header\",\"required\":false},{\"id\":\"header-notes\",\"required\":false}],\"norms\":[]}</script><h2 id=\"header-notes-h\">Header notes</h2><h2 id=\"header-h\">Header</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        { "id": "header", "purpose": "", "by": "", "required": false, "heading": "Header", "anchor": "header-h" },
+        { "id": "header-notes", "purpose": "", "by": "", "required": false, "heading": "Header notes", "anchor": "header-notes-h" }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "mark on a container",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"evidence\",\"required\":false}],\"norms\":[]}</script><section data-fmrl-section=\"evidence\"><h2 id=\"results\">Results</h2></section></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        { "id": "evidence", "purpose": "", "by": "", "required": false, "heading": "Results", "anchor": "results" }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "mark claims at most once",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"foo\",\"required\":false}],\"norms\":[]}</script><div data-fmrl-section=\"foo\"></div><h2 id=\"a\">A</h2><div data-fmrl-section=\"foo\"></div><h2 id=\"b\">B</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        { "id": "foo", "purpose": "", "by": "", "required": false, "heading": "A", "anchor": "a" }
+      ],
+      "unclaimed": [{ "text": "B", "id": "b" }],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "heading inside a script or template is not a heading",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"real\",\"required\":false}],\"norms\":[]}</script><script>document.write('<h2 id=\"fake\">Not real</h2>');</script><style>h2::before{content:'<h2>x</h2>'}</style><template><h2 id=\"tmpl\">Template h2</h2></template><h2 id=\"real\">Real</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        { "id": "real", "purpose": "", "by": "", "required": false, "heading": "Real", "anchor": "real" }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "no id attribute -> anchor null",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"no-id\",\"required\":false}],\"norms\":[]}</script><h2>No id</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        { "id": "no-id", "purpose": "", "by": "", "required": false, "heading": "No id", "anchor": null }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "unclaimed excludes the first h1",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[],\"norms\":[]}</script><h1>Title</h1><h2>Appendix</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [],
+      "unclaimed": [{ "text": "Appendix", "id": null }],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "repeated section id counts once",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"dup\",\"required\":true},{\"id\":\"dup\",\"required\":false}],\"norms\":[]}</script><h2 id=\"dup-h\">Dup</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        { "id": "dup", "purpose": "", "by": "", "required": true, "heading": "Dup", "anchor": "dup-h" }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 1,
+      "found": 1
+    }
+  },
+  {
+    "name": "a profile's own </script> cannot break out",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[],\"n\":\"\\u003c/script>\"}</script></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [],
+      "unclaimed": [],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "a mark claims only the next heading, never a later one",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"a\",\"required\":false},{\"id\":\"b\",\"required\":false}],\"norms\":[]}</script><div data-fmrl-section=\"a\"></div><div data-fmrl-section=\"b\"></div><h2>One</h2><h2>Two</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        {
+          "id": "a",
+          "purpose": "",
+          "by": "",
+          "required": false,
+          "heading": "One",
+          "anchor": null
+        },
+        {
+          "id": "b",
+          "purpose": "",
+          "by": "",
+          "required": false,
+          "heading": null,
+          "anchor": null
+        }
+      ],
+      "unclaimed": [
+        {
+          "text": "Two",
+          "id": null
+        }
+      ],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "unclaimed stops at the shallowest claimed level: an h3 under a claimed h2 is inside the shape, an unclaimed h2 is not",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"intro\",\"required\":false}],\"norms\":[]}</script><h1>Title</h1><h2 id=\"intro\">Intro</h2><h3 id=\"detail\">Detail</h3><h2 id=\"appendix\">Appendix</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        {
+          "id": "intro",
+          "purpose": "",
+          "by": "",
+          "required": false,
+          "heading": "Intro",
+          "anchor": "intro"
+        }
+      ],
+      "unclaimed": [
+        {
+          "text": "Appendix",
+          "id": "appendix"
+        }
+      ],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "with nothing claimed, unclaimed lists h2 and above only",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"zzz\",\"required\":false}],\"norms\":[]}</script><h1>Title</h1><h2>Part</h2><h3>Sub</h3><h1>Second</h1></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        {
+          "id": "zzz",
+          "purpose": "",
+          "by": "",
+          "required": false,
+          "heading": null,
+          "anchor": null
+        }
+      ],
+      "unclaimed": [
+        {
+          "text": "Part",
+          "id": null
+        },
+        {
+          "text": "Second",
+          "id": null
+        }
+      ],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "prototype names are ids like any other",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"__proto__\",\"required\":false},{\"id\":\"__proto__\",\"required\":true}],\"norms\":[]}</script><div data-fmrl-section=\"__proto__\"></div><h2 id=\"p\">Proto</h2><div data-fmrl-section=\"toString\"></div><h2 id=\"t\">Other</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        {
+          "id": "__proto__",
+          "purpose": "",
+          "by": "",
+          "required": false,
+          "heading": "Proto",
+          "anchor": "p"
+        }
+      ],
+      "unclaimed": [
+        {
+          "text": "Other",
+          "id": "t"
+        }
+      ],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "ids compare whole, sections and marks alike; only what a row shows is cut to 200 characters",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaax\",\"required\":false},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaay\",\"required\":false}],\"norms\":[]}</script><div data-fmrl-section=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaax\"></div><h2 id=\"h\">Heading</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "purpose": "",
+          "by": "",
+          "required": false,
+          "heading": "Heading",
+          "anchor": "h"
+        },
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "purpose": "",
+          "by": "",
+          "required": false,
+          "heading": null,
+          "anchor": null
+        }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 0,
+      "found": 0
+    }
+  },
+  {
+    "name": "a heading longer than a row shows still matches by its whole text",
+    "html": "<!DOCTYPE html><html><body><script type=\"application/fmrl-profile+json\" id=\"fmrl-profile\">{\"profile\":\"x\",\"v\":1,\"sections\":[{\"id\":\"word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word\",\"required\":true}],\"norms\":[]}</script><h2 id=\"w\">Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word</h2></body></html>",
+    "want": {
+      "name": "x",
+      "v": 1,
+      "rows": [
+        { "id": "word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word-word", "purpose": "", "by": "", "required": true, "heading": "Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word Word ", "anchor": "w" }
+      ],
+      "unclaimed": [],
+      "norms": [],
+      "required": 1,
+      "found": 1
+    }
+  }
+]

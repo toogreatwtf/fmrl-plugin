@@ -255,7 +255,7 @@ describe("tools", () => {
     const m = /#p=([A-Za-z0-9_-]{43})$/.exec(url);
     expect(m).not.toBeNull();
     const html = await openEnvelope(body.content, { key: m![1] });
-    expect(html).toContain("<h1>Quiet</h1>");
+    expect(html).toContain('<h1 id="quiet">Quiet</h1>');
     expect(html).toContain("<title>Quiet</title>");
     const t = text(r);
     expect(t).toContain(`Published: ${url}`);
@@ -573,7 +573,7 @@ describe("fmrl_get reads the page", () => {
     const { id, url } = priv.structuredContent as { id: string; url: string };
     const got = await call("fmrl_get", { id });
     expect(got.structuredContent).toMatchObject({ url, key_held: true, title: "Quiet", content_format: "html" });
-    expect((got.structuredContent as { content: string }).content).toContain("<h1>Quiet</h1>");
+    expect((got.structuredContent as { content: string }).content).toContain('<h1 id="quiet">Quiet</h1>');
   });
   it("a fragment key that doesn't open the page is not remembered, and the page reads as metadata and a note", async () => {
     const { id } = await plantPrivate("<p>secret</p>");
@@ -722,7 +722,7 @@ describe("fmrl_edit", () => {
     expect(Object.keys(body).sort()).toEqual(["base_rev", "content", "encrypted", "format"]);
     expect(body).toMatchObject({ encrypted: true, format: "html", base_rev: 1 });
     const html = await openEnvelope(body.content as string, { key });
-    expect(html).toContain("<h1>Plan v2</h1>");
+    expect(html).toContain('<h1 id="plan-v2">Plan v2</h1>');
     expect(html).toContain("<title>Plan v2</title>");
     // The key stays here; the token is remembered because the edit worked.
     expect(JSON.stringify(fake.requests)).not.toContain(key);
@@ -730,7 +730,7 @@ describe("fmrl_edit", () => {
 
     const got = await call("fmrl_get", { id: url });
     expect(got.structuredContent).toMatchObject({ rev: 2, latest_rev: 2 });
-    expect((got.structuredContent as { content: string }).content).toContain("<h1>Plan v2</h1>");
+    expect((got.structuredContent as { content: string }).content).toContain('<h1 id="plan-v2">Plan v2</h1>');
   });
   it("the owner edits its own private page through its ring, without a manage token and without sealed", async () => {
     const priv = await call("fmrl_publish", { content: "# Mine", private: true });
@@ -743,7 +743,7 @@ describe("fmrl_edit", () => {
     const put = puts().at(-1)!;
     expect(put.manageToken).toBeUndefined();
     expect(put.body).not.toHaveProperty("sealed");
-    expect(await openEnvelope((put.body as { content: string }).content, { key: url.split("#p=")[1] })).toContain("<h1>Mine, again</h1>");
+    expect(await openEnvelope((put.body as { content: string }).content, { key: url.split("#p=")[1] })).toContain('<h1 id="mine-again">Mine, again</h1>');
   });
   it("a private page with no key here fails with the sentence, and nothing is sent", async () => {
     const priv = await call("fmrl_publish", { content: "# Sealed", private: true });

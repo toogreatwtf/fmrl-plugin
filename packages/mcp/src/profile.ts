@@ -1,5 +1,5 @@
 import { Marked, type Tokens } from "marked";
-import { PROFILE_TYPE, decodeEntities, scriptBlocks, stripTags } from "./markdown.js";
+import { PROFILE_TYPE, decodeEntities, scriptBlocks, slug, stripTags } from "./markdown.js";
 
 /**
  * A canvas profile is a page's agreed section shape, carried in the page
@@ -13,10 +13,7 @@ export type Profile = { profile: string; v: number; sections: ProfileSection[]; 
 export type SectionMap = Record<string, { heading: string; position: number }>;
 export type ProfileRead = { profile?: Profile; section_map?: SectionMap; missing?: string[]; profile_error?: string };
 
-/** slug lowercases text and joins every run outside [a-z0-9] with one dash, trimming dashes at the ends. */
-export function slug(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
+export { slug };
 
 const md = new Marked({ gfm: true, async: false });
 

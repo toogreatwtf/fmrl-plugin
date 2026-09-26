@@ -40,6 +40,15 @@ export function profileScript(text: string): string {
   return `<script type="${PROFILE_TYPE}" id="fmrl-profile">${text.replace(/</g, "\\u003c")}</script>\n`;
 }
 
+/** slug lowercases text and joins every run outside [a-z0-9] with one dash, trimming dashes at the ends: api.md's section rule. */
+export function slug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// usedIds is the heading ids toHTML has handed out in the document it is
+// rendering; marked's renderer is synchronous, so one set per call is safe.
+let usedIds = new Set<string>();
+
 const md = new Marked({
   gfm: true,
   async: false,
@@ -49,11 +58,24 @@ const md = new Marked({
       const lang = /^\S*/.exec(token.lang ?? "")?.[0];
       return lang === "fmrl-profile" ? profileScript(token.text) : false;
     },
+    // Every heading gets the id markymd's Go renderer and static/fmrl.js give
+    // it (test/fixtures/heading-ids.json, copied from markymd): the slug of
+    // its plain text, "section" when that is empty, -1, -2 on a repeat. The
+    // viewer's shape ring jumps to it.
+    heading(token: Tokens.Heading) {
+      const inner = this.parser.parseInline(token.tokens);
+      const s = slug(decodeEntities(stripTags(inner))) || "section";
+      let id = s;
+      for (let n = 1; usedIds.has(id); n++) id = `${s}-${n}`;
+      usedIds.add(id);
+      return `<h${token.depth} id="${id}">${inner}</h${token.depth}>\n`;
+    },
   },
 });
 
-/** toHTML renders GitHub Flavored Markdown to an HTML fragment; a fmrl-profile fence becomes the inert profile script. */
+/** toHTML renders GitHub Flavored Markdown to an HTML fragment; a fmrl-profile fence becomes the inert profile script, and each heading carries its section id. */
 export function toHTML(markdown: string): string {
+  usedIds = new Set();
   return md.parse(markdown) as string;
 }
 

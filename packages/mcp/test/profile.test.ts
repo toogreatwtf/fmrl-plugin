@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { readProfile, slug } from "../src/profile.js";
 import { toHTML, wrapDocument } from "../src/markdown.js";
@@ -235,4 +236,37 @@ describe("readProfile, ids that are Object.prototype names", () => {
       '{"__proto__":{"heading":"Proto","position":1},"constructor":{"heading":"Ctor","position":2},"toString":{"heading":"TS","position":3}}'));
     expect(h.missing).toEqual(["tostring"]);
   });
+});
+
+// fixtures/profile-maps.json is a byte-for-byte copy of markymd's
+// internal/render/testdata/profile-maps.json, the cases fmrl.site's browser
+// section map (fmrlReadProfile) passes. This reader returns no unclaimed
+// list and no anchors, and its own shape, so only which heading each
+// section claims, and which sections are missing, are compared — after the
+// cut the browser makes to what a row shows (an id to 200 characters, a
+// heading's text to 120), since both compare ids and headings whole.
+type MapCase = {
+  name: string;
+  html: string;
+  want: null | { rows: Array<{ id: string; heading: string | null }> };
+};
+const mapCases = JSON.parse(
+  readFileSync(new URL("./fixtures/profile-maps.json", import.meta.url), "utf8"),
+) as MapCase[];
+
+describe("readProfile, the shared section-map cases", () => {
+  for (const c of mapCases) {
+    it(c.name, () => {
+      const r = readProfile(c.html, "html");
+      const got = {
+        section_map: r.section_map && Object.fromEntries(Object.entries(r.section_map).map(([id, v]) => [id.slice(0, 200), v.heading.slice(0, 120)])),
+        missing: r.missing?.map((id) => id.slice(0, 200)),
+      };
+      const want = c.want === null ? { section_map: undefined, missing: undefined } : {
+        section_map: Object.fromEntries(c.want.rows.filter((row) => row.heading !== null).map((row) => [row.id, row.heading])),
+        missing: c.want.rows.filter((row) => row.heading === null).map((row) => row.id),
+      };
+      expect(got).toEqual(want);
+    });
+  }
 });

@@ -13,8 +13,12 @@ export interface PublishResponse { id: string; url: string; raw_url: string; man
 export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string; rev?: number; private?: boolean; sealed?: string; owned?: boolean }
 /** DocsResponse is GET /api/v1/docs: this key's pages, newest first, 50 at most, removed and expired left out. */
 export interface DocsResponse { docs: DocResponse[] }
-/** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. */
-export interface MeResponse { prefix: string; created_at: string; label: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; link_url?: string }
+/** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. rotated_at is when the key's secret was last replaced, absent until it first is. */
+export interface MeResponse { prefix: string; created_at: string; label: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; rotated_at?: string; link_url?: string }
+/** RedeemResponse is POST /api/v1/keys/redeem: the key a key code carries, given once. */
+export interface RedeemResponse { key: string; prefix: string }
+/** RotateResponse is POST /api/v1/me/rotate: the calling key's new secret, given once, under the same prefix. */
+export interface RotateResponse { key: string; prefix: string; rotated_at: string }
 
 /** Editor describes who made a revision. "manage" never happens through the API: an edit made with a manage token still carries the caller's own key. */
 export interface Editor { kind: "key" | "session" | "manage" | "anonymous" | "unknown"; key?: string; name?: string }
@@ -87,6 +91,14 @@ export class FmrlApi {
   }
   setLabel(key: string, label: string): Promise<MeResponse> {
     return this.call<MeResponse>("PATCH", "/me", key, { label });
+  }
+  /** redeem trades a key code for its key. No bearer: the code is the proof. */
+  redeem(code: string): Promise<RedeemResponse> {
+    return this.call<RedeemResponse>("POST", "/keys/redeem", undefined, { code });
+  }
+  /** rotate replaces key's secret; key stops working as soon as this answers. */
+  rotate(key: string): Promise<RotateResponse> {
+    return this.call<RotateResponse>("POST", "/me/rotate", key);
   }
   getRevision(key: string, id: string, rev: number): Promise<RevisionContent> {
     return this.call<RevisionContent>("GET", `/docs/${encodeURIComponent(id)}/revisions/${rev}`, key);

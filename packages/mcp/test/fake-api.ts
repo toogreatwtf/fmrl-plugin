@@ -30,6 +30,12 @@ export interface FakeApi {
   mintLimit: number;
   /** watchLimit is the per-key cap on pages watched at once; a PUT past it answers 409 watch_limit. */
   watchLimit: number;
+  /** revoked holds keys revoked with DELETE /me or by the test: every call with one answers 401 key_revoked. */
+  revoked: Set<string>;
+  /** rotatedAt holds, by prefix, when a key's secret was last replaced; GET /me reports it as rotated_at. */
+  rotatedAt: Map<string, string>;
+  /** handoff rotates key as the account page does and returns its key code, grouped in fours; POST /keys/redeem trades it for the new key once. */
+  handoff(key: string): string;
   close(): Promise<void>;
 }
 
@@ -38,10 +44,26 @@ function newId(): string {
   const b = randomBytes(12);
   return Array.from(b, (x) => ID_ALPHABET[x % 32]).join("");
 }
+const KEY_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 function newKey(): string {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   const b = randomBytes(32);
-  return "fmrl_" + Array.from(b, (x) => alphabet[x % 62]).join("");
+  return "fmrl_" + Array.from(b, (x) => KEY_ALPHABET[x % 62]).join("");
+}
+/** rotatedKey is a fresh secret under key's prefix: the server keeps a key's 9-character prefix across rotations. */
+function rotatedKey(key: string): string {
+  const b = randomBytes(28);
+  return key.slice(0, 9) + Array.from(b, (x) => KEY_ALPHABET[x % 62]).join("");
+}
+/** newCode is keylife's key code: 16 random bytes as unpadded RFC 4648 base32, 26 characters. */
+function newCode(): string {
+  const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, value = 0, out = "";
+  for (const byte of randomBytes(16)) {
+    value = (value << 8) | byte; bits += 8;
+    while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -123,9 +145,36 @@ export async function startFakeApi(): Promise<FakeApi> {
     quota: 25,
     mintLimit: 5,
     watchLimit: 200,
+    revoked: new Set(),
+    rotatedAt: new Map(),
+    handoff: () => "",
     close: async () => {},
   };
   let minted = 0;
+  let rotations = 0;
+  /** handoffs maps a normalized key code to the key it carries. */
+  const handoffs = new Map<string, string>();
+  /** rotate replaces key's secret, carrying everything the server keys on the key id: pages, name, quota, links and watches. */
+  const rotate = (key: string): string => {
+    const fresh = rotatedKey(key);
+    api.keys.delete(key);
+    api.keys.add(fresh);
+    for (const m of [api.labels, api.publishes] as Map<string, unknown>[]) {
+      if (m.has(key)) { m.set(fresh, m.get(key)); m.delete(key); }
+    }
+    if (api.linked.delete(key)) api.linked.add(fresh);
+    for (const d of api.docs.values()) {
+      if (d.owner === key) d.owner = fresh;
+      if (d.watchers?.has(key)) { d.watchers.set(fresh, d.watchers.get(key)!); d.watchers.delete(key); }
+    }
+    api.rotatedAt.set(key.slice(0, 9), isoAt(1000 + rotations++));
+    return fresh;
+  };
+  api.handoff = (key) => {
+    const code = newCode();
+    handoffs.set(code, rotate(key));
+    return code.match(/.{1,4}/g)!.join("-");
+  };
   const server: Server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
     const method = req.method ?? "GET";
@@ -138,9 +187,14 @@ export async function startFakeApi(): Promise<FakeApi> {
     const auth = (): string | undefined => {
       const h = req.headers.authorization ?? "";
       const key = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
-      return api.keys.has(key) ? key : undefined;
+      return api.keys.has(key) && !api.revoked.has(key) ? key : undefined;
     };
-    const unauthorized = () => { res.setHeader("WWW-Authenticate", 'Bearer realm="fmrl"'); fail(res, 401, "invalid_key", "Send a valid key as Authorization: Bearer fmrl_…; mint one with POST /api/v1/keys."); };
+    const unauthorized = () => {
+      res.setHeader("WWW-Authenticate", 'Bearer realm="fmrl"');
+      const h = req.headers.authorization ?? "";
+      if (api.revoked.has(h.startsWith("Bearer ") ? h.slice(7).trim() : "")) return fail(res, 401, "key_revoked", "This key was revoked. Make a new one, or ask its owner.");
+      fail(res, 401, "invalid_key", "Send a valid key as Authorization: Bearer fmrl_…; mint one with POST /api/v1/keys.");
+    };
 
     if (method === "POST" && url.pathname === "/api/v1/keys") {
       if (minted >= api.mintLimit) { res.setHeader("Retry-After", "3600"); return fail(res, 429, "rate_limited", "That's a lot of keys from one network. Try again later."); }
@@ -304,7 +358,31 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout
       const key = auth();
       if (!key) return unauthorized();
-      return json(res, 200, { prefix: key.slice(0, 9), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, link_url: "https://fmrl.test/link/fresh" });
+      const rotatedAt = api.rotatedAt.get(key.slice(0, 9));
+      return json(res, 200, { prefix: key.slice(0, 9), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), link_url: "https://fmrl.test/link/fresh" });
+    }
+    if (method === "POST" && url.pathname === "/api/v1/me/rotate") {
+      const key = auth();
+      if (!key) return unauthorized();
+      const fresh = rotate(key);
+      return json(res, 200, { key: fresh, prefix: fresh.slice(0, 9), rotated_at: api.rotatedAt.get(fresh.slice(0, 9)) });
+    }
+    if (method === "DELETE" && url.pathname === "/api/v1/me") {
+      const key = auth();
+      if (!key) return unauthorized();
+      api.revoked.add(key);
+      res.statusCode = 204;
+      return res.end();
+    }
+    if (method === "POST" && url.pathname === "/api/v1/keys/redeem") {
+      const rb = (body ?? {}) as { code?: unknown };
+      if (typeof rb.code !== "string" || raw.length > 1024) return fail(res, 400, "bad_request", "The body must be a JSON object: {\"code\": \"…\"}.");
+      const code = rb.code.replace(/[-\s]/g, "").toUpperCase();
+      const key = handoffs.get(code);
+      handoffs.delete(code);
+      // keylife.Redeem: a code whose secret is no longer the key's current one (rotated again, or revoked) is spent too.
+      if (!key || !api.keys.has(key) || api.revoked.has(key)) return fail(res, 404, "handoff_spent", "That key code has expired or was already used. Rotate again from your keys page.");
+      return json(res, 200, { key, prefix: key.slice(0, 9) });
     }
     if (method === "PATCH" && url.pathname === "/api/v1/me") {
       const key = auth();

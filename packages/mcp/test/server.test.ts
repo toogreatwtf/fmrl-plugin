@@ -1196,6 +1196,12 @@ describe("key codes, rotation and revocation", () => {
       await c.close();
     }
   });
+  it("fmrl_rotate with no key yet refuses rather than mint one to rotate", async () => {
+    const r = await call("fmrl_rotate");
+    expect(r.isError).toBe(true);
+    expect(text(r)).toBe("There is no fmrl key on this machine yet, so there is nothing to rotate. The first fmrl tool that needs one makes it.");
+    expect(fake.requests).toHaveLength(0);
+  });
   it("fmrl_rotate on a revoked key says so and mints nothing", async () => {
     await call("fmrl_whoami");
     const before = await stored();

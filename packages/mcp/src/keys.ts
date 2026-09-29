@@ -34,12 +34,35 @@ export function normalizeKeyCode(code: string): string | undefined {
   return /^[A-Z2-7]{26}$/.test(norm) ? norm : undefined;
 }
 
-/** storedRing is the ring the file keeps for key: its base URL's entry when that entry is key, else rings[prefix]. */
+/** entryPrefix is a stored entry's prefix. */
+function entryPrefix(entry: { key: string; prefix?: string }): string {
+  return entry.prefix || prefixOf(entry.key);
+}
+
+/**
+ * storedRing is the ring the file keeps for key: its base URL's entry when
+ * that entry is the same key (the same prefix: a rotation keeps it, so a
+ * rotated secret is still that key), else rings[prefix].
+ */
 function storedRing(file: CredentialsFile, baseUrl: string, key: string): string | undefined {
   const entry = file.keys[baseUrl];
-  if (entry?.key === key && isRing(entry.ring)) return entry.ring;
+  if (entry && entryPrefix(entry) === prefixOf(key) && isRing(entry.ring)) return entry.ring;
   const ring = file.rings?.[prefixOf(key)];
   return isRing(ring) ? ring : undefined;
+}
+
+/**
+ * fileRing files a replaced key's ring under its prefix. A different ring
+ * already filed there stays put, and this one goes under prefix.2, .3, …,
+ * which ringsFor still reads: a ring is never overwritten.
+ */
+function fileRing(file: CredentialsFile, prefix: string, ring: string): void {
+  const rings = { ...file.rings };
+  if (Object.values(rings).includes(ring)) return;
+  let name = prefix;
+  for (let n = 2; isRing(rings[name]); n++) name = `${prefix}.${n}`;
+  rings[name] = ring;
+  file.rings = rings;
 }
 
 /**
@@ -114,11 +137,29 @@ export class KeyStore {
       return await fn(key);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401 && !this.o.apiKeyFromEnv && (replaceRevoked || e.code !== "key_revoked")) {
-        const fresh = await this.mintOnce();
-        return fn(fresh);
+        // A rotation or redeem, here or in another process, may have replaced
+        // the key since this call read it: retry with that, and mint only
+        // when the key that failed is still the current one.
+        return fn((await this.changedSince(key)) ?? (await this.mintOnce()));
       }
       throw e;
     }
+  }
+
+  /** changedSince is the stored key when it is no longer failed: this process's, else the file's. */
+  private async changedSince(failed: string): Promise<string | undefined> {
+    if (this.cached && this.cached !== failed) return this.cached;
+    const entry = (await readCredentials(this.o.file, this.o.log)).keys[this.o.baseUrl];
+    if (entry?.key && entry.key !== failed) return (this.cached = entry.key);
+    return undefined;
+  }
+
+  /** storedKey is the key calls would use, without minting one: undefined when there is none yet. */
+  async storedKey(): Promise<string | undefined> {
+    if (this.o.apiKeyFromEnv) return this.o.apiKeyFromEnv;
+    if (this.cached) return this.cached;
+    const stored = (await readCredentials(this.o.file, this.o.log)).keys[this.o.baseUrl];
+    return stored?.key ? (this.cached = stored.key) : undefined;
   }
 
   /**
@@ -152,7 +193,7 @@ export class KeyStore {
       if (found) return found;
       const ring = newRing();
       const entry = file.keys[this.o.baseUrl];
-      if (entry?.key === key) entry.ring = ring;
+      if (entry && entryPrefix(entry) === prefixOf(key)) entry.ring = ring;
       else file.rings = { ...file.rings, [prefixOf(key)]: ring };
       await writeCredentials(this.o.file, file);
       this.o.log?.(`fmrl-mcp: minted a key ring for ${prefixOf(key)}…, saved to ${this.o.file}`);
@@ -179,13 +220,13 @@ export class KeyStore {
     return this.serialize(async () => {
       const file = await readCredentials(this.o.file, this.o.log);
       const old = file.keys[this.o.baseUrl];
-      const oldPrefix = old ? old.prefix || prefixOf(old.key) : undefined;
+      const oldPrefix = old ? entryPrefix(old) : undefined;
       let replaced: string | undefined;
       const same = old !== undefined && oldPrefix === prefix;
       if (same) {
         file.keys[this.o.baseUrl] = { ...old, key, prefix };
       } else {
-        if (old && isRing(old.ring)) file.rings = { ...file.rings, [oldPrefix!]: old.ring };
+        if (old && isRing(old.ring)) fileRing(file, oldPrefix!, old.ring);
         file.keys[this.o.baseUrl] = { key, prefix };
         replaced = oldPrefix;
       }
@@ -207,7 +248,7 @@ export class KeyStore {
       // A replaced key's ring stays, under its prefix: its pages still exist,
       // and their sealed records open only under it.
       const old = file.keys[this.o.baseUrl];
-      if (old && isRing(old.ring)) file.rings = { ...file.rings, [old.prefix || prefixOf(old.key)]: old.ring };
+      if (old && isRing(old.ring)) fileRing(file, entryPrefix(old), old.ring);
       file.keys[this.o.baseUrl] = { key: minted.key, prefix: minted.prefix, created_at: minted.created_at };
       await writeCredentials(this.o.file, file);
     });

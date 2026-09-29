@@ -249,6 +249,7 @@ function revokedText(prefix: string, keys: KeyStore): string {
 
 export const NOT_A_CODE = "That isn't a key code: a key code is 26 letters and digits 2–7, shown in groups of four like K7QX-M2PA-…. Nothing was sent.";
 export const REDEEM_ENV = "FMRL_API_KEY sets this machine's key, so fmrl-mcp won't replace it, and the code is still unspent. Unset FMRL_API_KEY and redeem it again, or trade it yourself with POST /api/v1/keys/redeem and set FMRL_API_KEY to the key it returns.";
+export const NO_KEY_TO_ROTATE = "There is no fmrl key on this machine yet, so there is nothing to rotate. The first fmrl tool that needs one makes it.";
 export const ROTATE_ENV = "FMRL_API_KEY sets this machine's key, so fmrl-mcp won't rotate it: the new key could not reach FMRL_API_KEY. Rotate it with POST /api/v1/me/rotate and set FMRL_API_KEY to the key it returns.";
 
 /** WatchRow is fmrl_watch's answer: the server's watch, the page's keyed link when a key here opens it, and whether fmrl_get can read it here. */
@@ -786,7 +787,10 @@ export function createServer(deps: ServerDeps): McpServer {
       let k = "";
       let r: Awaited<ReturnType<FmrlApi["rotate"]>>;
       try {
-        k = await keys.getKey();
+        // Minting a key only to rotate it would spend one of the network's mints for nothing.
+        const stored = await keys.storedKey();
+        if (!stored) return fail(NO_KEY_TO_ROTATE);
+        k = stored;
         // No replace-and-retry: rotating a key minted just now would rotate the wrong key.
         r = await api.rotate(k);
       } catch (e) {

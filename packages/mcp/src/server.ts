@@ -8,7 +8,7 @@ import { ApiError, type DocResponse, type Editor, type FmrlApi, type InboxItem, 
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef } from "./ids.js";
-import { MINT_LABEL, prefixOf, type KeyStore } from "./keys.js";
+import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
 import { readProfile, type ProfileRead } from "./profile.js";
@@ -230,9 +230,26 @@ function meText(m: MeResponse, ringLine: string, plugin: string | undefined): st
   const linked = m.linked_at ? `Linked to a browser on ${m.linked_at}.` : "Not linked to any browser yet.";
   const named = m.label ? `Named ${m.label}: the revisions this key makes carry that name.` : UNNAMED_LINE;
   const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, linked];
+  if (m.rotated_at) lines.push(`Last rotated ${m.rotated_at}.`);
   if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)}`);
   return [...lines, ringLine, ...(plugin ? [plugin] : []), SEVEN_DAYS].join("\n");
 }
+
+/** isRevoked is the API's 401 for a key revoked for good, as opposed to one it doesn't know. */
+function isRevoked(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401 && e.code === "key_revoked";
+}
+
+/** revokedText says a key was revoked, and how this machine gets a new one: a stored key is replaced by the next tool that needs one; FMRL_API_KEY never is. */
+function revokedText(prefix: string, keys: KeyStore): string {
+  return keys.keyFromEnv
+    ? `${prefix}… (from FMRL_API_KEY) was revoked, so it will not work again. Unset FMRL_API_KEY and fmrl-mcp makes a new key and saves it to ${keys.file}, or set FMRL_API_KEY to a new key from POST /api/v1/keys.`
+    : `${prefix}… was revoked, so it will not work again. The next fmrl tool that needs a key (fmrl_publish, fmrl_list and the rest) makes a new one and saves it to ${keys.file}; the revoked key's ring stays in that file.`;
+}
+
+export const NOT_A_CODE = "That isn't a key code: a key code is 26 letters and digits 2–7, shown in groups of four like K7QX-M2PA-…. Nothing was sent.";
+export const REDEEM_ENV = "FMRL_API_KEY sets this machine's key, so fmrl-mcp won't replace it, and the code is still unspent. Unset FMRL_API_KEY and redeem it again, or trade it yourself with POST /api/v1/keys/redeem and set FMRL_API_KEY to the key it returns.";
+export const ROTATE_ENV = "FMRL_API_KEY sets this machine's key, so fmrl-mcp won't rotate it: the new key could not reach FMRL_API_KEY. Rotate it with POST /api/v1/me/rotate and set FMRL_API_KEY to the key it returns.";
 
 /** WatchRow is fmrl_watch's answer: the server's watch, the page's keyed link when a key here opens it, and whether fmrl_get can read it here. */
 type WatchRow = { id: string; url: string; private: boolean; rev: number; seen_rev: number; can_open: boolean };
@@ -308,10 +325,12 @@ const inboxOutput = {
 const meOutput = {
   prefix: z.string(), created_at: z.string(), label: z.string().optional(),
   quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
-  linked_at: z.string().nullable().optional(), link_url: z.string().optional(),
+  linked_at: z.string().nullable().optional(), rotated_at: z.string().optional(), link_url: z.string().optional(),
 };
+const redeemOutput = { prefix: z.string(), file: z.string(), replaced: z.string().optional() };
+const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string() };
 
-/** createServer registers the nine tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
+/** createServer registers the eleven tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
@@ -389,10 +408,10 @@ export function createServer(deps: ServerDeps): McpServer {
     return p;
   };
   /** withKey is keys.withKey with the key named first; naming never fails the call. */
-  const withKey = <T>(fn: (key: string) => Promise<T>): Promise<T> => keys.withKey(async (k) => {
+  const withKey = <T>(fn: (key: string) => Promise<T>, opts?: { replaceRevoked?: boolean }): Promise<T> => keys.withKey(async (k) => {
     await ensureName(k);
     return fn(k);
-  });
+  }, opts);
 
   const run = async <T extends Record<string, unknown>>(fn: (key: string) => Promise<T>, render: (v: T) => string): Promise<ToolResult> => {
     try {
@@ -697,17 +716,91 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     async () => {
       let ringLine = "";
-      return run<MeResponse & Record<string, unknown>>(async (k) => {
-        const me = await api.me(k);
-        let ring: string | undefined;
-        try {
-          ring = await keys.ringFor(k);
-          ringLine = keys.ringFromEnv ? RING_ENV_LINE : RING_FILE_LINE(keys.file);
-        } catch (e) {
-          ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
-        }
-        return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, k, ring) } : me) as MeResponse & Record<string, unknown>;
-      }, (m) => meText(m, ringLine, pluginLine(plugin, deps.autoUpdate)));
+      let used = "";
+      try {
+        // A revoked key is reported, not replaced: this is where the user learns of it.
+        const m = await withKey(async (k) => {
+          used = k;
+          const me = await api.me(k);
+          let ring: string | undefined;
+          try {
+            ring = await keys.ringFor(k);
+            ringLine = keys.ringFromEnv ? RING_ENV_LINE : RING_FILE_LINE(keys.file);
+          } catch (e) {
+            ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
+          }
+          return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, k, ring) } : me) as MeResponse & Record<string, unknown>;
+        }, { replaceRevoked: false });
+        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate)), m);
+      } catch (e) {
+        return fail(isRevoked(e) ? revokedText(prefixOf(used), keys) : errorText(e));
+      }
+    },
+  );
+
+  server.registerTool(
+    "fmrl_redeem",
+    {
+      title: "Redeem a fmrl.site key code",
+      description: "Trade a key code for the key it carries and make that this machine's fmrl key. A key rotated from the fmrl.site keys page reaches its agent as a key code: 26 letters and digits in groups of four, like K7QX-M2PA-…, which works once, for 10 minutes. Use it when the user says \"Redeem my fmrl key code …\".",
+      inputSchema: { code: z.string().min(1).describe("The key code, as given; dashes, spaces and case don't matter.") },
+      outputSchema: redeemOutput,
+    },
+    async ({ code }) => {
+      const norm = normalizeKeyCode(code);
+      if (!norm) return fail(NOT_A_CODE);
+      // A redeemed key would never be used over FMRL_API_KEY, so don't spend the code.
+      if (keys.keyFromEnv) return fail(REDEEM_ENV);
+      let r: Awaited<ReturnType<FmrlApi["redeem"]>>;
+      try {
+        r = await api.redeem(norm);
+      } catch (e) {
+        return fail(errorText(e));
+      }
+      let adopted: { same: boolean; replaced?: string };
+      try {
+        adopted = await keys.adopt(r.key, r.prefix);
+      } catch (e) {
+        // The code is spent and the server keeps only a hash: this answer is the key's last copy.
+        return fail(`Redeemed the key code for ${r.prefix}…, but couldn't save it to ${keys.file} (${errorText(e)}); this session uses it until it ends. The code is spent and fmrl.site keeps only a hash of the key, so save it now, or set FMRL_API_KEY to it: ${r.key}`);
+      }
+      const { same, replaced } = adopted;
+      const structured = { prefix: r.prefix, file: keys.file, ...(replaced ? { replaced } : {}) };
+      if (same) {
+        return ok(`Redeemed the key code for ${r.prefix}…, this machine's key: its new secret is saved to ${keys.file}. Its pages, name, linked browsers and key ring carry over.`, structured);
+      }
+      return ok(`Redeemed the key code: this machine now uses ${r.prefix}…, saved to ${keys.file}.${replaced ? ` It replaces ${replaced}…, whose key ring stays in that file.` : ""}`, structured);
+    },
+  );
+
+  server.registerTool(
+    "fmrl_rotate",
+    {
+      title: "Rotate this fmrl.site key",
+      description: "Replace this machine's fmrl key's secret and save the new one here. The old secret stops working at once; the key's prefix, pages, name, quota, linked browsers, connected apps and key ring stay. Only call this when the user asked to rotate the key.",
+      inputSchema: {},
+      outputSchema: rotateOutput,
+    },
+    async () => {
+      if (keys.keyFromEnv) return fail(ROTATE_ENV);
+      let k = "";
+      let r: Awaited<ReturnType<FmrlApi["rotate"]>>;
+      try {
+        k = await keys.getKey();
+        // No replace-and-retry: rotating a key minted just now would rotate the wrong key.
+        r = await api.rotate(k);
+      } catch (e) {
+        return fail(isRevoked(e) ? revokedText(prefixOf(k), keys) : errorText(e));
+      }
+      try {
+        await keys.adopt(r.key, r.prefix);
+      } catch (e) {
+        return fail(`Rotated ${r.prefix}…, but couldn't save the new key to ${keys.file} (${errorText(e)}); this session uses it until it ends. The old key no longer works and fmrl.site keeps only a hash of the new one, so save it now, or set FMRL_API_KEY to it: ${r.key}`);
+      }
+      return ok(
+        `Rotated ${r.prefix}… at ${r.rotated_at}: the old secret stopped working, and the new one is saved to ${keys.file}. Its pages, name, quota, linked browsers, connected apps and key ring carry over.`,
+        { prefix: r.prefix, rotated_at: r.rotated_at, file: keys.file },
+      );
     },
   );
 

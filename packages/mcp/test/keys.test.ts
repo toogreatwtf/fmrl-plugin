@@ -192,7 +192,7 @@ describe("KeyStore.adopt", () => {
     await store.ringFor(old);
     const before = (await readCredentials(file)).keys[fake.baseUrl];
     const fresh = old.slice(0, 9) + "N".repeat(28);
-    expect(await store.adopt(fresh, old.slice(0, 9))).toEqual({ replaced: undefined });
+    expect(await store.adopt(fresh, old.slice(0, 9))).toEqual({ same: true });
     const after = await readCredentials(file);
     expect(after.keys[fake.baseUrl]).toEqual({ key: fresh, prefix: old.slice(0, 9), created_at: before.created_at, ring: before.ring });
     expect(after.rings).toBeUndefined();
@@ -207,7 +207,7 @@ describe("KeyStore.adopt", () => {
     });
     const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
     const fresh = "fmrl_NEW1" + "n".repeat(28);
-    expect(await store.adopt(fresh, "fmrl_NEW1")).toEqual({ replaced: "fmrl_OLD1" });
+    expect(await store.adopt(fresh, "fmrl_NEW1")).toEqual({ same: false, replaced: "fmrl_OLD1" });
     const after = await readCredentials(file);
     expect(after.keys[fake.baseUrl]).toEqual({ key: fresh, prefix: "fmrl_NEW1" });
     expect(after.rings).toEqual({ fmrl_OLD1: ringA, fmrl_NEW1: ringB });
@@ -217,7 +217,7 @@ describe("KeyStore.adopt", () => {
   it("with no stored key, saves the key and replaces nothing", async () => {
     const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
     const fresh = "fmrl_NEW1" + "n".repeat(28);
-    expect(await store.adopt(fresh, "fmrl_NEW1")).toEqual({ replaced: undefined });
+    expect(await store.adopt(fresh, "fmrl_NEW1")).toEqual({ same: false });
     expect((await readCredentials(file)).keys[fake.baseUrl]).toEqual({ key: fresh, prefix: "fmrl_NEW1" });
     expect(fake.requests).toHaveLength(0);
   });

@@ -168,10 +168,11 @@ export class KeyStore {
    * stored prefix is the same key: it keeps its ring and created_at. Any
    * other key's ring moves under its prefix, as a replaced key's does on a
    * mint; rings already filed by prefix stay where they are, so a ring filed
-   * under the adopted key's prefix is the one it seals under. It returns the
-   * prefix of a different key it replaced.
+   * under the adopted key's prefix is the one it seals under. It says
+   * whether the stored key was this same key, and the prefix of a different
+   * key it replaced.
    */
-  async adopt(key: string, prefix: string): Promise<{ replaced?: string }> {
+  async adopt(key: string, prefix: string): Promise<{ same: boolean; replaced?: string }> {
     // A mint in flight would land after this and overwrite it.
     await this.pending?.catch(() => undefined);
     this.cached = key;
@@ -180,7 +181,8 @@ export class KeyStore {
       const old = file.keys[this.o.baseUrl];
       const oldPrefix = old ? old.prefix || prefixOf(old.key) : undefined;
       let replaced: string | undefined;
-      if (old && oldPrefix === prefix) {
+      const same = old !== undefined && oldPrefix === prefix;
+      if (same) {
         file.keys[this.o.baseUrl] = { ...old, key, prefix };
       } else {
         if (old && isRing(old.ring)) file.rings = { ...file.rings, [oldPrefix!]: old.ring };
@@ -189,7 +191,7 @@ export class KeyStore {
       }
       await writeCredentials(this.o.file, file);
       this.o.log?.(`fmrl-mcp: saved key ${prefix}… for ${this.o.baseUrl} to ${this.o.file}`);
-      return { replaced };
+      return { same, replaced };
     });
   }
 

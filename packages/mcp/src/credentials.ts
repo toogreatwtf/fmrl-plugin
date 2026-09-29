@@ -7,7 +7,8 @@ import { isRing } from "./crypto.js";
 export interface StoredKey {
   key: string;
   prefix: string;
-  created_at: string;
+  /** created_at is when the key was minted; absent for a key redeemed from a key code for a key this machine never held. */
+  created_at?: string;
   /** ring seals this key's private pages' records. Minted the first time one is needed; it leaves this machine only inside a browser link's fragment. */
   ring?: string;
 }

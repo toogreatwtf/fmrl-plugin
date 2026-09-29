@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FmrlApi } from "../src/api.js";
 import { readCredentials, writeCredentials } from "../src/credentials.js";
-import { KeyStore } from "../src/keys.js";
+import { KeyStore, normalizeKeyCode } from "../src/keys.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let api: FmrlApi; let file: string; const logs: string[] = [];
@@ -165,5 +165,92 @@ describe("KeyStore rings", () => {
     const saved = await readCredentials(file);
     expect(saved.keys[fake.baseUrl].ring).toBe(storedKeyRing);
     expect(saved.rings).toEqual({ fmrl_XXXX: otherKeyRing });
+  });
+});
+
+describe("normalizeKeyCode", () => {
+  it("strips dashes and whitespace and uppercases, as keylife.Redeem does", () => {
+    const code = "K7QXM2PAD4RTW6BH3NCEYABCDE";
+    expect(normalizeKeyCode("K7QX-M2PA-D4RT-W6BH-3NCE-YABC-DE")).toBe(code);
+    expect(normalizeKeyCode(" k7qx m2pa\td4rt-w6bh\n3nce yabc de ")).toBe(code);
+  });
+  it("refuses anything that isn't 26 base32 characters", () => {
+    expect(normalizeKeyCode("K7QX-M2PA-9D4R-TW6B-H3NC-EY")).toBeUndefined(); // 9 is not base32
+    expect(normalizeKeyCode("K7QX-M2PA")).toBeUndefined();
+    expect(normalizeKeyCode("K7QXM2PAD4RTW6BH3NCEYABCDEF")).toBeUndefined();
+    expect(normalizeKeyCode("K7QXM2PAD4RTW6BH3NCEYABC=E")).toBeUndefined();
+    expect(normalizeKeyCode("")).toBeUndefined();
+  });
+});
+
+describe("KeyStore.adopt", () => {
+  const ringA = "A".repeat(43);
+  const ringB = "B".repeat(43);
+  it("a rotated key under the stored prefix keeps its ring and when it was made, and is used from then on", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const old = await store.getKey();
+    await store.ringFor(old);
+    const before = (await readCredentials(file)).keys[fake.baseUrl];
+    const fresh = old.slice(0, 9) + "N".repeat(28);
+    expect(await store.adopt(fresh, old.slice(0, 9))).toEqual({ replaced: undefined });
+    const after = await readCredentials(file);
+    expect(after.keys[fake.baseUrl]).toEqual({ key: fresh, prefix: old.slice(0, 9), created_at: before.created_at, ring: before.ring });
+    expect(after.rings).toBeUndefined();
+    expect(await store.getKey()).toBe(fresh);
+    expect(await store.ringFor(fresh)).toBe(before.ring);
+  });
+  it("another key moves the stored key's ring under its prefix and leaves the rings already filed alone", async () => {
+    await writeCredentials(file, {
+      version: 1,
+      keys: { [fake.baseUrl]: { key: "fmrl_OLD1" + "o".repeat(28), prefix: "fmrl_OLD1", created_at: "t", ring: ringA } },
+      rings: { fmrl_NEW1: ringB },
+    });
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const fresh = "fmrl_NEW1" + "n".repeat(28);
+    expect(await store.adopt(fresh, "fmrl_NEW1")).toEqual({ replaced: "fmrl_OLD1" });
+    const after = await readCredentials(file);
+    expect(after.keys[fake.baseUrl]).toEqual({ key: fresh, prefix: "fmrl_NEW1" });
+    expect(after.rings).toEqual({ fmrl_OLD1: ringA, fmrl_NEW1: ringB });
+    // The ring filed under the redeemed key's prefix is the one it seals under.
+    expect(await store.ringFor(fresh)).toBe(ringB);
+  });
+  it("with no stored key, saves the key and replaces nothing", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const fresh = "fmrl_NEW1" + "n".repeat(28);
+    expect(await store.adopt(fresh, "fmrl_NEW1")).toEqual({ replaced: undefined });
+    expect((await readCredentials(file)).keys[fake.baseUrl]).toEqual({ key: fresh, prefix: "fmrl_NEW1" });
+    expect(fake.requests).toHaveLength(0);
+  });
+  it("keeps the key for this process even when the file can't be written", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file: path.join(file, "nested", "credentials.json") });
+    await writeFile(file, "not a directory");
+    const fresh = "fmrl_NEW1" + "n".repeat(28);
+    await expect(store.adopt(fresh, "fmrl_NEW1")).rejects.toThrow();
+    expect(await store.getKey()).toBe(fresh);
+  });
+});
+
+describe("KeyStore.withKey and a revoked key", () => {
+  it("replaces a revoked stored key by default", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const old = await store.getKey();
+    fake.revoked.add(old);
+    const me = await store.withKey((k) => api.me(k));
+    expect(me.prefix).not.toBe(old.slice(0, 9));
+  });
+  it("with replaceRevoked false, a 401 key_revoked surfaces and nothing is minted", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const old = await store.getKey();
+    fake.revoked.add(old);
+    await expect(store.withKey((k) => api.me(k), { replaceRevoked: false })).rejects.toMatchObject({ status: 401, code: "key_revoked" });
+    expect(fake.requests.filter((r) => r.path === "/api/v1/keys")).toHaveLength(1);
+    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(old);
+  });
+  it("with replaceRevoked false, any other 401 is still replaced", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const old = await store.getKey();
+    fake.keys.clear();
+    const me = await store.withKey((k) => api.me(k), { replaceRevoked: false });
+    expect(me.prefix).not.toBe(old.slice(0, 9));
   });
 });

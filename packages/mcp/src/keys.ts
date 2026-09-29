@@ -23,6 +23,17 @@ export function prefixOf(key: string): string {
   return key.slice(0, PREFIX_LENGTH);
 }
 
+/**
+ * normalizeKeyCode is keylife's normalization of a key code: dashes and
+ * whitespace stripped, uppercased, and then exactly 26 characters of the
+ * RFC 4648 base32 alphabet. Anything else is undefined, so a mistyped code
+ * never spends one of the network's hourly redemptions.
+ */
+export function normalizeKeyCode(code: string): string | undefined {
+  const norm = code.replace(/[-\s]/g, "").toUpperCase();
+  return /^[A-Z2-7]{26}$/.test(norm) ? norm : undefined;
+}
+
 /** storedRing is the ring the file keeps for key: its base URL's entry when that entry is key, else rings[prefix]. */
 function storedRing(file: CredentialsFile, baseUrl: string, key: string): string | undefined {
   const entry = file.keys[baseUrl];
@@ -71,6 +82,11 @@ export class KeyStore {
     return this.o.file;
   }
 
+  /** keyFromEnv reports whether FMRL_API_KEY supplies the key: then nothing here replaces it. */
+  get keyFromEnv(): boolean {
+    return Boolean(this.o.apiKeyFromEnv);
+  }
+
   /** ringFromEnv reports whether FMRL_RING supplies the ring. */
   get ringFromEnv(): boolean {
     return this.o.ringFromEnv !== undefined;
@@ -87,12 +103,17 @@ export class KeyStore {
     return this.mintOnce();
   }
 
-  async withKey<T>(fn: (key: string) => Promise<T>): Promise<T> {
+  /**
+   * withKey runs fn with the key, replacing a stored key once on a 401.
+   * replaceRevoked: false lets a 401 key_revoked through instead, for a
+   * caller that reports the revocation rather than papering over it.
+   */
+  async withKey<T>(fn: (key: string) => Promise<T>, { replaceRevoked = true }: { replaceRevoked?: boolean } = {}): Promise<T> {
     const key = await this.getKey();
     try {
       return await fn(key);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401 && !this.o.apiKeyFromEnv) {
+      if (e instanceof ApiError && e.status === 401 && !this.o.apiKeyFromEnv && (replaceRevoked || e.code !== "key_revoked")) {
         const fresh = await this.mintOnce();
         return fn(fresh);
       }
@@ -136,6 +157,39 @@ export class KeyStore {
       await writeCredentials(this.o.file, file);
       this.o.log?.(`fmrl-mcp: minted a key ring for ${prefixOf(key)}…, saved to ${this.o.file}`);
       return ring;
+    });
+  }
+
+  /**
+   * adopt makes key (from a key code or a rotation) the stored key for this
+   * base URL, and this process's key from now on, even when the file can't
+   * be written (then it throws, and the caller must hand the key over).
+   * The prefix is fixed at mint and survives rotation, so a key under the
+   * stored prefix is the same key: it keeps its ring and created_at. Any
+   * other key's ring moves under its prefix, as a replaced key's does on a
+   * mint; rings already filed by prefix stay where they are, so a ring filed
+   * under the adopted key's prefix is the one it seals under. It returns the
+   * prefix of a different key it replaced.
+   */
+  async adopt(key: string, prefix: string): Promise<{ replaced?: string }> {
+    // A mint in flight would land after this and overwrite it.
+    await this.pending?.catch(() => undefined);
+    this.cached = key;
+    return this.serialize(async () => {
+      const file = await readCredentials(this.o.file, this.o.log);
+      const old = file.keys[this.o.baseUrl];
+      const oldPrefix = old ? old.prefix || prefixOf(old.key) : undefined;
+      let replaced: string | undefined;
+      if (old && oldPrefix === prefix) {
+        file.keys[this.o.baseUrl] = { ...old, key, prefix };
+      } else {
+        if (old && isRing(old.ring)) file.rings = { ...file.rings, [oldPrefix!]: old.ring };
+        file.keys[this.o.baseUrl] = { key, prefix };
+        replaced = oldPrefix;
+      }
+      await writeCredentials(this.o.file, file);
+      this.o.log?.(`fmrl-mcp: saved key ${prefix}… for ${this.o.baseUrl} to ${this.o.file}`);
+      return { replaced };
     });
   }
 

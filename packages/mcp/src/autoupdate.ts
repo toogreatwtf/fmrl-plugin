@@ -75,28 +75,30 @@ export interface AutoUpdatePass {
 
 /**
  * autoUpdatePass reads the environment the CLI hands its MCP servers, as
- * Claude Code 2.1.278 reads it before its plugin auto-update pass: the pass
- * is skipped under DISABLE_UPDATES or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
- * set to anything at all (even 0 or false), or DISABLE_AUTOUPDATER set to a
- * flag value (1, true, yes, on — 0 and false do not count), unless
- * FORCE_AUTOUPDATE_PLUGINS overrides them. The CLI checks them in that order,
- * and this names the one it would. The Claude desktop app's Code tab sets
- * DISABLE_AUTOUPDATER=1 and CLAUDE_CODE_ENTRYPOINT=claude-desktop, so the
- * entrypoint says when the desktop app is the reason.
+ * Claude Code 2.1.278 reads it before its plugin auto-update pass. The
+ * pass is skipped under DISABLE_UPDATES or DISABLE_AUTOUPDATER set to a
+ * flag value (1, true, yes or on, case-insensitive — 0 and false do not
+ * count), or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC set to anything at
+ * all (that one is read raw, so even 0 and false count), unless
+ * FORCE_AUTOUPDATE_PLUGINS, a flag too, overrides them. The CLI checks
+ * them in that order, and this names the one it would. The Claude desktop
+ * app's Code tab sets DISABLE_AUTOUPDATER=1 and
+ * CLAUDE_CODE_ENTRYPOINT=claude-desktop, so the entrypoint says when the
+ * desktop app is the reason.
  *
  * The CLI also skips the pass when ~/.claude.json carries autoUpdates: false;
  * that file is not read here.
  */
 export function autoUpdatePass(env: NodeJS.ProcessEnv = process.env): AutoUpdatePass {
   const flag = (v: string | undefined) => ["1", "true", "yes", "on"].includes((v ?? "").toLowerCase().trim());
-  const by = env.DISABLE_UPDATES
+  const by = flag(env.DISABLE_UPDATES)
     ? "DISABLE_UPDATES"
     : flag(env.DISABLE_AUTOUPDATER)
       ? "DISABLE_AUTOUPDATER"
       : env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
         ? "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
         : undefined;
-  if (by === undefined || env.FORCE_AUTOUPDATE_PLUGINS) return { runs: true, desktop: false };
+  if (by === undefined || flag(env.FORCE_AUTOUPDATE_PLUGINS)) return { runs: true, desktop: false };
   return { runs: false, desktop: env.CLAUDE_CODE_ENTRYPOINT === "claude-desktop", by };
 }
 

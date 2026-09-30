@@ -119,28 +119,31 @@ describe("autoUpdatePass", () => {
     expect(autoUpdatePass({})).toEqual({ runs: true, desktop: false });
     expect(autoUpdatePass({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toEqual({ runs: true, desktop: false });
   });
-  it("does not run under DISABLE_AUTOUPDATER, which the CLI reads as a flag: 1, true, yes or on", () => {
-    for (const value of ["1", "true", "YES", " on "]) {
-      expect(autoUpdatePass({ DISABLE_AUTOUPDATER: value }), value).toEqual({ runs: false, desktop: false, by: "DISABLE_AUTOUPDATER" });
-    }
-    for (const value of ["0", "false", "", "off"]) {
-      expect(autoUpdatePass({ DISABLE_AUTOUPDATER: value }), JSON.stringify(value)).toEqual({ runs: true, desktop: false });
-    }
-  });
-  it("does not run under DISABLE_UPDATES or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, which the CLI reads as set-or-not: even 0 and false count", () => {
-    for (const name of ["DISABLE_UPDATES", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]) {
-      for (const value of ["1", "0", "false"]) {
+  it("does not run under DISABLE_UPDATES or DISABLE_AUTOUPDATER, which the CLI reads as flags: 1, true, yes or on", () => {
+    for (const name of ["DISABLE_UPDATES", "DISABLE_AUTOUPDATER"]) {
+      for (const value of ["1", "true", "YES", " on "]) {
         expect(autoUpdatePass({ [name]: value }), `${name}=${value}`).toEqual({ runs: false, desktop: false, by: name });
       }
-      expect(autoUpdatePass({ [name]: "" }), `${name}=`).toEqual({ runs: true, desktop: false });
+      for (const value of ["0", "false", "", "off"]) {
+        expect(autoUpdatePass({ [name]: value }), `${name}=${JSON.stringify(value)}`).toEqual({ runs: true, desktop: false });
+      }
     }
+  });
+  it("does not run under CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, which the CLI reads as set-or-not: even 0 and false count", () => {
+    for (const value of ["1", "0", "false"]) {
+      expect(autoUpdatePass({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: value }), value).toEqual({ runs: false, desktop: false, by: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" });
+    }
+    expect(autoUpdatePass({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "" })).toEqual({ runs: true, desktop: false });
   });
   it("names the first variable the CLI would, in its order", () => {
     expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", DISABLE_UPDATES: "1" }).by).toBe("DISABLE_UPDATES");
     expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" }).by).toBe("DISABLE_AUTOUPDATER");
+    expect(autoUpdatePass({ DISABLE_UPDATES: "0", DISABLE_AUTOUPDATER: "1" }).by).toBe("DISABLE_AUTOUPDATER");
   });
-  it("runs again under FORCE_AUTOUPDATE_PLUGINS, which overrides all three", () => {
+  it("runs again under FORCE_AUTOUPDATE_PLUGINS, a flag too, which overrides all three", () => {
     expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", FORCE_AUTOUPDATE_PLUGINS: "1" })).toEqual({ runs: true, desktop: false });
+    expect(autoUpdatePass({ DISABLE_UPDATES: "1", FORCE_AUTOUPDATE_PLUGINS: "true" })).toEqual({ runs: true, desktop: false });
+    expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", FORCE_AUTOUPDATE_PLUGINS: "0" })).toEqual({ runs: false, desktop: false, by: "DISABLE_AUTOUPDATER" });
   });
   it("names the desktop app when the entrypoint says so and the pass is disabled", () => {
     // The Claude desktop app's Code tab runs its CLI with DISABLE_AUTOUPDATER=1

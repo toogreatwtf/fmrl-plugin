@@ -1,0 +1,122 @@
+[
+  {
+    "name": "bash command and flag",
+    "md": "```bash\ncurl --fail \"https://fmrl.site\"\n```\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code class=\"language-bash\"><span class=\"tk-k\">curl</span> <span class=\"tk-a\">--fail</span> <span class=\"tk-s\">\"https://fmrl.site\"</span>\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "unknown language",
+    "md": "```no-such-lexer\nhello <b> & \"quoted\"\n```\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code class=\"language-no-such-lexer\">hello &lt;b&gt; &amp; \"quoted\"\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "no language",
+    "md": "```\none\ntwo\n```\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code>one\ntwo\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "indented block",
+    "md": "    one\n    two\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code>one\ntwo\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "CRLF",
+    "md": "```bash\necho \"hi\"\r\necho ok\r\n```\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code class=\"language-bash\"><span class=\"tk-k\">echo</span> <span class=\"tk-s\">\"hi\"</span>\n<span class=\"tk-k\">echo</span> ok\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "escaped body",
+    "md": "```json\n{\"x\":\"<b> & \\\"quoted\\\"\"}\n```\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code class=\"language-json\"><span class=\"tk-p\">{</span><span class=\"tk-a\">\"x\"</span><span class=\"tk-p\">:</span><span class=\"tk-s\">\"&lt;b&gt; &amp; \\\"quoted\\\"\"</span><span class=\"tk-p\">}</span>\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "closing script text",
+    "md": "```\n</script><script>alert(1)</script>\n```\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code>&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "no trailing newline",
+    "md": "```bash\necho hi",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<pre><code class=\"language-bash\"><span class=\"tk-k\">echo</span> hi\n</code></pre>",
+    "copyHooks": 1
+  },
+  {
+    "name": "profile",
+    "md": "```fmrl-profile\n{\"profile\":\"x\",\"label\":\"</script>\"}\n```\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<script id=\"fmrl-profile\" type=\"application/fmrl-profile+json\">{\"profile\":\"x\",\"label\":\"\\u003c/script>\"}</script>",
+    "copyHooks": 0
+  },
+  {
+    "name": "GFM table",
+    "md": "| Name | Value |\n| --- | --- |\n| **one** | `two` |\n",
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "html": "<table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><tr><td><strong>one</strong></td><td><code>two</code></td></tr></tbody></table>",
+    "copyHooks": 0
+  }
+]

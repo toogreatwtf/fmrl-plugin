@@ -49,8 +49,9 @@ describe("markdown", () => {
     const doc = wrapDocument("<h1>Hi</h1>", "A <b> & \"q\"");
     expect(doc.startsWith("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">")).toBe(true);
     expect(doc).toContain("<title>A &lt;b&gt; &amp; &quot;q&quot;</title>");
-    expect(doc).toContain("<style>:root{color-scheme:light dark}");
-    expect(doc).toContain("<body>\n<h1>Hi</h1>\n</body>");
+    expect(doc).toContain("<style>\n:root{color-scheme:light dark}");
+    expect(doc).toContain("<body>\n<h1>Hi</h1>\n<script>");
+    expect(doc).toContain("</script>\n</body>");
     expect(wrapDocument("x", "")).toContain("<title>Document</title>");
   });
   it("firstHeading strips tags", () => {

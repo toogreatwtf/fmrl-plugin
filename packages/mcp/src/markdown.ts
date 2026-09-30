@@ -1,18 +1,6 @@
 import { Marked, type Tokens } from "marked";
 
-// Mirrors render.markdownCSS in the server's internal/render/document.go and
-// MARKDOWN_CSS in static/fmrl.js. Drift is cosmetic; keep all three the same.
-const MARKDOWN_CSS = ':root{color-scheme:light dark}' +
-  'body{margin:0;padding:2rem 1.25rem;max-width:72ch;margin-inline:auto;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1a1a1a;background:#fff}' +
-  '@media (prefers-color-scheme:dark){body{color:#e6e6e6;background:#111}}' +
-  'h1,h2,h3{line-height:1.25}' +
-  'pre{overflow:auto;padding:1rem;background:rgba(127,127,127,.12);border-radius:6px}' +
-  'code{font:.92em ui-monospace,SFMono-Regular,Menlo,monospace}' +
-  'img{max-width:100%}' +
-  'table{border-collapse:collapse}' +
-  'td,th{border:1px solid rgba(127,127,127,.4);padding:.35rem .6rem}' +
-  'blockquote{margin:0;padding-left:1rem;border-left:3px solid rgba(127,127,127,.5);color:inherit;opacity:.85}' +
-  'a{color:#0b63c4}';
+import { canvasAssets, highlightCode } from "./highlight.js";
 
 /**
  * looksLikeHTML is the server's share.DetectFormat: trim whitespace, strip a
@@ -56,7 +44,10 @@ const md = new Marked({
     // marked's lang is the whole info string; only its first word names the fence.
     code(token: Tokens.Code) {
       const lang = /^\S*/.exec(token.lang ?? "")?.[0];
-      return lang === "fmrl-profile" ? profileScript(token.text) : false;
+      if (lang === "fmrl-profile") return profileScript(token.text);
+      const body = token.text.replace(/\n$/, "") + "\n";
+      const html = lang ? highlightCode(lang, body) : escapeHTML(body);
+      return `<pre><code${lang ? ` class="language-${escapeHTML(lang)}"` : ""}>${html}</code></pre>\n`;
     },
     // Every heading gets the id markymd's Go renderer and static/fmrl.js give
     // it (test/fixtures/heading-ids.json, copied from markymd): the slug of
@@ -175,7 +166,7 @@ export function documentTitle(html: string): string {
 /** wrapDocument is render.WrapDocument: a complete document with the Markdown stylesheet inlined. */
 export function wrapDocument(body: string, title: string): string {
   return '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' +
-    escapeHTML(title || "Document") + "</title>\n<style>" + MARKDOWN_CSS + "</style>\n</head>\n<body>\n" + body + "\n</body>\n</html>\n";
+    escapeHTML(title || "Document") + "</title>\n<style>" + canvasAssets.css + "</style>\n</head>\n<body>\n" + body + "\n<script>" + canvasAssets.copyJS + "</script>\n</body>\n</html>\n";
 }
 
 /**

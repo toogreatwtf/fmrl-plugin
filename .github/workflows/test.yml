@@ -37,3 +37,17 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  upstream-fixtures:
+    name: upstream fixtures (markymd main)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compare both canonical fixture copies with markymd main
+        working-directory: packages/mcp
+        env:
+          MARKYMD_FIXTURES_TOKEN: ${{ secrets.MARKYMD_FIXTURES_TOKEN }}
+        run: npm run check:fixtures

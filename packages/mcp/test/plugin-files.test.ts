@@ -31,6 +31,16 @@ describe("the plugin manifest", () => {
   });
 });
 
+describe("the READMEs' keep-current paragraph", () => {
+  const sentence = "In the Claude desktop app the switch does nothing: update by hand, or when the plugin says it is out of date.";
+  it("says the switch does nothing in the Claude desktop app, in both READMEs and in the same paragraph", () => {
+    for (const file of ["README.md", "packages/mcp/README.md"]) {
+      const line = read(file).split("\n").find((l) => l.startsWith("Keep it current: auto-update is your switch"));
+      expect(line, file).toContain(sentence);
+    }
+  });
+});
+
 describe("/fmrl:whoami", () => {
   let cached: string | undefined;
   const skillText = () => (cached ??= read("plugins/fmrl/skills/whoami/SKILL.md"));

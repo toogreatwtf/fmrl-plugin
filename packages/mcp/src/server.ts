@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type UpdateResponse } from "./api.js";
+import { ApiError, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef } from "./ids.js";
@@ -67,9 +67,9 @@ const ringCarried = (url: string) => (/[#&]r=/.test(url) ? " It also carries the
 
 export const LINK_HINT = (url: string) => `See your pages on fmrl.site: open ${url} once in your browser (it works for an hour, and once).${ringCarried(url)}`;
 
-/** withRing appends key's ring to a browser link as #r=<prefix>.<ring>. The link page stores it for the key its form names; the server never sees a fragment. */
-export function withRing(linkUrl: string, key: string, ring: string): string {
-  return `${linkUrl}${linkUrl.includes("#") ? "&" : "#"}r=${prefixOf(key)}.${ring}`;
+/** withRing appends a key's ring to a browser link as #r=<prefix>.<ring>. The link page stores it for the key its form names, by the prefix the server gives the key (a rotated secret's own first characters are not it); the server never sees a fragment. */
+export function withRing(linkUrl: string, prefix: string, ring: string): string {
+  return `${linkUrl}${linkUrl.includes("#") ? "&" : "#"}r=${prefix}.${ring}`;
 }
 export const RING_FILE_LINE = (file: string) => `Your key ring is in ${file}; back up that file to keep every page's key.`;
 export const RING_ENV_LINE = "Your key ring comes from FMRL_RING; back up that value to keep every page's key.";
@@ -235,15 +235,10 @@ function meText(m: MeResponse, ringLine: string, plugin: string | undefined): st
   return [...lines, ringLine, ...(plugin ? [plugin] : []), SEVEN_DAYS].join("\n");
 }
 
-/** isRevoked is the API's 401 for a key revoked for good, as opposed to one it doesn't know. */
-function isRevoked(e: unknown): boolean {
-  return e instanceof ApiError && e.status === 401 && e.code === "key_revoked";
-}
-
-/** revokedText says a key was revoked, and how this machine gets a new one: a stored key is replaced by the next tool that needs one; FMRL_API_KEY never is. */
+/** revokedText says a key was revoked, and how this machine gets a new one: a stored key is replaced by the next tool that needs one; FMRL_API_KEY never is, and without it the file's key, if any, is used. */
 function revokedText(prefix: string, keys: KeyStore): string {
   return keys.keyFromEnv
-    ? `${prefix}… (from FMRL_API_KEY) was revoked, so it will not work again. Unset FMRL_API_KEY and fmrl-mcp makes a new key and saves it to ${keys.file}, or set FMRL_API_KEY to a new key from POST /api/v1/keys.`
+    ? `${prefix}… (from FMRL_API_KEY) was revoked, so it will not work again. Unset FMRL_API_KEY and fmrl-mcp uses the key saved in ${keys.file}, making one there if there is none, or set FMRL_API_KEY to a new key from POST /api/v1/keys.`
     : `${prefix}… was revoked, so it will not work again. The next fmrl tool that needs a key (fmrl_publish, fmrl_list and the rest) makes a new one and saves it to ${keys.file}; the revoked key's ring stays in that file.`;
 }
 
@@ -329,7 +324,7 @@ const meOutput = {
   linked_at: z.string().nullable().optional(), rotated_at: z.string().optional(), link_url: z.string().optional(),
 };
 const redeemOutput = { prefix: z.string(), file: z.string(), replaced: z.string().optional() };
-const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string() };
+const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string(), replaced: z.string().optional() };
 
 /** createServer registers the eleven tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
@@ -370,7 +365,7 @@ export function createServer(deps: ServerDeps): McpServer {
     const p = await api.publish(k, body);
     if (!p.link_url) return p;
     ring ??= await ringOrNothing(k);
-    return ring ? { ...p, link_url: withRing(p.link_url, k, ring) } : p;
+    return ring ? { ...p, link_url: withRing(p.link_url, await keys.prefixFor(k), ring) } : p;
   };
 
   /** remember stores what this machine may keep about a page; a store that can't be written costs a log line, never the tool call, and the line never carries the secret. */
@@ -730,11 +725,11 @@ export function createServer(deps: ServerDeps): McpServer {
           } catch (e) {
             ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
           }
-          return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, k, ring) } : me) as MeResponse & Record<string, unknown>;
+          return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, me.prefix, ring) } : me) as MeResponse & Record<string, unknown>;
         }, { replaceRevoked: false });
         return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate)), m);
       } catch (e) {
-        return fail(isRevoked(e) ? revokedText(prefixOf(used), keys) : errorText(e));
+        return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }
     },
   );
@@ -752,7 +747,7 @@ export function createServer(deps: ServerDeps): McpServer {
       if (!norm) return fail(NOT_A_CODE);
       // A redeemed key would never be used over FMRL_API_KEY, so don't spend the code.
       if (keys.keyFromEnv) return fail(REDEEM_ENV);
-      let r: Awaited<ReturnType<FmrlApi["redeem"]>>;
+      let r: RedeemResponse;
       try {
         r = await api.redeem(norm);
       } catch (e) {
@@ -785,25 +780,26 @@ export function createServer(deps: ServerDeps): McpServer {
     async () => {
       if (keys.keyFromEnv) return fail(ROTATE_ENV);
       let k = "";
-      let r: Awaited<ReturnType<FmrlApi["rotate"]>>;
+      let r: RotateResponse;
       try {
         // Minting a key only to rotate it would spend one of the network's mints for nothing.
-        const stored = await keys.storedKey();
-        if (!stored) return fail(NO_KEY_TO_ROTATE);
-        k = stored;
-        // No replace-and-retry: rotating a key minted just now would rotate the wrong key.
-        r = await api.rotate(k);
+        if (!(await keys.storedKey())) return fail(NO_KEY_TO_ROTATE);
+        // No mint on a 401 either: rotating a key minted just now would rotate
+        // the wrong key. A key that replaced this one meanwhile (rotated or
+        // redeemed elsewhere, into the file) is the one to rotate.
+        r = await keys.withKey((key) => { k = key; return api.rotate(key); }, { mint: false });
       } catch (e) {
-        return fail(isRevoked(e) ? revokedText(prefixOf(k), keys) : errorText(e));
+        return fail(isRevoked(e) ? revokedText(await keys.prefixFor(k), keys) : errorText(e));
       }
+      let replaced: string | undefined;
       try {
-        await keys.adopt(r.key, r.prefix);
+        ({ replaced } = await keys.adopt(r.key, r.prefix));
       } catch (e) {
         return fail(`Rotated ${r.prefix}…, but couldn't save the new key to ${keys.file} (${errorText(e)}); this session uses it until it ends. The old key no longer works and fmrl.site keeps only a hash of the new one, so save it now, or set FMRL_API_KEY to it: ${r.key}`);
       }
       return ok(
-        `Rotated ${r.prefix}… at ${r.rotated_at}: the old secret stopped working, and the new one is saved to ${keys.file}. Its pages, name, quota, linked browsers, connected apps and key ring carry over.`,
-        { prefix: r.prefix, rotated_at: r.rotated_at, file: keys.file },
+        `Rotated ${r.prefix}… at ${r.rotated_at}: the old secret stopped working, and the new one is saved to ${keys.file}. Its pages, name, quota, linked browsers, connected apps and key ring carry over.${replaced ? ` It replaces ${replaced}…, whose key ring stays in that file.` : ""}`,
+        { prefix: r.prefix, rotated_at: r.rotated_at, file: keys.file, ...(replaced ? { replaced } : {}) },
       );
     },
   );

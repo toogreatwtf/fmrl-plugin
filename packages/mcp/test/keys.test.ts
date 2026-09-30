@@ -199,6 +199,19 @@ describe("KeyStore.adopt", () => {
     expect(await store.getKey()).toBe(fresh);
     expect(await store.ringFor(fresh)).toBe(before.ring);
   });
+  it("a rotated key keeps its ring and prefix although the new secret's own first characters differ, as the server rotates", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, log: (s) => logs.push(s) });
+    const old = await store.getKey();
+    const ring = await store.ringFor(old);
+    const r = await api.rotate(old);
+    expect(r.key.slice(0, 9)).not.toBe(r.prefix);
+    expect(await store.adopt(r.key, r.prefix)).toEqual({ same: true });
+    expect(await store.prefixFor(r.key)).toBe(r.prefix);
+    expect(await store.ringFor(r.key)).toBe(ring);
+    expect(await store.ringsFor(r.key)).toEqual([ring]);
+    expect((await readCredentials(file)).rings).toBeUndefined();
+    expect(logs.join("\n")).not.toContain("minted a key ring for " + r.key.slice(0, 9));
+  });
   it("another key moves the stored key's ring under its prefix and leaves the rings already filed alone", async () => {
     await writeCredentials(file, {
       version: 1,
@@ -259,40 +272,40 @@ describe("a key that changed under a call", () => {
   it("a 401 from the old key after a rotation retries with the rotated key rather than minting over it", async () => {
     const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
     const old = await store.getKey();
-    const rotated = (await api.rotate(old)).key;
+    const r = await api.rotate(old);
     let calls = 0;
     const me = await store.withKey(async (k) => {
       // The call started with the old key; the rotation lands before it answers.
-      if (calls++ === 0) await store.adopt(rotated, rotated.slice(0, 9));
+      if (calls++ === 0) await store.adopt(r.key, r.prefix);
       return api.me(k);
     });
     expect(me.prefix).toBe(old.slice(0, 9));
-    expect(fake.requests.filter((r) => r.path === "/api/v1/keys")).toHaveLength(1);
-    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(rotated);
+    expect(fake.requests.filter((q) => q.path === "/api/v1/keys")).toHaveLength(1);
+    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(r.key);
   });
   it("a rotation adopted after the 401's check but before its mint lands is kept, not minted over", async () => {
     const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
     const old = await store.getKey();
-    const rotated = (await api.rotate(old)).key;
+    const r = await api.rotate(old);
     // The window: the 401's check has already found the old key current when the rotation is adopted.
     const s = store as unknown as { changedSince(f: string): Promise<string | undefined> };
     const check = s.changedSince.bind(store);
-    s.changedSince = async (f) => { const r = await check(f); void store.adopt(rotated, rotated.slice(0, 9)); return r; };
+    s.changedSince = async (f) => { const found = await check(f); void store.adopt(r.key, r.prefix); return found; };
     const me = await store.withKey((k) => api.me(k));
     expect(me.prefix).toBe(old.slice(0, 9));
-    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(rotated);
-    expect(await store.getKey()).toBe(rotated);
+    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(r.key);
+    expect(await store.getKey()).toBe(r.key);
   });
   it("another process's rotation, found in the file on a 401, is used instead of minting", async () => {
     const x = new KeyStore({ api, baseUrl: fake.baseUrl, file });
     const old = await x.getKey();
     const y = new KeyStore({ api, baseUrl: fake.baseUrl, file });
-    const rotated = (await api.rotate(await y.getKey())).key;
-    await y.adopt(rotated, rotated.slice(0, 9));
+    const r = await api.rotate(await y.getKey());
+    await y.adopt(r.key, r.prefix);
     const me = await x.withKey((k) => api.me(k));
     expect(me.prefix).toBe(old.slice(0, 9));
-    expect(fake.requests.filter((r) => r.path === "/api/v1/keys")).toHaveLength(1);
-    expect(await x.getKey()).toBe(rotated);
+    expect(fake.requests.filter((q) => q.path === "/api/v1/keys")).toHaveLength(1);
+    expect(await x.getKey()).toBe(r.key);
   });
 });
 
@@ -329,5 +342,54 @@ describe("rings under a shared prefix", () => {
     expect(rings.fmrl_PPPP).toBe(ringB);
     expect(Object.values(rings).sort()).toEqual([ringA, ringB]);
     expect(await store.ringsFor("fmrl_PPPP" + "3".repeat(28))).toEqual(expect.arrayContaining([ringA, ringB]));
+  });
+});
+
+describe("a key replaced while another call was out", () => {
+  it("with replaceRevoked false, a revoked key that another process already replaced is retried with the replacement", async () => {
+    const x = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const old = await x.getKey();
+    fake.revoked.add(old);
+    // y, sharing the file, replaces the revoked key first.
+    const y = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const theirs = await y.withKey((k) => api.me(k));
+    const me = await x.withKey((k) => api.me(k), { replaceRevoked: false });
+    expect(me.prefix).toBe(theirs.prefix);
+    expect(fake.requests.filter((q) => q.path === "/api/v1/keys")).toHaveLength(2);
+  });
+  it("a rotation adopted while a 401's mint is in flight is what the call retries with, and the mint is dropped", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const old = await store.getKey();
+    const r = await api.rotate(old);
+    let adopting: Promise<unknown> = Promise.resolve();
+    const s = store as unknown as { mintOnce(replacing?: string): Promise<string> };
+    const orig = s.mintOnce.bind(store);
+    s.mintOnce = (replacing) => { const p = orig(replacing); adopting = store.adopt(r.key, r.prefix); return p; };
+    const me = await store.withKey((k) => api.me(k));
+    await adopting;
+    expect(me.prefix).toBe(r.prefix);
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me").at(-1)).toMatchObject({ auth: `Bearer ${r.key}` });
+    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(r.key);
+    expect(await store.getKey()).toBe(r.key);
+  });
+  it("a first mint stands down for a key another process stored while it was in flight", async () => {
+    const y = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const slow = new FmrlApi(fake.baseUrl);
+    let theirs = "";
+    slow.mint = async (label) => { const m = await FmrlApi.prototype.mint.call(slow, label); theirs = await y.getKey(); return m; };
+    const x = new KeyStore({ api: slow, baseUrl: fake.baseUrl, file });
+    expect(await x.getKey()).toBe(theirs);
+    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(theirs);
+  });
+});
+
+describe("KeyStore.ringsFor and the stored entry", () => {
+  const ringA = "A".repeat(43);
+  it("offers the stored entry's ring to a secret it doesn't match, such as FMRL_API_KEY set to the stored key's rotated secret", async () => {
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key: "fmrl_PPPP" + "1".repeat(28), prefix: "fmrl_PPPP", created_at: "t", ring: ringA } } });
+    const env = "fmrl_QQQQ" + "2".repeat(28);
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: env });
+    expect(await store.ringsFor(env)).toContain(ringA);
+    expect(await store.prefixFor(env)).toBe("fmrl_QQQQ");
   });
 });

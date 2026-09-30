@@ -1109,7 +1109,8 @@ describe("key codes, rotation and revocation", () => {
     expect(text(r)).toBe(`Redeemed the key code: this machine now uses ${other.prefix}…, saved to ${credFile}. It replaces fmrl_OLD1…, whose key ring stays in that file.`);
     expect(r.structuredContent).toEqual({ prefix: other.prefix, file: credFile, replaced: "fmrl_OLD1" });
     const file = await readCredentials(credFile);
-    expect(file.keys[fake.baseUrl]).toEqual({ key: expect.stringMatching(new RegExp(`^${other.prefix}`)), prefix: other.prefix });
+    expect(file.keys[fake.baseUrl]).toEqual({ key: expect.not.stringMatching(new RegExp(`^${other.prefix}`)), prefix: other.prefix });
+    expect(fake.prefixOf(file.keys[fake.baseUrl].key)).toBe(other.prefix);
     expect(file.rings).toEqual({ fmrl_OLD1: ringA, [other.prefix]: ringB });
     const who = await call("fmrl_whoami");
     expect(RING_PAIR.exec((who.structuredContent as { link_url: string }).link_url)!.slice(1)).toEqual([other.prefix, ringB]);
@@ -1154,7 +1155,7 @@ describe("key codes, rotation and revocation", () => {
     try {
       const r = (await c.callTool({ name: "fmrl_redeem", arguments: { code: fake.handoff(key) } })) as ToolResult;
       expect(r.isError).toBe(true);
-      const fresh = [...fake.keys].find((k) => k.startsWith(key.slice(0, 9)))!;
+      const fresh = [...fake.keys].find((k) => fake.prefixOf(k) === key.slice(0, 9))!;
       expect(text(r)).toMatch(new RegExp(`^Redeemed the key code for ${key.slice(0, 9)}…, but couldn't save it to ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(.+\\); this session uses it until it ends\\. The code is spent and fmrl\\.site keeps only a hash of the key, so save it now, or set FMRL_API_KEY to it: ${fresh}$`));
       const pub = (await c.callTool({ name: "fmrl_publish", arguments: { content: "# still works" } })) as ToolResult;
       expect(pub.isError).toBeFalsy();
@@ -1183,6 +1184,47 @@ describe("key codes, rotation and revocation", () => {
     expect(text(who)).toContain(`Last rotated ${rotatedAt}.`);
     expect(who.structuredContent).toMatchObject({ rotated_at: rotatedAt });
     expect(mints()).toBe(1);
+  });
+  it("after fmrl_rotate, private pages still open under the same ring, and links pair that ring with the key's prefix, not the new secret's", async () => {
+    const priv = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true });
+    const { id } = priv.structuredContent as { id: string };
+    const before = await stored();
+    const r = await call("fmrl_rotate");
+    expect(r.isError).toBeFalsy();
+    const after = await stored();
+    // The server mints the secret afresh: only the record keeps the prefix.
+    expect(after.key.slice(0, 9)).not.toBe(before.prefix);
+    expect(after).toEqual({ ...before, key: after.key });
+    const got = await call("fmrl_get", { id });
+    expect(got.structuredContent).toMatchObject({ id, key_held: true, title: "Quiet" });
+    const who = await call("fmrl_whoami");
+    expect(RING_PAIR.exec((who.structuredContent as { link_url: string }).link_url)!.slice(1)).toEqual([before.prefix, before.ring]);
+    const more = await call("fmrl_publish", { content: "# More", private: true });
+    expect(RING_PAIR.exec((more.structuredContent as { link_url: string }).link_url)!.slice(1)).toEqual([before.prefix, before.ring]);
+    expect((await readCredentials(credFile)).rings).toBeUndefined();
+    expect(mints()).toBe(1);
+  });
+  it("fmrl_rotate after another process rotated the key rotates that key, and mints nothing", async () => {
+    await call("fmrl_whoami");
+    const before = await stored();
+    const theirs = await new FmrlApi(fake.baseUrl).rotate(before.key);
+    await new KeyStore({ api: new FmrlApi(fake.baseUrl), baseUrl: fake.baseUrl, file: credFile }).adopt(theirs.key, theirs.prefix);
+    const r = await call("fmrl_rotate");
+    expect(r.isError).toBeFalsy();
+    expect(fake.requests.at(-1)).toMatchObject({ path: "/api/v1/me/rotate", auth: `Bearer ${theirs.key}` });
+    expect(await stored()).toEqual({ ...before, key: expect.not.stringMatching(theirs.key) });
+    expect(fake.keys.has(theirs.key)).toBe(false);
+    expect(mints()).toBe(1);
+  });
+  it("fmrl_rotate says when it replaces a different key that another process stored", async () => {
+    await call("fmrl_whoami");
+    const before = await stored();
+    const other = await new FmrlApi(fake.baseUrl).mint("elsewhere");
+    await new KeyStore({ api: new FmrlApi(fake.baseUrl), baseUrl: fake.baseUrl, file: credFile }).adopt(other.key, other.prefix);
+    const r = await call("fmrl_rotate");
+    expect(r.isError).toBeFalsy();
+    expect(text(r)).toContain(`It replaces ${other.prefix}…, whose key ring stays in that file.`);
+    expect(r.structuredContent).toMatchObject({ prefix: before.prefix, replaced: other.prefix });
   });
   it("fmrl_rotate with FMRL_API_KEY set refuses without rotating", async () => {
     const { key } = await new FmrlApi(fake.baseUrl).mint("env");
@@ -1234,7 +1276,7 @@ describe("key codes, rotation and revocation", () => {
     try {
       const r = (await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
       expect(r.isError).toBe(true);
-      expect(text(r)).toBe(`${key.slice(0, 9)}… (from FMRL_API_KEY) was revoked, so it will not work again. Unset FMRL_API_KEY and fmrl-mcp makes a new key and saves it to ${path.join(dir, "env.json")}, or set FMRL_API_KEY to a new key from POST /api/v1/keys.`);
+      expect(text(r)).toBe(`${key.slice(0, 9)}… (from FMRL_API_KEY) was revoked, so it will not work again. Unset FMRL_API_KEY and fmrl-mcp uses the key saved in ${path.join(dir, "env.json")}, making one there if there is none, or set FMRL_API_KEY to a new key from POST /api/v1/keys.`);
     } finally {
       await c.close();
     }

@@ -1,4 +1,4 @@
-import { ApiError, type FmrlApi } from "./api.js";
+import { ApiError, isRevoked, type FmrlApi } from "./api.js";
 import { readCredentials, writeCredentials, type CredentialsFile } from "./credentials.js";
 import { isRing, newRing } from "./crypto.js";
 
@@ -40,14 +40,26 @@ function entryPrefix(entry: { key: string; prefix?: string }): string {
 }
 
 /**
+ * keyPrefix is key's prefix as the server names it: the stored entry's when
+ * key is that entry's secret — a rotation mints the secret afresh under the
+ * same prefix, so a rotated secret's own first characters are not its
+ * prefix — else key's first characters.
+ */
+function keyPrefix(file: CredentialsFile, baseUrl: string, key: string): string {
+  const entry = file.keys[baseUrl];
+  return entry?.key === key ? entryPrefix(entry) : prefixOf(key);
+}
+
+/**
  * storedRing is the ring the file keeps for key: its base URL's entry when
- * that entry is the same key (the same prefix: a rotation keeps it, so a
- * rotated secret is still that key), else rings[prefix].
+ * that entry is the same key (its secret, or another secret under its
+ * prefix), else rings[prefix].
  */
 function storedRing(file: CredentialsFile, baseUrl: string, key: string): string | undefined {
   const entry = file.keys[baseUrl];
-  if (entry && entryPrefix(entry) === prefixOf(key) && isRing(entry.ring)) return entry.ring;
-  const ring = file.rings?.[prefixOf(key)];
+  const prefix = keyPrefix(file, baseUrl, key);
+  if (entry && entryPrefix(entry) === prefix && isRing(entry.ring)) return entry.ring;
+  const ring = file.rings?.[prefix];
   return isRing(ring) ? ring : undefined;
 }
 
@@ -70,8 +82,9 @@ function fileRing(file: CredentialsFile, prefix: string, ring: string): void {
  * credentials file's entry for this base URL, else a freshly minted key that
  * is saved for next time. A stored key that answers 401 (revoked, or a
  * preview whose memory store restarted) is replaced once and the call
- * retried; a key from the environment is never replaced. Each key also has a
- * ring, the secret its private pages' keys are sealed under (ringFor).
+ * retried — with a key that has since replaced it, here or in the file, else
+ * a fresh mint; a key from the environment is never replaced. Each key also
+ * has a ring, the secret its private pages' keys are sealed under (ringFor).
  */
 export class KeyStore {
   private cached?: string;
@@ -115,32 +128,29 @@ export class KeyStore {
     return this.o.ringFromEnv !== undefined;
   }
 
+  /** getKey is the key calls use, minted when there is none yet. */
   async getKey(): Promise<string> {
-    if (this.o.apiKeyFromEnv) return this.o.apiKeyFromEnv;
-    if (this.cached) return this.cached;
-    const stored = (await readCredentials(this.o.file, this.o.log)).keys[this.o.baseUrl];
-    if (stored?.key) {
-      this.cached = stored.key;
-      return stored.key;
-    }
-    return this.mintOnce();
+    return (await this.storedKey()) ?? this.mintOnce();
   }
 
   /**
-   * withKey runs fn with the key, replacing a stored key once on a 401.
-   * replaceRevoked: false lets a 401 key_revoked through instead, for a
-   * caller that reports the revocation rather than papering over it.
+   * withKey runs fn with the key, replacing a stored key once on a 401: with
+   * a key that has since replaced it (a rotation or redeem, here or in
+   * another process sharing the file), else a fresh mint. mint: false never
+   * mints, for a call that must reach the key it was given or fail; and
+   * replaceRevoked: false lets a 401 key_revoked through instead of minting,
+   * for a caller that reports the revocation rather than papering over it.
    */
-  async withKey<T>(fn: (key: string) => Promise<T>, { replaceRevoked = true }: { replaceRevoked?: boolean } = {}): Promise<T> {
+  async withKey<T>(fn: (key: string) => Promise<T>, { replaceRevoked = true, mint = true }: { replaceRevoked?: boolean; mint?: boolean } = {}): Promise<T> {
     const key = await this.getKey();
     try {
       return await fn(key);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401 && !this.o.apiKeyFromEnv && (replaceRevoked || e.code !== "key_revoked")) {
-        // A rotation or redeem, here or in another process, may have replaced
-        // the key since this call read it: retry with that, and mint only
-        // when the key that failed is still the current one.
-        return fn((await this.changedSince(key)) ?? (await this.mintOnce(key)));
+      if (e instanceof ApiError && e.status === 401 && !this.o.apiKeyFromEnv) {
+        const changed = await this.changedSince(key);
+        if (changed) return fn(changed);
+        // Mint only when the key that failed is still the current one.
+        if (mint && (replaceRevoked || !isRevoked(e))) return fn(await this.mintOnce(key));
       }
       throw e;
     }
@@ -154,12 +164,17 @@ export class KeyStore {
     return undefined;
   }
 
-  /** storedKey is the key calls would use, without minting one: undefined when there is none yet. */
+  /** storedKey is the key calls would use, without minting one: FMRL_API_KEY, else this process's, else the file's; undefined when there is none yet. */
   async storedKey(): Promise<string | undefined> {
     if (this.o.apiKeyFromEnv) return this.o.apiKeyFromEnv;
     if (this.cached) return this.cached;
     const stored = (await readCredentials(this.o.file, this.o.log)).keys[this.o.baseUrl];
     return stored?.key ? (this.cached = stored.key) : undefined;
+  }
+
+  /** prefixFor is key's prefix as the server names it: the stored entry's when key is its secret, else key's first characters; see keyPrefix. */
+  async prefixFor(key: string): Promise<string> {
+    return keyPrefix(await readCredentials(this.o.file, this.o.log), this.o.baseUrl, key);
   }
 
   /**
@@ -179,10 +194,15 @@ export class KeyStore {
     return p;
   }
 
-  /** ringsFor lists every ring that may open a record on key's pages, the one ringFor would seal under first. It never mints. */
+  /**
+   * ringsFor lists every ring that may open a record on key's pages, the one
+   * ringFor would seal under first, then every other ring the file holds —
+   * the stored entry's too, whatever secret it is under, since a rotated
+   * secret of that key may come in through FMRL_API_KEY. It never mints.
+   */
   async ringsFor(key: string): Promise<string[]> {
     const file = await readCredentials(this.o.file, this.o.log);
-    const all = [this.o.ringFromEnv, storedRing(file, this.o.baseUrl, key), ...Object.values(file.rings ?? {})];
+    const all = [this.o.ringFromEnv, storedRing(file, this.o.baseUrl, key), file.keys[this.o.baseUrl]?.ring, ...Object.values(file.rings ?? {})];
     return [...new Set(all.filter(isRing))];
   }
 
@@ -193,10 +213,11 @@ export class KeyStore {
       if (found) return found;
       const ring = newRing();
       const entry = file.keys[this.o.baseUrl];
-      if (entry && entryPrefix(entry) === prefixOf(key)) entry.ring = ring;
-      else file.rings = { ...file.rings, [prefixOf(key)]: ring };
+      const prefix = keyPrefix(file, this.o.baseUrl, key);
+      if (entry && entryPrefix(entry) === prefix) entry.ring = ring;
+      else file.rings = { ...file.rings, [prefix]: ring };
       await writeCredentials(this.o.file, file);
-      this.o.log?.(`fmrl-mcp: minted a key ring for ${prefixOf(key)}…, saved to ${this.o.file}`);
+      this.o.log?.(`fmrl-mcp: minted a key ring for ${prefix}…, saved to ${this.o.file}`);
       return ring;
     });
   }
@@ -214,8 +235,8 @@ export class KeyStore {
    * key it replaced.
    */
   async adopt(key: string, prefix: string): Promise<{ same: boolean; replaced?: string }> {
-    // A mint in flight would land after this and overwrite it.
-    await this.pending?.catch(() => undefined);
+    // This process's key before anything else: a mint in flight for the key
+    // this replaces sees it and stands down (mint), whichever write lands first.
     this.cached = key;
     return this.serialize(async () => {
       const file = await readCredentials(this.o.file, this.o.log);
@@ -243,30 +264,28 @@ export class KeyStore {
 
   private async mint(replacing?: string): Promise<string> {
     const minted = await this.o.api.mint(MINT_LABEL);
-    // Decided under the file queue, where adopt writes too: a key adopted
-    // (here, or by another process into the file) since replacing failed
-    // wins, and this mint is dropped rather than written over it.
-    const current = await this.serialize(async () => {
+    // Decided under the file queue, where adopt writes too: a key that took
+    // the place of replacing (none, or the key that failed) while the mint
+    // was in flight — adopted here, or stored by another process — wins,
+    // and this mint is dropped rather than written over it.
+    return this.serialize(async () => {
       const file = await readCredentials(this.o.file, this.o.log);
       const old = file.keys[this.o.baseUrl];
-      if (replacing !== undefined) {
-        if (this.cached && this.cached !== replacing) return this.cached;
-        if (old?.key && old.key !== replacing) return old.key;
-      }
+      const dropFor = (current: string): string => {
+        this.o.log?.(`fmrl-mcp: dropped key ${minted.prefix}…: ${keyPrefix(file, this.o.baseUrl, current)}… took its place first`);
+        return (this.cached = current);
+      };
+      if (this.cached && this.cached !== replacing) return dropFor(this.cached);
+      if (old?.key && old.key !== replacing) return dropFor(old.key);
       // A replaced key's ring stays, under its prefix: its pages still exist,
       // and their sealed records open only under it.
       if (old && isRing(old.ring)) fileRing(file, entryPrefix(old), old.ring);
       file.keys[this.o.baseUrl] = { key: minted.key, prefix: minted.prefix, created_at: minted.created_at };
       await writeCredentials(this.o.file, file);
-      return undefined;
+      // An adopt during the write wins too: its own write is queued behind this one.
+      if (this.cached && this.cached !== replacing) return dropFor(this.cached);
+      this.o.log?.(`fmrl-mcp: minted key ${minted.prefix}… for ${this.o.baseUrl}, saved to ${this.o.file}`);
+      return (this.cached = minted.key);
     });
-    if (current !== undefined) {
-      this.cached = current;
-      this.o.log?.(`fmrl-mcp: dropped key ${minted.prefix}…: ${prefixOf(current)}… replaced the failed key first`);
-      return current;
-    }
-    this.cached = minted.key;
-    this.o.log?.(`fmrl-mcp: minted key ${minted.prefix}… for ${this.o.baseUrl}, saved to ${this.o.file}`);
-    return minted.key;
   }
 }

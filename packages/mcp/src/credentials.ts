@@ -20,6 +20,8 @@ export interface CredentialsFile {
    * rings holds, by key prefix, the rings of keys that are not the stored
    * key for their base URL: a key from FMRL_API_KEY, and a key replaced
    * after a 401, whose pages still exist and whose records open only under it.
+   * A second ring for a prefix is filed as prefix.2, prefix.3, …, never over
+   * the first; readers take every value, whatever its name.
    */
   rings?: Record<string, string>;
 }

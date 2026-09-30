@@ -36,6 +36,8 @@ export interface FakeApi {
   rotatedAt: Map<string, string>;
   /** handoff rotates key as the account page does and returns its key code, grouped in fours; POST /keys/redeem trades it for the new key once. */
   handoff(key: string): string;
+  /** prefixOf is a key's prefix as the server reports it: the record's, which a rotation keeps while the secret is minted afresh. */
+  prefixOf(key: string): string;
   close(): Promise<void>;
 }
 
@@ -48,11 +50,6 @@ const KEY_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 function newKey(): string {
   const b = randomBytes(32);
   return "fmrl_" + Array.from(b, (x) => KEY_ALPHABET[x % 62]).join("");
-}
-/** rotatedKey is a fresh secret under key's prefix: the server keeps a key's 9-character prefix across rotations. */
-function rotatedKey(key: string): string {
-  const b = randomBytes(28);
-  return key.slice(0, 9) + Array.from(b, (x) => KEY_ALPHABET[x % 62]).join("");
 }
 /** newCode is keylife's key code: 16 random bytes as unpadded RFC 4648 base32, 26 characters. */
 function newCode(): string {
@@ -123,7 +120,7 @@ function detectFormat(content: string, encrypted: boolean, explicit?: string): s
 
 function editorFor(api: FakeApi, key: string): FakeEditor {
   const name = api.labels.get(key);
-  return { kind: "key", key: key.slice(0, 9), ...(name ? { name } : {}) };
+  return { kind: "key", key: api.prefixOf(key), ...(name ? { name } : {}) };
 }
 
 // watchCount is how many pages this key is currently watching, across every doc.
@@ -134,6 +131,8 @@ function watchCount(api: FakeApi, key: string): number {
 }
 
 export async function startFakeApi(): Promise<FakeApi> {
+  /** prefixes maps a rotated secret to its record's prefix; a minted key's prefix is its own first 9 characters. */
+  const prefixes = new Map<string, string>();
   const api: FakeApi = {
     baseUrl: "",
     keys: new Set(),
@@ -148,6 +147,7 @@ export async function startFakeApi(): Promise<FakeApi> {
     revoked: new Set(),
     rotatedAt: new Map(),
     handoff: () => "",
+    prefixOf: (key) => prefixes.get(key) ?? key.slice(0, 9),
     close: async () => {},
   };
   let minted = 0;
@@ -156,7 +156,9 @@ export async function startFakeApi(): Promise<FakeApi> {
   const handoffs = new Map<string, string>();
   /** rotate replaces key's secret, carrying everything the server keys on the key id: pages, name, quota, links and watches. */
   const rotate = (key: string): string => {
-    const fresh = rotatedKey(key);
+    // As apikey.Service.Rotate: the secret is minted afresh, and only the record keeps the prefix.
+    const fresh = newKey();
+    prefixes.set(fresh, api.prefixOf(key));
     api.keys.delete(key);
     api.keys.add(fresh);
     for (const m of [api.labels, api.publishes] as Map<string, unknown>[]) {
@@ -167,7 +169,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (d.owner === key) d.owner = fresh;
       if (d.watchers?.has(key)) { d.watchers.set(fresh, d.watchers.get(key)!); d.watchers.delete(key); }
     }
-    api.rotatedAt.set(key.slice(0, 9), isoAt(1000 + rotations++));
+    api.rotatedAt.set(api.prefixOf(key), isoAt(1000 + rotations++));
     return fresh;
   };
   api.handoff = (key) => {
@@ -358,14 +360,14 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout
       const key = auth();
       if (!key) return unauthorized();
-      const rotatedAt = api.rotatedAt.get(key.slice(0, 9));
-      return json(res, 200, { prefix: key.slice(0, 9), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), link_url: "https://fmrl.test/link/fresh" });
+      const rotatedAt = api.rotatedAt.get(api.prefixOf(key));
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), link_url: "https://fmrl.test/link/fresh" });
     }
     if (method === "POST" && url.pathname === "/api/v1/me/rotate") {
       const key = auth();
       if (!key) return unauthorized();
       const fresh = rotate(key);
-      return json(res, 200, { key: fresh, prefix: fresh.slice(0, 9), rotated_at: api.rotatedAt.get(fresh.slice(0, 9)) });
+      return json(res, 200, { key: fresh, prefix: api.prefixOf(fresh), rotated_at: api.rotatedAt.get(api.prefixOf(fresh)) });
     }
     if (method === "DELETE" && url.pathname === "/api/v1/me") {
       const key = auth();
@@ -382,7 +384,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       handoffs.delete(code);
       // keylife.Redeem: a code whose secret is no longer the key's current one (rotated again, or revoked) is spent too.
       if (!key || !api.keys.has(key) || api.revoked.has(key)) return fail(res, 404, "handoff_spent", "That key code has expired or was already used. Rotate again from your keys page.");
-      return json(res, 200, { key, prefix: key.slice(0, 9) });
+      return json(res, 200, { key, prefix: api.prefixOf(key) });
     }
     if (method === "PATCH" && url.pathname === "/api/v1/me") {
       const key = auth();
@@ -392,7 +394,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       const label = pb.label.trim();
       if ([...label].length > 64) return fail(res, 400, "bad_request", "label must be 64 characters or fewer.");
       api.labels.set(key, label);
-      return json(res, 200, { prefix: key.slice(0, 9), created_at: "2026-09-08T12:00:00Z", label, quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null });
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label, quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null });
     }
     if (method === "GET" && url.pathname === "/api/v1/inbox") {
       const key = auth();
@@ -405,7 +407,7 @@ export async function startFakeApi(): Promise<FakeApi> {
         const rev = d.rev ?? 1;
         if (rev <= seenRev) continue;
         const revisions = (d.revisions ?? [])
-          .filter((r) => r.rev > seenRev && r.editor.key !== key.slice(0, 9))
+          .filter((r) => r.rev > seenRev && r.editor.key !== api.prefixOf(key))
           .map((r) => ({ rev: r.rev, at: r.at, editor: r.editor }));
         if (revisions.length === 0) continue;
         items.push({ id: d.id, url: `https://fmrl.test/${d.id}`, private: d.encrypted === true, status: d.status ?? "live", rev, seen_rev: seenRev, revisions });

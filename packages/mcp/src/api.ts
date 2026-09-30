@@ -48,6 +48,11 @@ export class ApiError extends Error {
   }
 }
 
+/** isRevoked is the API's 401 for a key revoked for good, as opposed to one it doesn't know (a rotated-away secret answers invalid_key). */
+export function isRevoked(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401 && e.code === "key_revoked";
+}
+
 /** FmrlApi is the thin HTTP client for /api/v1. It knows nothing about keys on disk. */
 export class FmrlApi {
   private readonly root: string;

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { AutoUpdate } from "./autoupdate.js";
+import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { MARKETPLACE } from "./autoupdate.js";
 
 /**
@@ -68,6 +68,9 @@ function autoUpdateSteps(a: AutoUpdate, n: number): string[] {
   ];
 }
 
+/** disabledBy is why the auto-update pass cannot run, for a sentence that says so. */
+const disabledBy = (pass: AutoUpdatePass) => (pass.desktop ? "the Claude desktop app disables it" : `${pass.by} is set`);
+
 /**
  * pluginInstructions is the MCP server instructions sent at initialize:
  * the plugin is out of date, or it is current but nothing is keeping it
@@ -75,12 +78,18 @@ function autoUpdateSteps(a: AutoUpdate, n: number): string[] {
  * already on is told neither — which is the common case worth getting
  * right, since the switch being on is not a promise of a current plugin.
  *
+ * Where the auto-update pass cannot run (pass.runs false: the Claude
+ * desktop app, or a CLI with the auto-updater disabled), the switch does
+ * nothing, so the offer is never made and a current plugin gets no notice;
+ * the stale notice says why the commands are the way.
+ *
  * undefined when there is nothing to say, including whenever no plugin
  * launched this server (another client, a hand-written config).
  */
-export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdate): string | undefined {
+export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdate, pass?: AutoUpdatePass): string | undefined {
   if (!s) return undefined;
-  const offer = auto && !auto.on ? auto : undefined;
+  const disabled = pass !== undefined && !pass.runs;
+  const offer = auto && !auto.on && !disabled ? auto : undefined;
   if (!s.stale) {
     if (!offer) return undefined;
     return [
@@ -91,8 +100,9 @@ export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdat
     ].join("\n");
   }
   const versions = `installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}`;
+  const why = disabled ? ` Auto-update cannot run here (${disabledBy(pass)}), so this is how the plugin updates.` : "";
   return [
-    `The fmrl plugin that launched this server is out of date (${versions}). The fmrl tools are current, because npx runs the latest fmrl-mcp; the /fmrl:share skill and the plugin manifest are not.`,
+    `The fmrl plugin that launched this server is out of date (${versions}). The fmrl tools are current, because npx runs the latest fmrl-mcp; the /fmrl:share skill and the plugin manifest are not.${why}`,
     "",
     "Raise this with the user once per session, after you have finished the user's current request: never before it or instead of it.",
     `1. Say that the fmrl plugin is out of date: ${versions}.`,
@@ -108,9 +118,17 @@ export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdat
  * pluginLine is fmrl_whoami's line about the plugin, whenever there is a
  * status to report. Asked directly, it also says whether anything is
  * keeping the plugin current — which a current plugin does not imply.
+ * Where the auto-update pass cannot run, the switch's state is irrelevant
+ * and is not reported: the line says the pass does not run here, and that
+ * the plugin updates by hand or when it says it is out of date.
  */
-export function pluginLine(s: PluginStatus | undefined, auto?: AutoUpdate): string | undefined {
+export function pluginLine(s: PluginStatus | undefined, auto?: AutoUpdate, pass?: AutoUpdatePass): string | undefined {
   if (!s) return undefined;
+  if (pass !== undefined && !pass.runs) {
+    const where = pass.desktop ? "in the Claude desktop app" : `here: the auto-updater is disabled (${pass.by})`;
+    if (!s.stale) return `The fmrl plugin is up to date (plugin ${s.installed}, fmrl-mcp ${s.server}). Auto-update does not run ${where}, so it updates by hand, or when this plugin says it is out of date.`;
+    return `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}. Update it with \`${MARKETPLACE_UPDATE}\` then \`${PLUGIN_UPDATE}\`, and restart Claude Code. Auto-update does not run ${where}, so this is how it updates.`;
+  }
   const keeping = auto === undefined ? "" : auto.on
     ? " Auto-update is on for its marketplace."
     : ` Auto-update is off for its marketplace: ${AUTO_UPDATE} keeps it current from the next start.`;

@@ -31,6 +31,16 @@ describe("the plugin manifest", () => {
   });
 });
 
+describe("the READMEs' keep-current paragraph", () => {
+  const sentence = "In the Claude desktop app the switch does nothing: update by hand, or when the plugin says it is out of date.";
+  it("says the switch does nothing in the Claude desktop app, in both READMEs and in the same paragraph", () => {
+    for (const file of ["README.md", "packages/mcp/README.md"]) {
+      const line = read(file).split("\n").find((l) => l.startsWith("Keep it current: auto-update is your switch"));
+      expect(line, file).toContain(sentence);
+    }
+  });
+});
+
 describe("/fmrl:whoami", () => {
   let cached: string | undefined;
   const skillText = () => (cached ??= read("plugins/fmrl/skills/whoami/SKILL.md"));
@@ -43,6 +53,12 @@ describe("/fmrl:whoami", () => {
     expect(skillText()).toContain("claude plugin marketplace update fmrl-plugin");
     expect(skillText()).toContain("claude plugin update fmrl@fmrl-plugin");
     expect(skillText()).toMatch(/only once the user says yes/i);
+  });
+  it("does not offer the switch where the line says auto-update does not run", () => {
+    // The Claude desktop app (and a CLI with the auto-updater disabled)
+    // never runs the plugin auto-update pass; there the line says so
+    // instead of reporting the switch, and the commands are the way.
+    expect(skillText()).toMatch(/auto-update does not run/i);
   });
   it("keeps the link rules /fmrl:share keeps", () => {
     expect(skillText()).toMatch(/Never print the ring on its own/);

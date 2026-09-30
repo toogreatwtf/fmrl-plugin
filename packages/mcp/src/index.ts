@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { FmrlApi } from "./api.js";
-import { alreadyOffered, autoUpdateState, claimOffer, shouldOffer, statePath } from "./autoupdate.js";
+import { alreadyOffered, autoUpdatePass, autoUpdateState, claimOffer, shouldOffer, statePath } from "./autoupdate.js";
 import { loadConfig } from "./config.js";
 import { credentialsPath } from "./credentials.js";
 import { KeyStore } from "./keys.js";
@@ -21,6 +21,9 @@ async function main(): Promise<void> {
   // as the plugin manifest is: neither changes without a restart.
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
   const autoUpdate = pluginRoot ? await autoUpdateState() : undefined;
+  // Whether the CLI's auto-update pass can run at all: the desktop app and a
+  // CLI with the auto-updater disabled inherit that to us in the environment.
+  const pass = autoUpdatePass();
   const state = statePath();
   // Read here as well as in createServer: a manifest we cannot read sends
   // no instructions, so the one offer must not be spent on that start.
@@ -29,8 +32,8 @@ async function main(): Promise<void> {
   // starts racing, and it is made here rather than when the agent relays
   // the offer, which the server cannot see. Asking once too few beats
   // asking every day.
-  const offerAutoUpdate = shouldOffer(autoUpdate, await alreadyOffered(state), plugin !== undefined) && (await claimOffer(state));
-  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName, pluginRoot, autoUpdate, offerAutoUpdate });
+  const offerAutoUpdate = shouldOffer(autoUpdate, await alreadyOffered(state), plugin !== undefined, pass) && (await claimOffer(state));
+  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName, pluginRoot, autoUpdate, offerAutoUpdate, autoUpdatePass: pass });
   await server.connect(new StdioServerTransport());
 }
 

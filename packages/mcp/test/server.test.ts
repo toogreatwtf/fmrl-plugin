@@ -1065,6 +1065,20 @@ describe("plugin freshness", () => {
       expect(text(r)).not.toContain("plugin");
     });
   });
+  it("where the auto-update pass cannot run, both the instructions and fmrl_whoami say so", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: path.join(dir, "plugin-creds.json") });
+    const autoUpdatePass = { runs: false, desktop: true, by: "DISABLE_AUTOUPDATER" };
+    const c = await connect({ api, keys, pluginRoot: await root("0.3.0"), autoUpdate: { on: true, file: "/s.json" }, autoUpdatePass });
+    try {
+      expect(c.getInstructions()).toContain("Auto-update cannot run here (the Claude desktop app disables it)");
+      const me = await whoami(c);
+      expect(me).toContain("Auto-update does not run in the Claude desktop app");
+      expect(me).not.toContain("Auto-update is on");
+    } finally {
+      await c.close();
+    }
+  });
 });
 
 describe("key codes, rotation and revocation", () => {

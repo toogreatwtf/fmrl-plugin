@@ -13,7 +13,7 @@ import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDoc
 import { openPrivatePage } from "./opener.js";
 import { readProfile, type ProfileRead } from "./profile.js";
 import type { PageStore } from "./pages.js";
-import type { AutoUpdate } from "./autoupdate.js";
+import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { pluginInstructions, pluginLine, pluginStatus } from "./plugin.js";
 
 // The version the server reports to MCP clients is the package's, read at
@@ -36,6 +36,8 @@ export interface ServerDeps {
   autoUpdate?: AutoUpdate;
   /** offerAutoUpdate is whether this start is the one that offers the switch (autoupdate.shouldOffer). */
   offerAutoUpdate?: boolean;
+  /** autoUpdatePass is whether Claude Code's plugin auto-update pass can run in this environment (autoupdate.autoUpdatePass); undefined reads as it can. */
+  autoUpdatePass?: AutoUpdatePass;
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -335,7 +337,7 @@ export function createServer(deps: ServerDeps): McpServer {
   const plugin = pluginStatus(deps.pluginRoot, VERSION);
   // The facts reach fmrl_whoami whenever they are known; the offer only on
   // the start that makes it, so nobody is asked twice.
-  const instructions = pluginInstructions(plugin, deps.offerAutoUpdate ? deps.autoUpdate : undefined);
+  const instructions = pluginInstructions(plugin, deps.offerAutoUpdate ? deps.autoUpdate : undefined, deps.autoUpdatePass);
   const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
 
   const log = deps.log;
@@ -727,7 +729,7 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, me.prefix, ring) } : me) as MeResponse & Record<string, unknown>;
         }, { replaceRevoked: false });
-        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate)), m);
+        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass)), m);
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }

@@ -165,3 +165,82 @@ describe("pluginLine and auto-update", () => {
     expect(line).not.toMatch(/auto-update/i);
   });
 });
+
+describe("where the auto-update pass cannot run", () => {
+  const settings = "/home/x/.claude/settings.json";
+  const current = { installed: "0.6.0", server: "0.6.0", stale: false };
+  const stale = { installed: "0.5.0", server: "0.6.0", stale: true };
+  const desktop = { runs: false, desktop: true, by: "DISABLE_AUTOUPDATER" };
+  const disabled = { runs: false, desktop: false, by: "DISABLE_UPDATES" };
+  const runs = { runs: true, desktop: false };
+
+  describe("pluginLine", () => {
+    it("a current plugin: never says the switch keeps it current, and names the desktop app when that is where it is", () => {
+      const line = pluginLine(current, { on: true, file: settings }, desktop) ?? "";
+      expect(line).toContain("up to date");
+      expect(line).not.toMatch(/auto-update is on/i);
+      expect(line).toMatch(/auto-update does not run in the Claude desktop app/i);
+      expect(line).toMatch(/by hand/);
+      expect(line).toMatch(/out of date/);
+    });
+    it("a current plugin elsewhere: says the auto-updater is disabled, and by what", () => {
+      const line = pluginLine(current, { on: false, file: settings }, disabled) ?? "";
+      expect(line).toContain("up to date");
+      expect(line).toMatch(/auto-update does not run here/i);
+      expect(line).toContain("DISABLE_UPDATES");
+      expect(line).not.toContain("Enable auto-update");
+      expect(line).not.toMatch(/auto-update is off/i);
+    });
+    it("a stale plugin: the versions and the commands as today, then why the commands are the way", () => {
+      const line = pluginLine(stale, { on: true, file: settings }, desktop) ?? "";
+      expect(line).toContain("out of date: installed 0.5, fmrl-mcp is at 0.6");
+      expect(line).toContain("claude plugin marketplace update fmrl-plugin");
+      expect(line).toContain("claude plugin update fmrl@fmrl-plugin");
+      expect(line).toMatch(/auto-update does not run in the Claude desktop app/i);
+      expect(line).not.toMatch(/auto-update is on/i);
+      expect(line).not.toContain("Enable auto-update");
+    });
+    it("the switch's state is irrelevant there: on, off or unseen read the same", () => {
+      const on = pluginLine(current, { on: true, file: settings }, desktop);
+      expect(pluginLine(current, { on: false, file: settings }, desktop)).toBe(on);
+      expect(pluginLine(current, undefined, desktop)).toBe(on);
+    });
+    it("where the pass runs, the line is what it was", () => {
+      expect(pluginLine(current, { on: true, file: settings }, runs)).toBe(pluginLine(current, { on: true, file: settings }));
+      expect(pluginLine(stale, { on: false, file: settings }, runs)).toBe(pluginLine(stale, { on: false, file: settings }));
+      expect(pluginLine(current, undefined, runs)).toBe(pluginLine(current));
+    });
+  });
+
+  describe("pluginInstructions", () => {
+    it("says nothing for a current plugin: there is no switch to turn on", () => {
+      expect(pluginInstructions(current, { on: false, file: settings }, desktop)).toBeUndefined();
+      expect(pluginInstructions(current, { on: false, file: settings }, disabled)).toBeUndefined();
+    });
+    it("the stale notice carries one sentence saying why the commands are the way", () => {
+      const out = pluginInstructions(stale, undefined, desktop) ?? "";
+      expect(out).toContain("out of date");
+      expect(out).toMatch(/auto-update cannot run here \(the Claude desktop app disables it\)/i);
+      expect(out).toMatch(/this is how the plugin updates/);
+      expect(out).toContain("claude plugin marketplace update fmrl-plugin");
+      expect(out).toContain("Settings → Plugins → Fmrl → Update");
+    });
+    it("names the variable, not the desktop app, when that is what disabled it", () => {
+      const out = pluginInstructions(stale, undefined, disabled) ?? "";
+      expect(out).toMatch(/auto-update cannot run here \(DISABLE_UPDATES is set\)/i);
+      expect(out).not.toContain("desktop app disables");
+    });
+    it("never lets the offer ride along there, whatever the settings say", () => {
+      const out = pluginInstructions(stale, { on: false, file: settings }, desktop) ?? "";
+      expect(out).toContain("out of date");
+      expect(out).not.toContain("Enable auto-update");
+      expect(out).not.toContain(settings);
+    });
+    it("carries the sentence only where the pass is disabled", () => {
+      expect(pluginInstructions(stale, undefined, runs)).toBe(pluginInstructions(stale));
+      expect(pluginInstructions(stale)).not.toMatch(/cannot run here/);
+      expect(pluginInstructions(stale, { on: false, file: settings }, runs)).toBe(pluginInstructions(stale, { on: false, file: settings }));
+      expect(pluginInstructions(current, { on: false, file: settings }, runs)).toBe(pluginInstructions(current, { on: false, file: settings }));
+    });
+  });
+});

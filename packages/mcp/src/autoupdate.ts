@@ -60,6 +60,47 @@ export async function autoUpdateState(
 }
 
 /**
+ * AutoUpdatePass is whether Claude Code's plugin auto-update pass can run
+ * in the environment this server was started in. Where it cannot, the
+ * marketplace switch keeps nothing current, and saying so — or offering
+ * the switch — would be false or pointless.
+ */
+export interface AutoUpdatePass {
+  runs: boolean;
+  /** desktop: the Claude desktop app is what disabled it, so it can be named. */
+  desktop: boolean;
+  /** by is the variable that disabled the pass; absent when it runs. */
+  by?: string;
+}
+
+/**
+ * autoUpdatePass reads the environment the CLI hands its MCP servers, as
+ * Claude Code 2.1.278 reads it before its plugin auto-update pass: the pass
+ * is skipped under DISABLE_UPDATES or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+ * set to anything at all (even 0 or false), or DISABLE_AUTOUPDATER set to a
+ * flag value (1, true, yes, on — 0 and false do not count), unless
+ * FORCE_AUTOUPDATE_PLUGINS overrides them. The CLI checks them in that order,
+ * and this names the one it would. The Claude desktop app's Code tab sets
+ * DISABLE_AUTOUPDATER=1 and CLAUDE_CODE_ENTRYPOINT=claude-desktop, so the
+ * entrypoint says when the desktop app is the reason.
+ *
+ * The CLI also skips the pass when ~/.claude.json carries autoUpdates: false;
+ * that file is not read here.
+ */
+export function autoUpdatePass(env: NodeJS.ProcessEnv = process.env): AutoUpdatePass {
+  const flag = (v: string | undefined) => ["1", "true", "yes", "on"].includes((v ?? "").toLowerCase().trim());
+  const by = env.DISABLE_UPDATES
+    ? "DISABLE_UPDATES"
+    : flag(env.DISABLE_AUTOUPDATER)
+      ? "DISABLE_AUTOUPDATER"
+      : env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+        ? "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
+        : undefined;
+  if (by === undefined || env.FORCE_AUTOUPDATE_PLUGINS) return { runs: true, desktop: false };
+  return { runs: false, desktop: env.CLAUDE_CODE_ENTRYPOINT === "claude-desktop", by };
+}
+
+/**
  * statePath is fmrl's own state file, beside the credentials file so one
  * fmrl directory holds everything this server keeps. It carries no secrets:
  * only what has already been said to the user, so it is not said again.
@@ -142,11 +183,15 @@ export async function claimOffer(file: string): Promise<boolean> {
 
 /**
  * shouldOffer decides whether this start is one that would carry the
- * offer at all: the settings say it is off, and the plugin's own version
+ * offer at all: the settings say it is off, the plugin's own version
  * could be read, since a start that cannot read it sends no instructions
- * for the offer to ride in. Whether it is the first such start is
- * claimOffer's question, not this one's.
+ * for the offer to ride in, and the auto-update pass can run here, since
+ * the switch does nothing where it cannot. Whether it is the first such
+ * start is claimOffer's question, not this one's — and a start that
+ * answers false here never reaches claimOffer, so an environment where
+ * the switch would do nothing does not spend the one offer a later
+ * terminal session could make.
  */
-export function shouldOffer(auto: AutoUpdate | undefined, offered: boolean, pluginKnown = true): boolean {
-  return auto !== undefined && !auto.on && !offered && pluginKnown;
+export function shouldOffer(auto: AutoUpdate | undefined, offered: boolean, pluginKnown = true, pass?: AutoUpdatePass): boolean {
+  return auto !== undefined && !auto.on && !offered && pluginKnown && (pass?.runs ?? true);
 }

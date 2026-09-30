@@ -44,6 +44,12 @@ describe("/fmrl:whoami", () => {
     expect(skillText()).toContain("claude plugin update fmrl@fmrl-plugin");
     expect(skillText()).toMatch(/only once the user says yes/i);
   });
+  it("does not offer the switch where the line says auto-update does not run", () => {
+    // The Claude desktop app (and a CLI with the auto-updater disabled)
+    // never runs the plugin auto-update pass; there the line says so
+    // instead of reporting the switch, and the commands are the way.
+    expect(skillText()).toMatch(/auto-update does not run/i);
+  });
   it("keeps the link rules /fmrl:share keeps", () => {
     expect(skillText()).toMatch(/Never print the ring on its own/);
     expect(skillText()).toMatch(/Never open the link yourself/);

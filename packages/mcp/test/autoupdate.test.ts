@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { alreadyOffered, autoUpdateState, claimOffer, settingsPath, shouldOffer, statePath } from "../src/autoupdate.js";
+import { alreadyOffered, autoUpdatePass, autoUpdateState, claimOffer, settingsPath, shouldOffer, statePath } from "../src/autoupdate.js";
 
 /** fakeSettings writes settings (as-is when a string) and answers its directory, a CLAUDE_CONFIG_DIR. */
 async function fakeSettings(settings: unknown): Promise<string> {
@@ -114,6 +114,43 @@ describe("claimOffer", () => {
   });
 });
 
+describe("autoUpdatePass", () => {
+  it("runs in a plain environment: nothing says otherwise", () => {
+    expect(autoUpdatePass({})).toEqual({ runs: true, desktop: false });
+    expect(autoUpdatePass({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toEqual({ runs: true, desktop: false });
+  });
+  it("does not run under DISABLE_AUTOUPDATER, which the CLI reads as a flag: 1, true, yes or on", () => {
+    for (const value of ["1", "true", "YES", " on "]) {
+      expect(autoUpdatePass({ DISABLE_AUTOUPDATER: value }), value).toEqual({ runs: false, desktop: false, by: "DISABLE_AUTOUPDATER" });
+    }
+    for (const value of ["0", "false", "", "off"]) {
+      expect(autoUpdatePass({ DISABLE_AUTOUPDATER: value }), JSON.stringify(value)).toEqual({ runs: true, desktop: false });
+    }
+  });
+  it("does not run under DISABLE_UPDATES or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, which the CLI reads as set-or-not: even 0 and false count", () => {
+    for (const name of ["DISABLE_UPDATES", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]) {
+      for (const value of ["1", "0", "false"]) {
+        expect(autoUpdatePass({ [name]: value }), `${name}=${value}`).toEqual({ runs: false, desktop: false, by: name });
+      }
+      expect(autoUpdatePass({ [name]: "" }), `${name}=`).toEqual({ runs: true, desktop: false });
+    }
+  });
+  it("names the first variable the CLI would, in its order", () => {
+    expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", DISABLE_UPDATES: "1" }).by).toBe("DISABLE_UPDATES");
+    expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" }).by).toBe("DISABLE_AUTOUPDATER");
+  });
+  it("runs again under FORCE_AUTOUPDATE_PLUGINS, which overrides all three", () => {
+    expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", FORCE_AUTOUPDATE_PLUGINS: "1" })).toEqual({ runs: true, desktop: false });
+  });
+  it("names the desktop app when the entrypoint says so and the pass is disabled", () => {
+    // The Claude desktop app's Code tab runs its CLI with DISABLE_AUTOUPDATER=1
+    // and CLAUDE_CODE_ENTRYPOINT=claude-desktop; the MCP server inherits both.
+    expect(autoUpdatePass({ DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toEqual({ runs: false, desktop: true, by: "DISABLE_AUTOUPDATER" });
+    // The entrypoint alone is not a disabled pass.
+    expect(autoUpdatePass({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toEqual({ runs: true, desktop: false });
+  });
+});
+
 describe("shouldOffer", () => {
   const off = { on: false, file: "/s.json" };
   it("offers once: auto-update off and nothing said yet", () => {
@@ -131,5 +168,14 @@ describe("shouldOffer", () => {
     // offer counted here would be spent on a message nobody sees.
     expect(shouldOffer(off, false, false)).toBe(false);
     expect(shouldOffer(off, false, true)).toBe(true);
+  });
+  it("does not offer where the auto-update pass cannot run: the switch would do nothing there", () => {
+    // Not spending the once-per-machine claim here is index.ts's doing:
+    // claimOffer runs only when this says true, so a user who later runs
+    // the terminal CLI still gets the one offer there.
+    expect(shouldOffer(off, false, true, { runs: false, desktop: true, by: "DISABLE_AUTOUPDATER" })).toBe(false);
+    expect(shouldOffer(off, false, true, { runs: false, desktop: false, by: "DISABLE_UPDATES" })).toBe(false);
+    expect(shouldOffer(off, false, true, { runs: true, desktop: false })).toBe(true);
+    expect(shouldOffer(off, false, true, undefined)).toBe(true);
   });
 });

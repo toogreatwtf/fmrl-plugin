@@ -140,7 +140,7 @@ export class KeyStore {
         // A rotation or redeem, here or in another process, may have replaced
         // the key since this call read it: retry with that, and mint only
         // when the key that failed is still the current one.
-        return fn((await this.changedSince(key)) ?? (await this.mintOnce()));
+        return fn((await this.changedSince(key)) ?? (await this.mintOnce(key)));
       }
       throw e;
     }
@@ -236,22 +236,35 @@ export class KeyStore {
     });
   }
 
-  /** mintOnce collapses concurrent mint calls into a single in-flight request. */
-  private mintOnce(): Promise<string> {
-    return (this.pending ??= this.mint().finally(() => { this.pending = undefined; }));
+  /** mintOnce collapses concurrent mint calls into a single in-flight request. replacing is the key that failed, when a 401 prompted the mint. */
+  private mintOnce(replacing?: string): Promise<string> {
+    return (this.pending ??= this.mint(replacing).finally(() => { this.pending = undefined; }));
   }
 
-  private async mint(): Promise<string> {
+  private async mint(replacing?: string): Promise<string> {
     const minted = await this.o.api.mint(MINT_LABEL);
-    await this.serialize(async () => {
+    // Decided under the file queue, where adopt writes too: a key adopted
+    // (here, or by another process into the file) since replacing failed
+    // wins, and this mint is dropped rather than written over it.
+    const current = await this.serialize(async () => {
       const file = await readCredentials(this.o.file, this.o.log);
+      const old = file.keys[this.o.baseUrl];
+      if (replacing !== undefined) {
+        if (this.cached && this.cached !== replacing) return this.cached;
+        if (old?.key && old.key !== replacing) return old.key;
+      }
       // A replaced key's ring stays, under its prefix: its pages still exist,
       // and their sealed records open only under it.
-      const old = file.keys[this.o.baseUrl];
       if (old && isRing(old.ring)) fileRing(file, entryPrefix(old), old.ring);
       file.keys[this.o.baseUrl] = { key: minted.key, prefix: minted.prefix, created_at: minted.created_at };
       await writeCredentials(this.o.file, file);
+      return undefined;
     });
+    if (current !== undefined) {
+      this.cached = current;
+      this.o.log?.(`fmrl-mcp: dropped key ${minted.prefix}…: ${prefixOf(current)}… replaced the failed key first`);
+      return current;
+    }
     this.cached = minted.key;
     this.o.log?.(`fmrl-mcp: minted key ${minted.prefix}… for ${this.o.baseUrl}, saved to ${this.o.file}`);
     return minted.key;

@@ -270,6 +270,19 @@ describe("a key that changed under a call", () => {
     expect(fake.requests.filter((r) => r.path === "/api/v1/keys")).toHaveLength(1);
     expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(rotated);
   });
+  it("a rotation adopted after the 401's check but before its mint lands is kept, not minted over", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const old = await store.getKey();
+    const rotated = (await api.rotate(old)).key;
+    // The window: the 401's check has already found the old key current when the rotation is adopted.
+    const s = store as unknown as { changedSince(f: string): Promise<string | undefined> };
+    const check = s.changedSince.bind(store);
+    s.changedSince = async (f) => { const r = await check(f); void store.adopt(rotated, rotated.slice(0, 9)); return r; };
+    const me = await store.withKey((k) => api.me(k));
+    expect(me.prefix).toBe(old.slice(0, 9));
+    expect((await readCredentials(file)).keys[fake.baseUrl].key).toBe(rotated);
+    expect(await store.getKey()).toBe(rotated);
+  });
   it("another process's rotation, found in the file on a 401, is used instead of minting", async () => {
     const x = new KeyStore({ api, baseUrl: fake.baseUrl, file });
     const old = await x.getKey();

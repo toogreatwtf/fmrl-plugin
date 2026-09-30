@@ -24,6 +24,29 @@ describe("FmrlApi", () => {
     await api.delete(minted.key, pub.id);
     await expect(api.get(minted.key, pub.id)).rejects.toMatchObject({ status: 404, code: "not_found" });
   });
+  it("redeems a key code without a bearer, and the key it returns keeps the prefix", async () => {
+    const { key } = await api.mint("x");
+    const code = fake.handoff(key);
+    const r = await api.redeem(code);
+    expect(r.prefix).toBe(key.slice(0, 9));
+    expect(r.key).not.toBe(key);
+    expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: "/api/v1/keys/redeem", auth: undefined, body: { code } });
+    await expect(api.redeem(code)).rejects.toMatchObject({ status: 404, code: "handoff_spent" });
+  });
+  it("rotates the calling key: the new one works, the old one is refused, and me reports rotated_at", async () => {
+    const { key } = await api.mint("x");
+    expect(await api.me(key)).not.toHaveProperty("rotated_at");
+    const r = await api.rotate(key);
+    expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: "/api/v1/me/rotate", auth: `Bearer ${key}` });
+    expect(r).toMatchObject({ prefix: key.slice(0, 9), rotated_at: expect.any(String) });
+    await expect(api.me(key)).rejects.toMatchObject({ status: 401, code: "invalid_key" });
+    expect((await api.me(r.key)).rotated_at).toBe(r.rotated_at);
+  });
+  it("a revoked key is 401 key_revoked", async () => {
+    const { key } = await api.mint("x");
+    fake.revoked.add(key);
+    await expect(api.me(key)).rejects.toMatchObject({ status: 401, code: "key_revoked", message: "This key was revoked. Make a new one, or ask its owner." });
+  });
   it("omits format when not given", async () => {
     const { key } = await api.mint("x");
     await api.publish(key, { content: "<h1>x</h1>" });

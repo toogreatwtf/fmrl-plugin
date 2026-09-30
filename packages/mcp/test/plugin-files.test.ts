@@ -16,6 +16,15 @@ describe("the plugin manifest", () => {
   it("is in step with fmrl-mcp on major.minor, so the stale check never nags a fresh install", () => {
     expect(majorMinor(manifest.version)).toBe(majorMinor(pkg.version));
   });
+  it("names every tool, as the READMEs' tables do", () => {
+    const tools = ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_redeem", "fmrl_rotate"];
+    for (const t of tools) {
+      expect(manifest.description).toContain(`${t}`);
+      for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme)).toContain(`| \`${t}\` |`);
+    }
+    expect(read("README.md")).toContain("Any MCP client gets eleven tools:");
+    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets eleven tools:");
+  });
   it("names both slash commands", () => {
     expect(manifest.description).toContain("/fmrl:share");
     expect(manifest.description).toContain("/fmrl:whoami");

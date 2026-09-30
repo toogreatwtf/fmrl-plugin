@@ -7,7 +7,8 @@ import { isRing } from "./crypto.js";
 export interface StoredKey {
   key: string;
   prefix: string;
-  created_at: string;
+  /** created_at is when the key was minted; absent for a key redeemed from a key code for a key this machine never held. */
+  created_at?: string;
   /** ring seals this key's private pages' records. Minted the first time one is needed; it leaves this machine only inside a browser link's fragment. */
   ring?: string;
 }
@@ -19,6 +20,8 @@ export interface CredentialsFile {
    * rings holds, by key prefix, the rings of keys that are not the stored
    * key for their base URL: a key from FMRL_API_KEY, and a key replaced
    * after a 401, whose pages still exist and whose records open only under it.
+   * A second ring for a prefix is filed as prefix.2, prefix.3, …, never over
+   * the first; readers take every value, whatever its name.
    */
   rings?: Record<string, string>;
 }

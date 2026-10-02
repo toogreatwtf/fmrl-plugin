@@ -370,6 +370,8 @@ export function createServer(deps: ServerDeps): McpServer {
     return ring ? { ...p, link_url: withRing(p.link_url, await keys.prefixFor(k), ring) } : p;
   };
 
+  /** refOpts tells the id parser which host, besides fmrl.site, serves pages: the configured base (a preview, fmrl.test), so a house page's slug in a link there is read too. */
+  const refOpts = { base: api.viewerBase };
   /** remember stores what this machine may keep about a page; a store that can't be written costs a log line, never the tool call, and the line never carries the secret. */
   const remember = async (id: string, s: { key?: string; manage?: string }): Promise<void> => {
     try {
@@ -380,7 +382,7 @@ export function createServer(deps: ServerDeps): McpServer {
   };
   /** manageTokenOf is the #k= token of a publish's manage_url. */
   const manageTokenOf = (manageUrl: string): string | undefined => {
-    try { return parsePageRef(manageUrl).manage; } catch { return undefined; }
+    try { return parsePageRef(manageUrl, refOpts).manage; } catch { return undefined; }
   };
 
   /**
@@ -526,7 +528,7 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     async ({ id, rev }) => {
       let ref: ReturnType<typeof parsePageRef>;
-      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       let at = "";
       return run<PageRead>(async (k) => {
         const d = await api.get(k, ref.id);
@@ -562,7 +564,7 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     async ({ id, content, format, title, base_rev }) => {
       let ref: ReturnType<typeof parsePageRef>;
-      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       if (content.trim() === "") return fail("Nothing to save: the content is empty.");
       try {
         const v = await withKey(async (k): Promise<EditResult> => {
@@ -630,7 +632,7 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     async ({ id, seen_rev }) => {
       let ref: ReturnType<typeof parsePageRef>;
-      try { ref = parsePageRef(id); } catch (e) { return fail(errorText(e)); }
+      try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       return run<WatchRow>(async (k) => {
         const d = await api.get(k, ref.id);
         let w = await api.watch(k, ref.id, seen_rev);
@@ -695,7 +697,7 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     async ({ id }) => {
       let docId: string;
-      try { docId = parseDocId(id); } catch (e) { return fail(errorText(e)); }
+      try { docId = parseDocId(id, refOpts); } catch (e) { return fail(errorText(e)); }
       const url = `${api.viewerBase}/${docId}`;
       return run(
         async (k) => { await api.delete(k, docId); return { id: docId, url, removed: true }; },

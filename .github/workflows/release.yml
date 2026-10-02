@@ -1,0 +1,77 @@
+# The npm publish is the deploy: plugins/fmrl/.mcp.json runs `npx -y fmrl-mcp`
+# unpinned, so whatever is `latest` on npm is what every installed plugin runs
+# the next time it starts. Until this workflow the publish was a laptop step
+# (`npm login`, `npm publish`), so a fix merged to main stayed unshipped until
+# someone remembered. Now a merge to main whose packages/mcp/package.json
+# names a version npm does not yet have is the release; a merge that leaves
+# the version alone publishes nothing.
+#
+# Auth is npm Trusted Publishing: the job presents a GitHub OIDC token, npm
+# checks it against the trusted publisher configured on the package
+# (toogreatwtf/fmrl-plugin, workflow release.yml), and the publish carries a
+# provenance attestation back to this commit. No npm token lives in secrets;
+# `id-token: write` is what lets the job mint the OIDC token. Trusted
+# publishing needs npm 11.5.1+, which Node 22's bundled npm is not, hence
+# the `npm install -g npm@latest` step.
+#
+# One-time setup, on npmjs.com, package fmrl-mcp → Settings → Trusted
+# publisher → GitHub Actions: organization `toogreatwtf`, repository
+# `fmrl-plugin`, workflow filename `release.yml`, no environment. Until that
+# is done the publish step fails with 404/E401 and nothing else happens.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/mcp/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# One release at a time, and never cancel one in flight: a cancelled
+# publish is the one state that is hard to reason about.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish fmrl-mcp if the version is new
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: packages/mcp/package-lock.json
+      - name: npm 11.5.1+ for trusted publishing
+        run: npm install -g npm@latest && npm --version
+      - name: is this version already on npm?
+        id: gate
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if npm view "fmrl-mcp@${version}" version >/dev/null 2>&1; then
+            echo "fmrl-mcp@${version} is already published; nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "fmrl-mcp@${version} is not on npm yet; publishing."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - if: steps.gate.outputs.publish == 'true'
+        run: npm ci
+      # prepublishOnly (package.json) runs the build and the test suite
+      # again right before the tarball is made, so a publish never ships
+      # what the test workflow did not see.
+      - if: steps.gate.outputs.publish == 'true'
+        name: publish fmrl-mcp@${{ steps.gate.outputs.version }}
+        run: npm publish --access public

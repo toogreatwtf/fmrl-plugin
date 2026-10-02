@@ -73,6 +73,72 @@ describe("parsePageRef", () => {
   });
 });
 
+describe("parsePageRef and a reserved slug", () => {
+  // A fmrl.site link also carries the house pages internal/reserved serves
+  // at short ids: 4-11 characters of the doc alphabet, never 12 (a minted
+  // id is always 12, so the namespaces never meet). h4ndrv is the
+  // handoff-review starter profile.
+  it("accepts a bare reserved slug", () => {
+    expect(parsePageRef("h4ndrv")).toEqual({ id: "h4ndrv" });
+    expect(parsePageRef("  q7m2xk  ")).toEqual({ id: "q7m2xk" });
+  });
+
+  it("extracts a reserved slug from a fmrl.site link", () => {
+    expect(parsePageRef("https://fmrl.site/h4ndrv")).toEqual({ id: "h4ndrv" });
+    expect(parsePageRef("https://fmrl.site/h4ndrv/raw")).toEqual({ id: "h4ndrv" });
+  });
+
+  it("keeps a page key carried by a reserved slug's link", () => {
+    const key = "K".repeat(43);
+    expect(parsePageRef(`https://fmrl.site/t4ng3r#p=${key}`)).toEqual({ id: "t4ng3r", key });
+  });
+
+  it("prefers a full page id over a shorter segment on the same path", () => {
+    expect(parsePageRef("https://fmrl.site/manage/8apmpes8t6pk")).toEqual({ id: "8apmpes8t6pk" });
+    expect(parsePageRef("https://fmrl.site/edit/8apmpes8t6pk")).toEqual({ id: "8apmpes8t6pk" });
+  });
+
+  it("takes a slug from the configured base's host too, as a preview serves the same house pages", () => {
+    const base = "https://markymd-pr-27-x.a.run.app";
+    expect(parsePageRef(`${base}/h4ndrv`, { base })).toEqual({ id: "h4ndrv" });
+    expect(parsePageRef("https://fmrl.test/h4ndrv/raw", { base: "https://fmrl.test/" })).toEqual({ id: "h4ndrv" });
+    expect(parsePageRef("https://fmrl.site/h4ndrv", { base })).toEqual({ id: "h4ndrv" });
+  });
+
+  it("takes a slug only from the root of the path, where the viewer serves it", () => {
+    expect(() => parsePageRef("https://fmrl.site/manage/h4ndrv")).toThrow(/page id or a fmrl\.site URL/);
+    expect(() => parsePageRef("https://fmrl.site/edit/h4ndrv")).toThrow(/page id or a fmrl\.site URL/);
+  });
+
+  it("still refuses what is neither a page id, a slug nor a fmrl.site link", () => {
+    for (const bad of [
+      "abc", // too short for a slug
+      "H4NDRV", // not the doc alphabet
+      "h4ndrvi", // i is not in the alphabet
+      "about", // a word outside the alphabet
+      "https://fmrl.site/about",
+      "https://fmrl.site/",
+      "https://example.com/h4ndrv", // a slug is word-shaped: another host's word is not a page
+      "https://example.com/marty",
+      "https://github.com/toogreatwtf/fmrl-plugin",
+      "not a url or id",
+    ]) {
+      expect(() => parsePageRef(bad)).toThrow(/page id or a fmrl\.site URL/);
+    }
+  });
+
+  it("a minted id is still read from any host, as before", () => {
+    expect(parsePageRef("https://example.com/8apmpes8t6pk")).toEqual({ id: "8apmpes8t6pk" });
+  });
+
+  it("parseDocId accepts a reserved slug the same way", () => {
+    expect(parseDocId("h4ndrv")).toBe("h4ndrv");
+    expect(parseDocId("https://fmrl.site/h4ndrv")).toBe("h4ndrv");
+    expect(parseDocId("https://fmrl.test/h4ndrv", { base: "https://fmrl.test" })).toBe("h4ndrv");
+    expect(() => parseDocId("https://example.com/h4ndrv")).toThrow(/document id or a fmrl\.site URL/);
+  });
+});
+
 describe("parsePageRef's refusal", () => {
   it("never repeats the fragment, which may carry a page key", () => {
     const key = "Q".repeat(43);

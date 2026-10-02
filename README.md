@@ -63,6 +63,8 @@ claude --plugin-dir ./plugins/fmrl    # from the repo root; npm link in packages
 
 Pull requests open as drafts and are marked ready when `npm test` in `packages/mcp` is green; the `test` workflow (`.github/workflows/test.yml`) runs the same suite and build on every PR and on `main`, on Node 20 and 22. CodeRabbit runs on a metered allowance and `.coderabbit.yaml` skips drafts and reviews only when a PR opens or is marked ready, never on each push, so one review is spent per PR (none for `docs:` titles) and one more on `@coderabbitai review` after fixes.
 
+Releasing is a version bump. `plugins/fmrl/.mcp.json` runs `npx -y fmrl-mcp` unpinned, so the npm publish is the deploy: every installed plugin runs the new server the next time it starts. The `release` workflow (`.github/workflows/release.yml`) runs on every merge to `main` that touches `packages/mcp`; when `packages/mcp/package.json` names a version npm does not have yet, it publishes it through npm Trusted Publishing (GitHub OIDC, no token in secrets, a provenance attestation back to the commit), and when the version is already on npm it does nothing. So a release PR is the change plus `npm version <x.y.z> --no-git-tag-version` in `packages/mcp` and the same version in `plugins/fmrl/.claude-plugin/plugin.json` — the manifest tracks the server on major.minor, and the test suite checks that they agree.
+
 ## License
 
 MIT, Too Great LLC.

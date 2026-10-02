@@ -37,3 +37,31 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  upstream-fixtures:
+    name: upstream fixtures (pinned markymd)
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Report private upstream check availability
+        id: upstream-access
+        env:
+          MARKYMD_FIXTURES_TOKEN: ${{ secrets.MARKYMD_FIXTURES_TOKEN }}
+        run: |
+          if [ -n "$MARKYMD_FIXTURES_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Upstream fixture comparison skipped: read-only MARKYMD_FIXTURES_TOKEN is not configured. This is not a parity pass."
+            echo "Upstream fixture comparison **not run**: MARKYMD_FIXTURES_TOKEN is unavailable. Run the strict check with private upstream access before merging renderer changes." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Compare both fixture copies with the recorded markymd commit
+        if: steps.upstream-access.outputs.available == 'true'
+        working-directory: packages/mcp
+        env:
+          MARKYMD_FIXTURES_TOKEN: ${{ secrets.MARKYMD_FIXTURES_TOKEN }}
+        run: npm run check:fixtures

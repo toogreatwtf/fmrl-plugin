@@ -1,0 +1,299 @@
+[
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-bash\"\u003e\u003cspan class=\"tk-k\"\u003ecurl\u003c/span\u003e \u003cspan class=\"tk-a\"\u003e--fail\u003c/span\u003e \u003cspan class=\"tk-s\"\u003e\"https://fmrl.site\"\u003c/span\u003e\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```bash\ncurl --fail \"https://fmrl.site\"\n```\n",
+    "name": "bash command and flag",
+    "rawCodeBodies": [
+      "\u003cspan class=\"tk-k\"\u003ecurl\u003c/span\u003e \u003cspan class=\"tk-a\"\u003e--fail\u003c/span\u003e \u003cspan class=\"tk-s\"\u003e\u0026quot;https://fmrl.site\u0026quot;\u003c/span\u003e\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-no-such-lexer\"\u003ehello \u0026lt;b\u0026gt; \u0026amp; \"quoted\"\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```no-such-lexer\nhello \u003cb\u003e \u0026 \"quoted\"\n```\n",
+    "name": "unknown language",
+    "rawCodeBodies": [
+      "hello \u0026lt;b\u0026gt; \u0026amp; \u0026quot;quoted\u0026quot;\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode\u003eone\ntwo\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```\none\ntwo\n```\n",
+    "name": "no language",
+    "rawCodeBodies": [
+      "one\ntwo\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode\u003eone\ntwo\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "    one\n    two\n",
+    "name": "indented block",
+    "rawCodeBodies": [
+      "one\ntwo\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "codeNewlines": "HTML parsing normalizes CRLF to LF; raw entity spelling remains exact.",
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-bash\"\u003e\u003cspan class=\"tk-k\"\u003eecho\u003c/span\u003e \u003cspan class=\"tk-s\"\u003e\"hi\"\u003c/span\u003e\n\u003cspan class=\"tk-k\"\u003eecho\u003c/span\u003e ok\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```bash\necho \"hi\"\r\necho ok\r\n```\n",
+    "name": "CRLF",
+    "rawCodeBodies": [
+      "\u003cspan class=\"tk-k\"\u003eecho\u003c/span\u003e \u003cspan class=\"tk-s\"\u003e\u0026quot;hi\u0026quot;\u003c/span\u003e\n\u003cspan class=\"tk-k\"\u003eecho\u003c/span\u003e ok\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-json\"\u003e\u003cspan class=\"tk-p\"\u003e{\u003c/span\u003e\u003cspan class=\"tk-a\"\u003e\"x\"\u003c/span\u003e\u003cspan class=\"tk-p\"\u003e:\u003c/span\u003e\u003cspan class=\"tk-s\"\u003e\"\u0026lt;b\u0026gt; \u0026amp; \\\"quoted\\\"\"\u003c/span\u003e\u003cspan class=\"tk-p\"\u003e}\u003c/span\u003e\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```json\n{\"x\":\"\u003cb\u003e \u0026 \\\"quoted\\\"\"}\n```\n",
+    "name": "escaped body",
+    "rawCodeBodies": [
+      "\u003cspan class=\"tk-p\"\u003e{\u003c/span\u003e\u003cspan class=\"tk-a\"\u003e\u0026quot;x\u0026quot;\u003c/span\u003e\u003cspan class=\"tk-p\"\u003e:\u003c/span\u003e\u003cspan class=\"tk-s\"\u003e\u0026quot;\u0026lt;b\u0026gt; \u0026amp; \\\u0026quot;quoted\\\u0026quot;\u0026quot;\u003c/span\u003e\u003cspan class=\"tk-p\"\u003e}\u003c/span\u003e\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode\u003e\u0026lt;/script\u0026gt;\u0026lt;script\u0026gt;alert(1)\u0026lt;/script\u0026gt;\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```\n\u003c/script\u003e\u003cscript\u003ealert(1)\u003c/script\u003e\n```\n",
+    "name": "closing script text",
+    "rawCodeBodies": [
+      "\u0026lt;/script\u0026gt;\u0026lt;script\u0026gt;alert(1)\u0026lt;/script\u0026gt;\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-bash\"\u003e\u003cspan class=\"tk-k\"\u003eecho\u003c/span\u003e hi\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```bash\necho hi",
+    "name": "no trailing newline",
+    "rawCodeBodies": [
+      "\u003cspan class=\"tk-k\"\u003eecho\u003c/span\u003e hi\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 0,
+    "html": "\u003cscript id=\"fmrl-profile\" type=\"application/fmrl-profile+json\"\u003e{\"profile\":\"x\",\"label\":\"\\u003c/script\u003e\"}\u003c/script\u003e",
+    "md": "```fmrl-profile\n{\"profile\":\"x\",\"label\":\"\u003c/script\u003e\"}\n```\n",
+    "name": "profile",
+    "rawCodeBodies": []
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 0,
+    "html": "\u003ctable\u003e\u003cthead\u003e\u003ctr\u003e\u003cth\u003eName\u003c/th\u003e\u003cth\u003eValue\u003c/th\u003e\u003c/tr\u003e\u003c/thead\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd\u003e\u003cstrong\u003eone\u003c/strong\u003e\u003c/td\u003e\u003ctd\u003e\u003ccode\u003etwo\u003c/code\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e",
+    "md": "| Name | Value |\n| --- | --- |\n| **one** | `two` |\n",
+    "name": "GFM table",
+    "rawCodeBodies": []
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-bash\"\u003e\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```bash\n```\n",
+    "name": "bash fence with 0 blank lines",
+    "rawCodeBodies": [
+      ""
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-bash\"\u003e\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```bash\n\n```\n",
+    "name": "bash fence with 1 blank lines",
+    "rawCodeBodies": [
+      "\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-bash\"\u003e\n\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```bash\n\n\n```\n",
+    "name": "bash fence with 2 blank lines",
+    "rawCodeBodies": [
+      "\n\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-no-such-lexer\"\u003e\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```no-such-lexer\n```\n",
+    "name": "no-such-lexer fence with 0 blank lines",
+    "rawCodeBodies": [
+      ""
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-no-such-lexer\"\u003e\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```no-such-lexer\n\n```\n",
+    "name": "no-such-lexer fence with 1 blank lines",
+    "rawCodeBodies": [
+      "\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-no-such-lexer\"\u003e\n\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```no-such-lexer\n\n\n```\n",
+    "name": "no-such-lexer fence with 2 blank lines",
+    "rawCodeBodies": [
+      "\n\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode\u003e\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```\n```\n",
+    "name": "unlabelled fence with 0 blank lines",
+    "rawCodeBodies": [
+      ""
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode\u003e\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```\n\n```\n",
+    "name": "unlabelled fence with 1 blank lines",
+    "rawCodeBodies": [
+      "\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode\u003e\n\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```\n\n\n```\n",
+    "name": "unlabelled fence with 2 blank lines",
+    "rawCodeBodies": [
+      "\n\n"
+    ]
+  },
+  {
+    "assertions": [
+      "structure",
+      "token-spans",
+      "profile-script",
+      "copy-hooks"
+    ],
+    "copyHooks": 1,
+    "html": "\u003cpre\u003e\u003ccode class=\"language-no-such-lexer\"\u003e\u0026lt;b\u0026gt; \u0026amp; \"quoted\" 'single'\n\u003c/code\u003e\u003c/pre\u003e",
+    "md": "```no-such-lexer\n\u003cb\u003e \u0026 \"quoted\" 'single'\n```\n",
+    "name": "raw quote entity spelling",
+    "rawCodeBodies": [
+      "\u0026lt;b\u0026gt; \u0026amp; \u0026quot;quoted\u0026quot; 'single'\n"
+    ]
+  }
+]

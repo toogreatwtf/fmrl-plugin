@@ -1,0 +1,30 @@
+{
+  "repository": "toogreatwtf/markymd",
+  "revision": "a1a996fb36f5297e3844ce1b2071c20b5a57b6b2",
+  "files": {
+    "canvas-assets.json": {
+      "source": "static/canvas-assets.json",
+      "sha256": "d94b1bb0c58ba9fc45670ec586d5cc70510e4ba8107cce8667e218f492989c5a"
+    },
+    "canvas.wasm.gz": {
+      "source": "static/canvas.wasm.gz",
+      "sha256": "f28168e88d069a4305e1b37b74abb914b508c85b5f5a3415d136cb77e5c8c5a3"
+    },
+    "wasm_exec.js": {
+      "source": "static/canvas-runtime.js",
+      "sha256": "0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14"
+    },
+    "heading-ids.json": {
+      "source": "internal/render/testdata/heading-ids.json",
+      "sha256": "7724f98b60079ec48c997cbec087e4f23eaf22fb8a30ca6d6747eb7c4a085212"
+    },
+    "canvas-parity.json": {
+      "source": "internal/render/testdata/canvas-parity.json",
+      "sha256": "171e7b0ea04995ce1e46d804a2b268d39f933043f8e7d086016c0a816bca0c16"
+    },
+    "THIRD-PARTY-LICENSES.txt": {
+      "source": "static/canvas-LICENSES.txt",
+      "sha256": "c8e0a68bd2aa0b416a91eaaebb13a63dbb384e67b00da258efb708b2571e11ad"
+    }
+  }
+}

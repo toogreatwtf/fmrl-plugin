@@ -1,6 +1,6 @@
 {
   "name": "fmrl-mcp",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "MCP server for fmrl.site: publish a page from any agent and get a link.",
   "license": "MIT",
   "type": "module",
@@ -16,10 +16,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs && node scripts/smoke-dist.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "check:fixtures": "node scripts/check-fixtures.mjs"
   },
   "repository": {
     "type": "git",
@@ -40,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "parse5": "^7.3.0",
     "tsx": "^4.23.13",
     "typescript": "^5.9.0",
     "vitest": "^3.0.0"

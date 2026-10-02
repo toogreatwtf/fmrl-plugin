@@ -1,18 +1,6 @@
 import { Marked, type Tokens } from "marked";
 
-// Mirrors render.markdownCSS in the server's internal/render/document.go and
-// MARKDOWN_CSS in static/fmrl.js. Drift is cosmetic; keep all three the same.
-const MARKDOWN_CSS = ':root{color-scheme:light dark}' +
-  'body{margin:0;padding:2rem 1.25rem;max-width:72ch;margin-inline:auto;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1a1a1a;background:#fff}' +
-  '@media (prefers-color-scheme:dark){body{color:#e6e6e6;background:#111}}' +
-  'h1,h2,h3{line-height:1.25}' +
-  'pre{overflow:auto;padding:1rem;background:rgba(127,127,127,.12);border-radius:6px}' +
-  'code{font:.92em ui-monospace,SFMono-Regular,Menlo,monospace}' +
-  'img{max-width:100%}' +
-  'table{border-collapse:collapse}' +
-  'td,th{border:1px solid rgba(127,127,127,.4);padding:.35rem .6rem}' +
-  'blockquote{margin:0;padding-left:1rem;border-left:3px solid rgba(127,127,127,.5);color:inherit;opacity:.85}' +
-  'a{color:#0b63c4}';
+import { canvasAssets, highlightCode } from "./highlight.js";
 
 /**
  * looksLikeHTML is the server's share.DetectFormat: trim whitespace, strip a
@@ -48,6 +36,23 @@ export function slug(text: string): string {
 // usedIds is the heading ids toHTML has handed out in the document it is
 // rendering; marked's renderer is synchronous, so one set per call is safe.
 let usedIds = new Set<string>();
+// Bound synchronous lexer work before it reaches the MCP event loop. Large
+// blocks remain complete and copyable, with escaped text instead of tokens.
+const MAX_FENCE_HIGHLIGHT_BYTES = 32 * 1024;
+const MAX_DOCUMENT_HIGHLIGHT_BYTES = 128 * 1024;
+let highlightBytes = 0;
+
+// marked removes one final newline from fence text and represents both an
+// empty fence and one blank line as "". Inspect only that ambiguous raw fence.
+function codeBody(token: Tokens.Code): string {
+  if (token.text) return token.text + "\n";
+  if (token.codeBlockStyle === 'indented') return '';
+  const opener = /^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
+  if (!opener) return '';
+  const remaining = token.raw.slice(opener[0].length);
+  const close = new RegExp('^ {0,3}' + opener[1][0] + '{' + opener[1].length + ',}[ \t]*(?:\\n|$)');
+  return !remaining || close.test(remaining) ? '' : "\n";
+}
 
 const md = new Marked({
   gfm: true,
@@ -56,7 +61,18 @@ const md = new Marked({
     // marked's lang is the whole info string; only its first word names the fence.
     code(token: Tokens.Code) {
       const lang = /^\S*/.exec(token.lang ?? "")?.[0];
-      return lang === "fmrl-profile" ? profileScript(token.text) : false;
+      if (lang === "fmrl-profile") return profileScript(token.text);
+      const body = codeBody(token);
+      let html = escapeHTML(body);
+      const bytes = Buffer.byteLength(body, 'utf8');
+      if (lang && bytes <= MAX_FENCE_HIGHLIGHT_BYTES && highlightBytes + bytes <= MAX_DOCUMENT_HIGHLIGHT_BYTES) {
+        highlightBytes += bytes;
+        try {
+          const highlighted = highlightCode(lang, body);
+          if (typeof highlighted === 'string') html = highlighted;
+        } catch { /* Preserve readable, escaped code when the renderer fails. */ }
+      }
+      return `<pre><code${lang ? ` class="language-${escapeHTML(lang)}"` : ""}>${html}</code></pre>\n`;
     },
     // Every heading gets the id markymd's Go renderer and static/fmrl.js give
     // it (test/fixtures/heading-ids.json, copied from markymd): the slug of
@@ -76,6 +92,7 @@ const md = new Marked({
 /** toHTML renders GitHub Flavored Markdown to an HTML fragment; a fmrl-profile fence becomes the inert profile script, and each heading carries its section id. */
 export function toHTML(markdown: string): string {
   usedIds = new Set();
+  highlightBytes = 0;
   return md.parse(markdown) as string;
 }
 
@@ -175,7 +192,7 @@ export function documentTitle(html: string): string {
 /** wrapDocument is render.WrapDocument: a complete document with the Markdown stylesheet inlined. */
 export function wrapDocument(body: string, title: string): string {
   return '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' +
-    escapeHTML(title || "Document") + "</title>\n<style>" + MARKDOWN_CSS + "</style>\n</head>\n<body>\n" + body + "\n</body>\n</html>\n";
+    escapeHTML(title || "Document") + "</title>\n<style>" + canvasAssets.css + "</style>\n</head>\n<body>\n" + body + "\n<script>" + canvasAssets.copyJS + "</script>\n</body>\n</html>\n";
 }
 
 /**

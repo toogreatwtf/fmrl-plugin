@@ -36,6 +36,23 @@ export function slug(text: string): string {
 // usedIds is the heading ids toHTML has handed out in the document it is
 // rendering; marked's renderer is synchronous, so one set per call is safe.
 let usedIds = new Set<string>();
+// Bound synchronous lexer work before it reaches the MCP event loop. Large
+// blocks remain complete and copyable, with escaped text instead of tokens.
+const MAX_FENCE_HIGHLIGHT_BYTES = 32 * 1024;
+const MAX_DOCUMENT_HIGHLIGHT_BYTES = 128 * 1024;
+let highlightBytes = 0;
+
+// marked removes one final newline from fence text and represents both an
+// empty fence and one blank line as "". Inspect only that ambiguous raw fence.
+function codeBody(token: Tokens.Code): string {
+  if (token.text) return token.text + "\n";
+  if (token.codeBlockStyle === 'indented') return '';
+  const opener = /^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
+  if (!opener) return '';
+  const remaining = token.raw.slice(opener[0].length);
+  const close = new RegExp('^ {0,3}' + opener[1][0] + '{' + opener[1].length + ',}[ \t]*(?:\\n|$)');
+  return !remaining || close.test(remaining) ? '' : "\n";
+}
 
 const md = new Marked({
   gfm: true,
@@ -45,8 +62,16 @@ const md = new Marked({
     code(token: Tokens.Code) {
       const lang = /^\S*/.exec(token.lang ?? "")?.[0];
       if (lang === "fmrl-profile") return profileScript(token.text);
-      const body = token.text.replace(/\n$/, "") + "\n";
-      const html = lang ? highlightCode(lang, body) : escapeHTML(body);
+      const body = codeBody(token);
+      let html = escapeHTML(body);
+      const bytes = Buffer.byteLength(body, 'utf8');
+      if (lang && bytes <= MAX_FENCE_HIGHLIGHT_BYTES && highlightBytes + bytes <= MAX_DOCUMENT_HIGHLIGHT_BYTES) {
+        highlightBytes += bytes;
+        try {
+          const highlighted = highlightCode(lang, body);
+          if (typeof highlighted === 'string') html = highlighted;
+        } catch { /* Preserve readable, escaped code when the renderer fails. */ }
+      }
       return `<pre><code${lang ? ` class="language-${escapeHTML(lang)}"` : ""}>${html}</code></pre>\n`;
     },
     // Every heading gets the id markymd's Go renderer and static/fmrl.js give
@@ -67,6 +92,7 @@ const md = new Marked({
 /** toHTML renders GitHub Flavored Markdown to an HTML fragment; a fmrl-profile fence becomes the inert profile script, and each heading carries its section id. */
 export function toHTML(markdown: string): string {
   usedIds = new Set();
+  highlightBytes = 0;
   return md.parse(markdown) as string;
 }
 

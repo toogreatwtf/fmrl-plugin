@@ -142,6 +142,18 @@ describe("tools", () => {
     expect(junk.isError).toBe(true);
     expect(text(junk)).toMatch(/not a page id/);
   });
+  it("fmrl_get asks the server about a house page's slug instead of refusing it at the door", async () => {
+    // h4ndrv is the handoff-review starter at https://fmrl.site/h4ndrv; the
+    // fake knows no such page, so the answer is the server's, not the parser's.
+    // The fake's base is a 127.0.0.1 address, so a link on it stands in for a preview's.
+    for (const id of ["h4ndrv", `${fake.baseUrl}/h4ndrv`, "https://fmrl.site/h4ndrv"]) {
+      const r = await call("fmrl_get", { id });
+      expect(r.isError).toBe(true);
+      expect(text(r)).not.toMatch(/not a page id/);
+      expect(text(r)).toBe("No page with that id.");
+    }
+    expect(fake.requests.filter((q) => q.path === "/api/v1/docs/h4ndrv")).toHaveLength(3);
+  });
   it("fmrl_whoami reports the quota", async () => {
     const r = await call("fmrl_whoami");
     expect(r.isError).toBeFalsy();

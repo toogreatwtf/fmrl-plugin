@@ -208,7 +208,14 @@ class EditConflict extends Error {
   constructor(public readonly latest: number) { super(CONFLICT(latest)); }
 }
 
-type EditResult = { id: string; url: string; rev: number };
+/** EditResult is fmrl_edit's answer; watching is whether this key watches the page after the edit (the server adds the watch). */
+type EditResult = { id: string; url: string; rev: number; watching: boolean };
+
+function editText(v: EditResult): string {
+  const saved = `Saved revision ${v.rev} of ${v.url}.`;
+  if (v.watching) return `${saved} You are watching it: revisions other editors make show up in fmrl_inbox.`;
+  return `${saved} Not watched: the page could not be added to this key's watches, usually because the key watches the most pages it may, so replies will not show up in fmrl_inbox. Call fmrl_watch to try again; it says whether the key is at its limit.`;
+}
 
 export const LIST_EMPTY = "This key has no pages right now; removed and expired pages are not listed.";
 
@@ -305,8 +312,8 @@ const readOutput = {
   profile_error: z.string().optional(),
 };
 const editOutput = {
-  // On a conflict the tool fails with only id and latest_rev; url and rev come with every saved edit.
-  id: z.string(), url: z.string().optional(), rev: z.number().optional(), latest_rev: z.number().optional(),
+  // On a conflict the tool fails with only id and latest_rev; url, rev and watching come with every saved edit.
+  id: z.string(), url: z.string().optional(), rev: z.number().optional(), watching: z.boolean().optional(), latest_rev: z.number().optional(),
 };
 const listOutput = { docs: z.array(z.object(pageOutput)) };
 const watchOutput = {
@@ -552,7 +559,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_edit",
     {
       title: "Edit a fmrl.site page",
-      description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it.",
+      description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
       inputSchema: {
         id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=), which are remembered here once they work."),
         content: z.string().min(1).describe("The page's new HTML or Markdown (2 MiB at most)."),
@@ -609,9 +616,9 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           if (!u) throw new Error(MANAGE_HINT(new URL(d.url).origin, ref.id));
           if (used !== undefined && used === ref.manage && used !== stored.manage) await remember(ref.id, { manage: used });
-          return { id: u.id, url: pageKey ? `${u.url}#p=${pageKey}` : u.url, rev: u.rev };
+          return { id: u.id, url: pageKey ? `${u.url}#p=${pageKey}` : u.url, rev: u.rev, watching: u.watching };
         });
-        return ok(`Saved revision ${v.rev} of ${v.url}`, v);
+        return ok(editText(v), v);
       } catch (e) {
         if (e instanceof EditConflict) return { ...fail(e.message), structuredContent: { id: ref.id, latest_rev: e.latest } };
         return fail(errorText(e));
@@ -623,7 +630,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_watch",
     {
       title: "Watch a fmrl.site page",
-      description: "Watch a page so revisions other editors make show up in fmrl_inbox. Pass the link you were handed; its key stays on this machine. Pages you publish are watched already.",
+      description: "Watch a page so revisions other editors make show up in fmrl_inbox. Pass the link you were handed; its key stays on this machine. For a page you read and do not edit: pages you publish or edit are watched already.",
       inputSchema: {
         id: z.string().min(1).describe("A page id or any fmrl.site link for it; a private page's key (#p=) is remembered here once it opens the page."),
         seen_rev: z.number().int().min(0).optional().describe("The revision you have read through; later ones show up in fmrl_inbox. Leave out to start from the latest (or keep where an existing watch is)."),

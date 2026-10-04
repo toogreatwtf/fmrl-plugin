@@ -27,7 +27,7 @@ export interface RevisionContent { rev: number; at: string; size: number; sha256
 /** RevisionMeta is one row of a page's revision list, without the body. */
 export interface RevisionMeta { rev: number; at: string; size: number; sha256: string; title: string; source: string; editor: Editor }
 /** UpdateResponse mirrors the server's updateResponse (internal/handler/api_revisions.go). */
-export interface UpdateResponse { id: string; url: string; rev: number; expires_at: string | null; status: string }
+export interface UpdateResponse { id: string; url: string; rev: number; expires_at: string | null; status: string; watching: boolean }
 /** WatchResponse is what watching, unwatching's sibling PUT, and marking an inbox item seen all answer with. */
 export interface WatchResponse { id: string; url: string; private: boolean; rev: number; seen_rev: number }
 /** InboxItem is one page with unread revisions: only revisions made by a key other than the watcher's own. */

@@ -353,8 +353,13 @@ export async function startFakeApi(): Promise<FakeApi> {
       d.format = format;
       d.size = size;
       if (ub.title !== undefined) d.title = ub.title;
+      // An edit watches the page for the editing key at the revision it just
+      // made, as the server does: a watch already there advances, a new one
+      // is added unless the key is at its cap, and the edit stands either way.
+      const watching = (d.watchers?.has(key) ?? false) || watchCount(api, key) < api.watchLimit;
+      if (watching) (d.watchers = d.watchers ?? new Map()).set(key, nextRev);
       const pinned = d.title === "PINNED";
-      return json(res, 200, { id: d.id, url: `https://fmrl.test/${d.id}`, rev: d.rev, expires_at: pinned ? null : "2026-09-15T12:00:00Z", status: d.status ?? "live" });
+      return json(res, 200, { id: d.id, url: `https://fmrl.test/${d.id}`, rev: d.rev, expires_at: pinned ? null : "2026-09-15T12:00:00Z", status: d.status ?? "live", watching });
     }
     if (method === "GET" && url.pathname === "/api/v1/me") {
       if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout

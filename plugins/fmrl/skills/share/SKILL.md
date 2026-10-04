@@ -16,7 +16,7 @@ Use this when the user asks to share, send, hand off, publish, or get a link for
 
 ## Reading a page you were handed
 
-Call `fmrl_get` with the whole link — the part after `#` included — to read a page someone handed you. For a page you will keep working on, `fmrl_watch` it, so revisions other editors make show up in `fmrl_inbox`.
+Call `fmrl_get` with the whole link — the part after `#` included — to read a page someone handed you. Editing a page with `fmrl_edit` watches it, so revisions other editors make show up in `fmrl_inbox`; `fmrl_watch` is for a page you read and do not edit.
 
 ## Starting a handoff canvas
 

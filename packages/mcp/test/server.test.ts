@@ -675,7 +675,7 @@ describe("fmrl_edit", () => {
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_edit")!;
-    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it.");
+    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
   });
   it("publishing remembers the page's manage token, and a private page's key", async () => {
     const pub = await call("fmrl_publish", { content: "# Open" });
@@ -690,11 +690,35 @@ describe("fmrl_edit", () => {
     const id = (pub.structuredContent as { id: string }).id;
     const r = await call("fmrl_edit", { id, content: "# Two", format: "md", title: "Two", base_rev: 1 });
     expect(r.isError).toBeFalsy();
-    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2 });
+    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2, watching: true });
     expect(puts()).toHaveLength(1);
     expect(puts()[0]).toMatchObject({ path: `/api/v1/docs/${id}`, body: { content: "# Two", format: "md", title: "Two", base_rev: 1 } });
     const got = await call("fmrl_get", { id });
     expect(got.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two" });
+  });
+  it("an edit watches the page: the editor hears the next revision with no fmrl_watch call", async () => {
+    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
+    const b = await second();
+    const r = await b.call("fmrl_edit", { id: manage_url, content: "# Edited by B", base_rev: 1 });
+    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2, watching: true });
+    expect(text(r)).toBe(`Saved revision 2 of https://fmrl.test/${id}. You are watching it: revisions other editors make show up in fmrl_inbox.`);
+    expect(((await b.call("fmrl_inbox")).structuredContent as { items: unknown[] }).items).toEqual([]);
+    await call("fmrl_edit", { id, content: "# Answered by A", base_rev: 2 });
+    const inbox = (await b.call("fmrl_inbox")).structuredContent as { items: { id: string; rev: number; seen_rev: number }[] };
+    expect(inbox.items).toHaveLength(1);
+    expect(inbox.items[0]).toMatchObject({ id, rev: 3, seen_rev: 2 });
+    expect(fake.requests.filter((q) => q.method === "PUT" && q.path.endsWith("/watch"))).toHaveLength(0);
+  });
+  it("an edit by a key at its watch limit is saved, and says the page is not watched", async () => {
+    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
+    const b = await second();
+    fake.watchLimit = 0;
+    const r = await b.call("fmrl_edit", { id: manage_url, content: "# Edited by B", base_rev: 1 });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2, watching: false });
+    expect(text(r)).toBe(`Saved revision 2 of https://fmrl.test/${id}. Not watched: the page could not be added to this key's watches, usually because the key watches the most pages it may, so replies will not show up in fmrl_inbox. Call fmrl_watch to try again; it says whether the key is at its limit.`);
   });
   it("another key edits with the manage link passed once, then by bare id, the token remembered only once it worked", async () => {
     const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
@@ -711,7 +735,7 @@ describe("fmrl_edit", () => {
 
     const once = await b.call("fmrl_edit", { id: manage_url, content: "# Edited by B", base_rev: 1 });
     expect(once.isError).toBeFalsy();
-    expect(once.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2 });
+    expect(once.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2, watching: true });
     expect(puts().at(-1)?.manageToken).toBe(manageTok(manage_url));
     expect(await b.pages.get(id)).toEqual({ manage: manageTok(manage_url) });
 
@@ -728,7 +752,7 @@ describe("fmrl_edit", () => {
 
     const r = await b.call("fmrl_edit", { id: `https://fmrl.test/manage/${id}#p=${key}&k=${manageTok(manage_url)}`, content: "# Plan v2\n\nsecond", format: "md", title: "Plan v2", base_rev: 1 });
     expect(r.isError).toBeFalsy();
-    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}#p=${key}`, rev: 2 });
+    expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}#p=${key}`, rev: 2, watching: true });
     const put = puts().at(-1)!;
     const body = put.body as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(["base_rev", "content", "encrypted", "format"]);
@@ -751,7 +775,7 @@ describe("fmrl_edit", () => {
     await writeFile(pagesFile, JSON.stringify({ version: 1, pages: { [fake.baseUrl]: { [id]: { manage: manageTok(manage_url) } } } }));
     const r = await call("fmrl_edit", { id, content: "# Mine, again", base_rev: 1 });
     expect(r.isError).toBeFalsy();
-    expect(r.structuredContent).toEqual({ id, url, rev: 2 });
+    expect(r.structuredContent).toEqual({ id, url, rev: 2, watching: true });
     const put = puts().at(-1)!;
     expect(put.manageToken).toBeUndefined();
     expect(put.body).not.toHaveProperty("sealed");
@@ -893,7 +917,7 @@ const patches = () => fake.requests.filter((q) => q.method === "PATCH" && q.path
 describe("fmrl_watch and fmrl_inbox", () => {
   it("describe the tools as the brief words them", async () => {
     const tools = (await client.listTools()).tools;
-    expect(tools.find((t) => t.name === "fmrl_watch")!.description).toBe("Watch a page so revisions other editors make show up in fmrl_inbox. Pass the link you were handed; its key stays on this machine. Pages you publish are watched already.");
+    expect(tools.find((t) => t.name === "fmrl_watch")!.description).toBe("Watch a page so revisions other editors make show up in fmrl_inbox. Pass the link you were handed; its key stays on this machine. For a page you read and do not edit: pages you publish or edit are watched already.");
     expect(tools.find((t) => t.name === "fmrl_inbox")!.description).toBe("Pages you watch that someone else has revised since you last read them, newest first. Read each with fmrl_get (which marks it seen). A page that was removed or expired appears once.");
   });
   it("watching through a link with #p= remembers the key once it opens the page, and says it can open it", async () => {

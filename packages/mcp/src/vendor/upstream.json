@@ -1,14 +1,14 @@
 {
   "repository": "toogreatwtf/markymd",
-  "revision": "a1a996fb36f5297e3844ce1b2071c20b5a57b6b2",
+  "revision": "8fae4348d3d45c0d840ddc15c8478ba3c92bf2c8",
   "files": {
     "canvas-assets.json": {
       "source": "static/canvas-assets.json",
-      "sha256": "d94b1bb0c58ba9fc45670ec586d5cc70510e4ba8107cce8667e218f492989c5a"
+      "sha256": "6bd8835c81389d1c3b47c28d58e17da490687c59ffd478056b5e7111dbe8ee83"
     },
     "canvas.wasm.gz": {
       "source": "static/canvas.wasm.gz",
-      "sha256": "f28168e88d069a4305e1b37b74abb914b508c85b5f5a3415d136cb77e5c8c5a3"
+      "sha256": "aac1926316325d823d260d1b81b1f8750305a8b969afb15a7b114947c8665b10"
     },
     "wasm_exec.js": {
       "source": "static/canvas-runtime.js",

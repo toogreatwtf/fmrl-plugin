@@ -44,3 +44,19 @@ it.each([1, 2, 3])('preserves %s trailing blank fence lines byte-for-byte', (lin
   expect(toHTML('```\n' + text + '```')).toBe('<pre><code>' + text + '</code></pre>\n');
   expect(toHTML('```\none\n' + text + '```')).toBe('<pre><code>one\n' + text + '</code></pre>\n');
 });
+
+it.each([
+  { name: 'template strings', source: 'const message = `hello\nworld`;\n' },
+  { name: 'block comments', source: '/* first\nsecond */\n' },
+])('keeps multiline $name token spans on one line without changing code text', ({ source }) => {
+  const fragment: any = parseFragment(toHTML('```js\n' + source + '```\n'));
+  const code = fragment.childNodes.find((node: any) => node.tagName === 'pre')
+    .childNodes.find((node: any) => node.tagName === 'code');
+  const text = (node: any): string => node.nodeName === '#text'
+    ? node.value : (node.childNodes ?? []).map(text).join('');
+  const spans = code.childNodes.filter((node: any) => node.tagName === 'span');
+
+  expect(text(code)).toBe(source);
+  expect(spans.length).toBeGreaterThan(0);
+  for (const span of spans) expect(text(span)).not.toMatch(/[\r\n]/);
+});

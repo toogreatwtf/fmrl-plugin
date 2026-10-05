@@ -740,7 +740,7 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, me.prefix, ring) } : me) as MeResponse & Record<string, unknown>;
         }, { replaceRevoked: false });
-        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, /codex/i.test(server.server.getClientVersion()?.name ?? "") ? "codex" : deps.pluginSurface)), m);
+        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface)), m);
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }

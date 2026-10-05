@@ -1094,6 +1094,17 @@ describe("plugin freshness", () => {
   };
   const whoami = async (c: Client) => text((await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult);
 
+  it("startup and whoami keep explicit launcher evidence ahead of a client display name", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys, pluginRoot: await root("0.3.0"), pluginSurface: "claude-desktop" }, "custom-codex-client");
+    try {
+      expect(c.getInstructions()).toContain("the Claude desktop app's plugin settings");
+      const reply = await whoami(c);
+      expect(reply).toContain("the Claude desktop app's plugin settings");
+      expect(reply).not.toContain("Codex's plugin settings");
+    } finally { await c.close(); }
+  });
   it.each(["codex", "unknown", "claude-desktop"] as const)("%s receives neutral or matching guidance through MCP", async surface => {
     const api = new FmrlApi(fake.baseUrl);
     const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });

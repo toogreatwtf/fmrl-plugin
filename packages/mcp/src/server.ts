@@ -14,7 +14,7 @@ import { openPrivatePage } from "./opener.js";
 import { readProfile, type ProfileRead } from "./profile.js";
 import type { PageStore } from "./pages.js";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
-import { pluginInstructions, pluginLine, pluginStatus } from "./plugin.js";
+import { pluginInstructions, pluginLine, pluginStatus, type PluginSurface } from "./plugin.js";
 
 // The version the server reports to MCP clients is the package's, read at
 // runtime, so a release bump in package.json cannot leave this behind.
@@ -30,8 +30,9 @@ export interface ServerDeps {
   log?: (line: string) => void;
   /** agentName is FMRL_AGENT_NAME: the name this key's revisions carry, replacing any other. Without it, the MCP client's own name fills an empty one. */
   agentName?: string;
-  /** pluginRoot is CLAUDE_PLUGIN_ROOT: set when the Claude Code plugin launched this server. */
+  /** pluginRoot is CLAUDE_PLUGIN_ROOT: set when the installed plugin manifest is available. */
   pluginRoot?: string;
+  pluginSurface?: PluginSurface;
   /** autoUpdate is what the user's settings say about keeping this marketplace current; undefined when they say nothing. */
   autoUpdate?: AutoUpdate;
   /** offerAutoUpdate is whether this start is the one that offers the switch (autoupdate.shouldOffer). */
@@ -236,12 +237,13 @@ function listText(rows: PageRow[]): string {
 export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
 function meText(m: MeResponse, ringLine: string, plugin: string | undefined): string {
   const q = m.quota.publishes;
-  const linked = m.linked_at ? `Linked to a browser on ${m.linked_at}.` : "Not linked to any browser yet.";
+  const linked = m.linked_at ? `A browser linked on ${m.linked_at}. Current browser and account status are unknown.` : "No browser link has been recorded. Current browser and account status are unknown.";
   const named = m.label ? `Named ${m.label}: the revisions this key makes carry that name.` : UNNAMED_LINE;
   const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, linked];
   if (m.rotated_at) lines.push(`Last rotated ${m.rotated_at}.`);
-  if (m.link_url) lines.push(`To see this key's pages on fmrl.site, open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)}`);
-  return [...lines, ringLine, ...(plugin ? [plugin] : []), SEVEN_DAYS].join("\n");
+  if (m.link_url) lines.push(`Browser: Link your browser to see your canvases: open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)} If sign-in is available there, you can optionally connect this plugin to your account to find its canvases on other devices.`);
+  else lines.push("No browser link was supplied. If you have a previously linked browser, use it to view your canvases; this result cannot connect a new browser.");
+  return [...lines, `${ringLine} Signing in does not back up private-page keys.`, ...(plugin ? [plugin] : [])].join("\n");
 }
 
 /** revokedText says a key was revoked, and how this machine gets a new one: a stored key is replaced by the next tool that needs one; FMRL_API_KEY never is, and without it the file's key, if any, is used. */
@@ -344,7 +346,7 @@ export function createServer(deps: ServerDeps): McpServer {
   const plugin = pluginStatus(deps.pluginRoot, VERSION);
   // The facts reach fmrl_whoami whenever they are known; the offer only on
   // the start that makes it, so nobody is asked twice.
-  const instructions = pluginInstructions(plugin, deps.offerAutoUpdate ? deps.autoUpdate : undefined, deps.autoUpdatePass);
+  const instructions = pluginInstructions(plugin, deps.offerAutoUpdate ? deps.autoUpdate : undefined, deps.autoUpdatePass, deps.pluginSurface);
   const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
 
   const log = deps.log;
@@ -717,7 +719,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_whoami",
     {
       title: "This fmrl.site key",
-      description: "The key's prefix, how many of this month's free publishes it has used, whether a browser is linked to it, a fresh link to link one (it carries the key ring), where the key ring is kept, and, when the Claude Code plugin launched this server, whether that plugin is up to date.",
+      description: "The key's prefix, how many of this month's free publishes it has used, recorded browser-link history, a browser link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
       inputSchema: {},
       outputSchema: meOutput,
     },
@@ -738,7 +740,7 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, me.prefix, ring) } : me) as MeResponse & Record<string, unknown>;
         }, { replaceRevoked: false });
-        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass)), m);
+        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, /codex/i.test(server.server.getClientVersion()?.name ?? "") ? "codex" : deps.pluginSurface)), m);
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }

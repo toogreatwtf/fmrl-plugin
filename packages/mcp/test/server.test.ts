@@ -4,7 +4,7 @@ import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FmrlApi } from "../src/api.js";
 import { readCredentials, writeCredentials } from "../src/credentials.js";
 import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/crypto.js";
@@ -170,12 +170,12 @@ describe("tools", () => {
   });
   it("fmrl_whoami says whether a browser is linked and always offers a link", async () => {
     const r = await call("fmrl_whoami");
-    expect(text(r)).toContain("Not linked to any browser yet.");
+    expect(text(r)).toContain("No browser link has been recorded.");
     expect(text(r)).toContain("open https://fmrl.test/link/fresh#r=");
     expect(r.structuredContent).toMatchObject({ linked_at: null, link_url: expect.stringMatching(/^https:\/\/fmrl\.test\/link\/fresh#r=/) });
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const again = await call("fmrl_whoami");
-    expect(text(again)).toContain("Linked to a browser on 2026-09-16T12:00:00Z.");
+    expect(text(again)).toContain("A browser linked on 2026-09-16T12:00:00Z.");
     expect(again.structuredContent).toMatchObject({ linked_at: "2026-09-16T12:00:00Z" });
   });
   it("a 402 is a tool error with the reset time and is not retried", async () => {
@@ -394,7 +394,7 @@ describe("tools", () => {
       expect(logs.join("\n")).toMatch(/couldn't save a key ring/);
       const who = (await client2.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
       expect(text(who)).toContain(`Couldn't save a key ring to ${path.join(blocker, "credentials.json")} (`);
-      expect(text(who)).toContain("To see this key's pages on fmrl.site, open ");
+      expect(text(who)).toContain("Browser: Link your browser to see your canvases: open ");
       expect(text(who)).not.toContain("It also carries the ring");
     } finally {
       await client2.close();
@@ -405,6 +405,34 @@ describe("tools", () => {
     expect(r.isError).toBe(true);
     expect(text(r)).toMatch(/over the 1024-byte limit; pass a shorter title\.$/);
     expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
+  });
+  it("whoami provides one intact custom-origin handoff with optional account and backup meaning", async () => {
+    const r = await call("fmrl_whoami");
+    const t = text(r);
+    const link = r.structuredContent!.link_url as string;
+    expect(t.split(link)).toHaveLength(2);
+    expect(t).toContain("Link your browser to see your canvases");
+    expect(t).toContain("If sign-in is available there, you can optionally");
+    expect(t).toContain("other devices");
+    expect(t).toContain("Signing in does not back up private-page keys");
+    expect(t).not.toContain("https://fmrl.site");
+    expect(t).not.toContain(keyOf(fake.requests.at(-1)!));
+    expect(fake.requests.some(q => q.path.includes("publish"))).toBe(false);
+  });
+  it("historical linking and a missing link do not invent current account state or a destination", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    const original = api.me.bind(api);
+    vi.spyOn(api, "me").mockImplementation(async k => ({ ...await original(k), linked_at: "2026-09-16", link_url: undefined }));
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
+      expect(text(r)).toContain("A browser linked on 2026-09-16");
+      expect(text(r)).toContain("Current browser and account status are unknown");
+      expect(text(r)).toContain("No browser link was supplied");
+      expect(text(r)).not.toMatch(/https?:\/\//);
+      expect(text(r)).not.toContain("you are signed in");
+    } finally { await c.close(); }
   });
   it("fmrl_whoami mints the ring, carries it on the link, and names the file to back up", async () => {
     const r = await call("fmrl_whoami");
@@ -1061,11 +1089,24 @@ describe("plugin freshness", () => {
   const withRoot = async (pluginRoot: string | undefined, fn: (c: Client) => Promise<void>) => {
     const api = new FmrlApi(fake.baseUrl);
     const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: path.join(dir, "plugin-creds.json") });
-    const c = await connect({ api, keys, pluginRoot });
+    const c = await connect({ api, keys, pluginRoot, pluginSurface: "claude-cli" });
     try { await fn(c); } finally { await c.close(); }
   };
   const whoami = async (c: Client) => text((await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult);
 
+  it.each(["codex", "unknown", "claude-desktop"] as const)("%s receives neutral or matching guidance through MCP", async surface => {
+    const api = new FmrlApi(fake.baseUrl);
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys, pluginRoot: await root("0.3.0"), pluginSurface: surface, autoUpdate: { on: false, file: "/s.json" }, offerAutoUpdate: true }, surface);
+    try {
+      for (const t of [c.getInstructions() ?? "", await whoami(c)]) {
+        expect(t).toContain("out of date");
+        expect(t).not.toContain("claude plugin");
+        expect(t).not.toContain("extraKnownMarketplaces");
+        expect(t).not.toContain("Enable auto-update");
+      }
+    } finally { await c.close(); }
+  });
   it("a stale plugin: the instructions raise it and fmrl_whoami says how to fix it", async () => {
     await withRoot(await root("0.3.0"), async (c) => {
       const instructions = c.getInstructions() ?? "";
@@ -1105,7 +1146,7 @@ describe("plugin freshness", () => {
     const api = new FmrlApi(fake.baseUrl);
     const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: path.join(dir, "plugin-creds.json") });
     const autoUpdatePass = { runs: false, desktop: true, by: "DISABLE_AUTOUPDATER" };
-    const c = await connect({ api, keys, pluginRoot: await root("0.3.0"), autoUpdate: { on: true, file: "/s.json" }, autoUpdatePass });
+    const c = await connect({ api, keys, pluginRoot: await root("0.3.0"), autoUpdate: { on: true, file: "/s.json" }, autoUpdatePass, pluginSurface: "claude-cli" });
     try {
       expect(c.getInstructions()).toContain("Auto-update cannot run here (the Claude desktop app disables it)");
       const me = await whoami(c);

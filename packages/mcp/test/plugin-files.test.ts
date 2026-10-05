@@ -60,12 +60,19 @@ describe("/fmrl:whoami", () => {
     // instead of reporting the switch, and the commands are the way.
     expect(skillText()).toMatch(/auto-update does not run/i);
   });
+  it("keeps account guidance optional and private-key backup distinct", () => {
+    expect(skillText()).toContain("If sign-in is available there");
+    expect(skillText()).toContain("Signing in does not back up private-page keys");
+    expect(skillText()).toContain("No plugin line means version information is unavailable");
+    expect(skillText()).toContain("Codex: use Codex's plugin settings; never give Claude CLI commands");
+    expect(skillText()).toContain("including its complete `#r=` fragment");
+  });
   it("keeps the link rules /fmrl:share keeps", () => {
     expect(skillText()).toMatch(/Never print the ring on its own/);
     expect(skillText()).toMatch(/Never open the link yourself/);
   });
   it("is what a stale plugin's instructions point to after the restart", () => {
-    expect(pluginInstructions({ installed: "0.3.0", server: pkg.version, stale: true })).toContain("/fmrl:whoami");
+    expect(pluginInstructions({ installed: "0.3.0", server: pkg.version, stale: true }, undefined, undefined, "claude-cli")).toContain("/fmrl:whoami");
   });
 });
 

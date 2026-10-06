@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { pluginInstructions, pluginLine, pluginStatus } from "../src/plugin.js";
+import { pluginInstructions as instructions, pluginLine as line, pluginStatus, pluginSurface } from "../src/plugin.js";
+
+const pluginInstructions: typeof instructions = (s, a, p, surface = "claude-cli") => instructions(s, a, p, surface);
+const pluginLine: typeof line = (s, a, p, surface = "claude-cli") => line(s, a, p, surface);
 
 /** fakeRoot is a CLAUDE_PLUGIN_ROOT whose .claude-plugin/plugin.json holds manifest (written as-is when a string). */
 async function fakeRoot(manifest: unknown): Promise<string> {
@@ -96,7 +99,7 @@ describe("pluginLine", () => {
   });
   it("a stale plugin: both versions and how to fix it", () => {
     expect(pluginLine({ installed: "0.3.0", server: "0.5.1", stale: true })).toBe(
-      "The fmrl plugin is out of date: installed 0.3, fmrl-mcp is at 0.5. Update it with `claude plugin marketplace update fmrl-plugin` then `claude plugin update fmrl@fmrl-plugin`, and restart Claude Code. /plugin → Marketplaces → fmrl-plugin → Enable auto-update keeps it current.",
+      "The fmrl plugin is out of date: installed 0.3, fmrl-mcp is at 0.5. Update it with `claude plugin marketplace update fmrl-plugin` then `claude plugin update fmrl@fmrl-plugin`, and restart Claude Code.",
     );
   });
   it("a current plugin says so", () => {
@@ -243,4 +246,25 @@ describe("where the auto-update pass cannot run", () => {
       expect(pluginInstructions(current, { on: false, file: settings }, runs)).toBe(pluginInstructions(current, { on: false, file: settings }));
     });
   });
+});
+
+
+describe("launcher-specific guidance", () => {
+  const stale = { installed: "0.3.0", server: "0.13.0", stale: true };
+  it.each(["codex", "unknown", "claude-desktop"] as const)("%s never receives CLI commands or an auto-update offer", surface => {
+    for (const t of [pluginLine(stale, { on: false, file: "/s.json" }, undefined, surface), pluginInstructions(stale, { on: false, file: "/s.json" }, undefined, surface)]) {
+      expect(t).not.toContain("claude plugin");
+      expect(t).not.toContain("Enable auto-update");
+      expect(t).not.toContain("extraKnownMarketplaces");
+      expect(t).toContain("out of date");
+    }
+  });
+});
+
+it("detects only explicit launcher evidence and defaults to neutral", () => {
+  expect(pluginSurface({ CLAUDE_PLUGIN_ROOT: "/shared" })).toBe("unknown");
+  expect(pluginSurface({ CODEX_THREAD_ID: "test", CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("codex");
+  expect(pluginSurface({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("claude-cli");
+  expect(pluginSurface({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toBe("claude-desktop");
+  expect(instructions({ installed: "0.3.0", server: "0.13.0", stale: true })).not.toContain("claude plugin");
 });

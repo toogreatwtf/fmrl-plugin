@@ -6,7 +6,7 @@ import { loadConfig } from "./config.js";
 import { credentialsPath } from "./credentials.js";
 import { KeyStore } from "./keys.js";
 import { PageStore, pagesPath } from "./pages.js";
-import { pluginStatus } from "./plugin.js";
+import { pluginStatus, pluginSurface } from "./plugin.js";
 import { createServer, VERSION } from "./server.js";
 
 // stdout is the JSON-RPC channel; everything we say goes to stderr.
@@ -20,7 +20,8 @@ async function main(): Promise<void> {
   // Whether anything is keeping the plugin current. Read once at startup,
   // as the plugin manifest is: neither changes without a restart.
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  const autoUpdate = pluginRoot ? await autoUpdateState() : undefined;
+  const surface = pluginSurface(process.env);
+  const autoUpdate = pluginRoot && surface === "claude-cli" ? await autoUpdateState() : undefined;
   // Whether the CLI's auto-update pass can run at all: the desktop app and a
   // CLI with the auto-updater disabled inherit that to us in the environment.
   const pass = autoUpdatePass();
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
   // the offer, which the server cannot see. Asking once too few beats
   // asking every day.
   const offerAutoUpdate = shouldOffer(autoUpdate, await alreadyOffered(state), plugin !== undefined, pass) && (await claimOffer(state));
-  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName, pluginRoot, autoUpdate, offerAutoUpdate, autoUpdatePass: pass });
+  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName, pluginRoot, pluginSurface: surface, autoUpdate, offerAutoUpdate, autoUpdatePass: pass });
   await server.connect(new StdioServerTransport());
 }
 

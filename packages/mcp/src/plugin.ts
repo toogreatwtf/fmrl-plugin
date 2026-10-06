@@ -4,8 +4,26 @@ import path from "node:path";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { MARKETPLACE } from "./autoupdate.js";
 
+export type PluginSurface = "claude-cli" | "claude-desktop" | "codex" | "unknown";
+
+/** A shared plugin manifest/root identifies an installation, not its launcher. */
+export function pluginSurface(env: NodeJS.ProcessEnv): PluginSurface {
+  if (env.CODEX_THREAD_ID) return "codex";
+  if (env.CLAUDE_CODE_ENTRYPOINT === "claude-desktop") return "claude-desktop";
+  if (env.CLAUDE_CODE_ENTRYPOINT === "cli") return "claude-cli";
+  return "unknown";
+}
+
+function otherSurfaceLine(s: PluginStatus, surface: PluginSurface): string {
+  const status = s.stale
+    ? `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}.`
+    : `The fmrl plugin is up to date (plugin ${s.installed}, fmrl-mcp ${s.server}).`;
+  if (!s.stale) return status;
+  return `${status} Check for plugin updates in ${surface === "claude-desktop" ? "the Claude desktop app's plugin settings" : surface === "codex" ? "Codex's plugin settings" : "the client that installed it"}.`;
+}
+
 /**
- * PluginStatus is how the Claude Code plugin that launched this server
+ * PluginStatus is how the installed plugin that launched this server
  * compares with the server itself. Claude Code leaves auto-update off for
  * third-party marketplaces, so a plugin stays at the version it was
  * installed at while npx keeps the server current.
@@ -86,8 +104,9 @@ const disabledBy = (pass: AutoUpdatePass) => (pass.desktop ? "the Claude desktop
  * undefined when there is nothing to say, including whenever no plugin
  * launched this server (another client, a hand-written config).
  */
-export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdate, pass?: AutoUpdatePass): string | undefined {
+export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdate, pass?: AutoUpdatePass, surface: PluginSurface = "unknown"): string | undefined {
   if (!s) return undefined;
+  if (surface !== "claude-cli") return s.stale ? otherSurfaceLine(s, surface) : undefined;
   const disabled = pass !== undefined && !pass.runs;
   const offer = auto && !auto.on && !disabled ? auto : undefined;
   if (!s.stale) {
@@ -122,8 +141,9 @@ export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdat
  * and is not reported: the line says the pass does not run here, and that
  * the plugin updates by hand or when it says it is out of date.
  */
-export function pluginLine(s: PluginStatus | undefined, auto?: AutoUpdate, pass?: AutoUpdatePass): string | undefined {
+export function pluginLine(s: PluginStatus | undefined, auto?: AutoUpdate, pass?: AutoUpdatePass, surface: PluginSurface = "unknown"): string | undefined {
   if (!s) return undefined;
+  if (surface !== "claude-cli") return otherSurfaceLine(s, surface);
   if (pass !== undefined && !pass.runs) {
     const where = pass.desktop ? "in the Claude desktop app" : `here: the auto-updater is disabled (${pass.by})`;
     if (!s.stale) return `The fmrl plugin is up to date (plugin ${s.installed}, fmrl-mcp ${s.server}). Auto-update does not run ${where}, so it updates by hand, or when this plugin says it is out of date.`;
@@ -134,5 +154,5 @@ export function pluginLine(s: PluginStatus | undefined, auto?: AutoUpdate, pass?
     : ` Auto-update is off for its marketplace: ${AUTO_UPDATE} keeps it current from the next start.`;
   if (!s.stale) return `The fmrl plugin is up to date (plugin ${s.installed}, fmrl-mcp ${s.server}).${keeping}`;
   const fix = `Update it with \`${MARKETPLACE_UPDATE}\` then \`${PLUGIN_UPDATE}\`, and restart Claude Code.`;
-  return `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}. ${fix}${keeping === "" ? ` ${AUTO_UPDATE} keeps it current.` : keeping}`;
+  return `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}. ${fix}${keeping}`;
 }

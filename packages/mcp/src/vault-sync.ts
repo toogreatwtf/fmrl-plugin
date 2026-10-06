@@ -1,6 +1,8 @@
 import type { CredentialsFile } from "./credentials.js";
 import { isRing } from "./crypto.js";
-import { prefixOf } from "./keys.js";
+import { type KeyStore, prefixOf } from "./keys.js";
+import { ApiError, type FmrlApi, type MeResponse } from "./api.js";
+import { sealVaultRing, vaultFingerprint } from "./vault-crypto.js";
 
 export interface LocalVaultRing { prefix: string; ring: string }
 
@@ -59,4 +61,61 @@ export function batchVaultRings(rings: LocalVaultRing[]): LocalVaultRing[][] {
   }
   if (batch.length || batches.length === 0) batches.push(batch);
   return batches;
+}
+
+export type VaultSyncResult =
+  | { state: "none"; fingerprint?: string; firstPin?: boolean }
+  | { state: "changed"; previous: string; fingerprint: string }
+  | { state: "synced"; fingerprint: string; firstPin: boolean }
+  | { state: "unknown"; fingerprint?: string; firstPin: boolean };
+
+export interface VaultSyncOptions { api: FmrlApi; keys: KeyStore; log?: (line: string) => void }
+
+/** Seals a credential snapshot for the pinned account vault, with no retries or caching. */
+export class VaultSync {
+  private queue: Promise<unknown> = Promise.resolve();
+  constructor(private readonly o: VaultSyncOptions) {}
+
+  /** Each pass finishes before the next begins; credential-file operations use KeyStore's queue. */
+  sync(key: string, options: { me?: MeResponse; trust?: string } = {}): Promise<VaultSyncResult> {
+    const result = this.queue.then(() => this.run(key, options), () => this.run(key, options));
+    this.queue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async run(key: string, options: { me?: MeResponse; trust?: string }): Promise<VaultSyncResult> {
+    let firstPin = false;
+    let fingerprint: string | undefined;
+    let completedBatch = false;
+    try {
+      const me = options.me ?? await this.o.api.me(key);
+      if (me.account_vault === undefined) return { state: "none" };
+      const vault = me.account_vault;
+      if (!vault || typeof vault !== "object" || Array.isArray(vault) ||
+          typeof vault.pub !== "string" || typeof vault.fingerprint !== "string") {
+        throw new Error("invalid account vault");
+      }
+      fingerprint = vaultFingerprint(vault.pub);
+      if (fingerprint !== vault.fingerprint) throw new Error("invalid vault fingerprint");
+      const pin = await this.o.keys.pinVault(new URL(this.o.api.viewerBase).origin, fingerprint, options.trust);
+      if (pin.kind === "changed") return { state: "changed", previous: pin.previous, fingerprint };
+      if (pin.kind === "invalid-trust") throw new Error("invalid vault trust");
+      firstPin = pin.first;
+      const rows = collectVaultRings(await this.o.keys.vaultSnapshot(), this.o.api.viewerBase);
+      for (const batch of batchVaultRings(rows)) {
+        const boxes = batch.map(({ prefix, ring }) => ({ prefix, box: sealVaultRing(vault.pub, prefix, ring) }));
+        const response = await this.o.api.putRings(key, boxes);
+        if (response.stored !== boxes.length) throw new Error("incomplete vault sync");
+        completedBatch = true;
+      }
+      return { state: "synced", fingerprint, firstPin };
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 403 || e.status === 409)) {
+        return { state: completedBatch ? "unknown" : "none", fingerprint, firstPin };
+      }
+      // Diagnostics are best effort too: a logger failure must not reject the primary tool call.
+      try { this.o.log?.("fmrl-mcp: vault sync failed"); } catch {}
+      return { state: "unknown", fingerprint, firstPin };
+    }
+  }
 }

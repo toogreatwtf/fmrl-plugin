@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiError, FmrlApi } from "../src/api.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
+import fx from "./fixtures/vault.json";
 import { newRing, sealRecord } from "../src/crypto.js";
 
 let fake: FakeApi;
@@ -9,6 +10,39 @@ beforeEach(async () => { fake = await startFakeApi(); api = new FmrlApi(fake.bas
 afterEach(async () => { await fake.close(); });
 
 describe("FmrlApi", () => {
+  it("PUTs boxes with the bearer and costs no publish quota", async () => {
+    const { key } = await api.mint("x");
+    fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    expect((await api.me(key)).account_vault).toEqual({ pub: fx.pub, fingerprint: fx.fingerprint });
+    expect(await api.putRings(key, [{ prefix: fx.prefix, box: fx.box }])).toEqual({ stored: 1 });
+    expect(fake.requests.at(-1)).toMatchObject({ method: "PUT", path: "/api/v1/me/rings",
+      auth: `Bearer ${key}`, body: { boxes: [{ prefix: fx.prefix, box: fx.box }] } });
+    expect((await api.me(key)).quota.publishes.used).toBe(0);
+  });
+  it("refuses invalid bearer, unavailable vault, and controlled ring failures", async () => {
+    const { key } = await api.mint("x");
+    await expect(api.putRings("wrong", [])).rejects.toMatchObject({ status: 401 });
+    await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 403, message: "" });
+    fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    fake.ringStatus = 409;
+    await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 409, code: "ring_409", message: "" });
+    expect(fake.ringBatches).toEqual([]);
+  });
+  it("validates a complete ring batch before changing rows", async () => {
+    const { key } = await api.mint("x");
+    fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    const good = { prefix: fx.prefix, box: fx.box };
+    await api.putRings(key, [good]);
+    for (const rows of [
+      [good, good], Array.from({ length: 51 }, (_, n) => ({ ...good, prefix: `fmrl_${String(n).padStart(4, "0")}` })),
+      [good, { ...good, prefix: "bad" }], [good, { prefix: "fmrl_abcd", box: fx.box + "=" }],
+      [good, { prefix: "fmrl_abcd", box: fx.box.slice(0, -1) + "Z" }],
+      [good, { prefix: "fmrl_abcd", box: "A".repeat(167) }],
+    ]) await expect(api.putRings(key, rows)).rejects.toMatchObject({ status: 400 });
+    expect(fake.ringBatches).toEqual([[good]]);
+    expect([...fake.ringBoxes]).toEqual([[fx.prefix, fx.box]]);
+    expect(await api.putRings(key, [])).toEqual({ stored: 0 });
+  });
   it("mints, publishes, gets, reports and deletes", async () => {
     const minted = await api.mint("fmrl-mcp");
     expect(minted.key).toMatch(/^fmrl_[A-Za-z0-9]{32}$/);

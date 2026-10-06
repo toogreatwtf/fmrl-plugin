@@ -2,6 +2,9 @@ import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { newRing } from "../src/crypto.js";
+import { vaultFingerprint } from "../src/vault-crypto.js";
+import { createECDH } from "node:crypto";
 import { credentialsPath, readCredentials, writeCredentials } from "../src/credentials.js";
 
 /** oneUnreadableFile finds the single `${base}.unreadable-*` sibling readCredentials left behind. */
@@ -139,6 +142,44 @@ describe("read and write", () => {
     for (const rings of ["nope", null]) {
       await writeFile(file, JSON.stringify({ version: 1, keys: {}, rings }));
       expect(await readCredentials(file)).toEqual({ version: 1, keys: {} });
+    }
+  });
+});
+
+
+describe("additive vault pins", () => {
+  function fingerprint(): string {
+    const ecdh = createECDH("prime256v1");
+    return vaultFingerprint(ecdh.generateKeys().toString("base64url"));
+  }
+  it("sanitizes only pins and rings while preserving v1 keys and extension fields", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    const pin = fingerprint();
+    const ring = newRing();
+    const keys = { "https://fmrl.site/path": { key: "test-key", prefix: "fmrl_test", ring, extension: { kept: true } } };
+    const extension = { nested: [1, "kept"] };
+    await writeFile(file, JSON.stringify({ version: 1, keys, extension,
+      rings: { fmrl_test: ring, bad: "invalid" },
+      vault_pins: { "https://fmrl.site": pin, "https://preview.fmrl.site": pin,
+        "https://fmrl.site/path": pin, "https://FMRL.site": pin, "file://local": pin,
+        "https://bad-pin.site": "invalid", "https://number.site": 7,
+        "https://padding.site": "AAAA AAAA AAAA AAAA AAAA AAAA AB" },
+    }));
+    const read = await readCredentials(file);
+    expect(read).toEqual({ version: 1, keys, extension, rings: { fmrl_test: ring },
+      vault_pins: { "https://fmrl.site": pin, "https://preview.fmrl.site": pin } });
+    await writeCredentials(file, read);
+    expect(await readCredentials(file)).toEqual(read);
+    expect(await readdir(dir)).toEqual(["credentials.json"]);
+  });
+  it("drops malformed additive pin containers without moving aside a valid file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
+    const file = path.join(dir, "credentials.json");
+    for (const vault_pins of [[fingerprint()], null, "invalid", 7]) {
+      await writeFile(file, JSON.stringify({ version: 1, keys: {}, extension: "kept", vault_pins }));
+      expect(await readCredentials(file)).toEqual({ version: 1, keys: {}, extension: "kept" });
+      expect(await readdir(dir)).toEqual(["credentials.json"]);
     }
   });
 });

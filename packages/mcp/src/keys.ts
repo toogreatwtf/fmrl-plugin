@@ -1,6 +1,12 @@
 import { ApiError, isRevoked, type FmrlApi } from "./api.js";
 import { readCredentials, writeCredentials, type CredentialsFile } from "./credentials.js";
 import { isRing, newRing } from "./crypto.js";
+import { isVaultFingerprint } from "./vault-crypto.js";
+
+export type VaultPinResult =
+  | { kind: "accepted"; first: boolean }
+  | { kind: "changed"; previous: string }
+  | { kind: "invalid-trust" };
 
 export interface KeyStoreOptions {
   api: FmrlApi;
@@ -111,6 +117,32 @@ export class KeyStore {
       () => undefined,
     );
     return result;
+  }
+
+  /** Snapshot after earlier credential mutations, without vault-path diagnostics. */
+  vaultSnapshot(): Promise<CredentialsFile> {
+    return this.serialize(() => readCredentials(this.o.file));
+  }
+
+  /** Persist an origin's vault pin before upload; changes require matching explicit trust. */
+  pinVault(origin: string, fingerprint: string, trust?: string): Promise<VaultPinResult> {
+    return this.serialize(async () => {
+      let url: URL;
+      try { url = new URL(origin); } catch { throw new Error("invalid vault origin"); }
+      if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) {
+        throw new Error("invalid vault origin");
+      }
+      if (!isVaultFingerprint(fingerprint)) throw new Error("invalid vault fingerprint");
+      const canonicalOrigin = url.origin;
+      const file = await readCredentials(this.o.file);
+      const previous = file.vault_pins?.[canonicalOrigin];
+      if (previous === fingerprint) return { kind: "accepted", first: false };
+      if (previous && trust !== fingerprint) return { kind: "changed", previous };
+      if (!previous && trust !== undefined && trust !== fingerprint) return { kind: "invalid-trust" };
+      file.vault_pins = { ...file.vault_pins, [canonicalOrigin]: fingerprint };
+      await writeCredentials(this.o.file, file);
+      return { kind: "accepted", first: previous === undefined };
+    });
   }
 
   /** file is where the key and its ring live. */

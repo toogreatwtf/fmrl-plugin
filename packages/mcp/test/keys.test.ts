@@ -10,6 +10,7 @@ import { readCredentials, writeCredentials } from "../src/credentials.js";
 import { KeyStore, normalizeKeyCode } from "../src/keys.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
 
+type CredentialsWithOrigins = { ring_origins?: Record<string, string> };
 let fake: FakeApi; let api: FmrlApi; let file: string; const logs: string[] = [];
 beforeEach(async () => { fake = await startFakeApi(); api = new FmrlApi(fake.baseUrl); file = path.join(await mkdtemp(path.join(tmpdir(), "fmrl-")), "credentials.json"); logs.length = 0; });
 afterEach(async () => { await fake.close(); });
@@ -85,6 +86,32 @@ describe("KeyStore", () => {
 });
 
 describe("KeyStore rings", () => {
+  it("records provenance for newly filed and environment-key rings without relabeling legacy history", async () => {
+    const old = newRing(); const legacy = newRing();
+    await writeCredentials(file, { version: 1, keys: {
+      [fake.baseUrl]: { key: "fmrl_OLD1" + "x".repeat(28), prefix: "fmrl_OLD1", ring: old },
+    }, rings: { fmrl_OLD1: legacy } });
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    await store.adopt("fmrl_NEW1" + "x".repeat(28), "fmrl_NEW1");
+    const env = new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: "fmrl_ENV1" + "x".repeat(28) });
+    await env.ringFor(await env.getKey());
+    const saved = await readCredentials(file);
+    expect((saved as CredentialsWithOrigins).ring_origins).toEqual({ "fmrl_OLD1.2": fake.baseUrl, fmrl_ENV1: fake.baseUrl });
+    expect(saved.rings!.fmrl_OLD1).toBe(legacy);
+  });
+  it("never reuses or overwrites another origin's historical ring when prefixes collide", async () => {
+    const foreign = newRing();
+    await writeCredentials(file, { version: 1, keys: {}, rings: { fmrl_ENV1: foreign },
+      ring_origins: { fmrl_ENV1: "https://fmrl.site" } });
+    const envKey = "fmrl_ENV1" + "x".repeat(28);
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: envKey });
+    const ring = await store.ringFor(envKey);
+    expect(ring).not.toBe(foreign);
+    expect(await new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: envKey }).ringFor(envKey)).toBe(ring);
+    const saved = await readCredentials(file);
+    expect(saved.rings).toEqual({ fmrl_ENV1: foreign, "fmrl_ENV1.2": ring });
+    expect(saved.ring_origins).toEqual({ fmrl_ENV1: "https://fmrl.site", "fmrl_ENV1.2": fake.baseUrl });
+  });
   const RING = /^[A-Za-z0-9_-]{43}$/;
   it("mints a ring once, keeps it on the stored key, and logs the prefix but never the ring", async () => {
     const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, log: (s) => logs.push(s) });
@@ -122,6 +149,7 @@ describe("KeyStore rings", () => {
     const saved = await readCredentials(file);
     expect(saved.keys).toEqual({});
     expect(saved.rings).toEqual({ fmrl_EEEE: ring });
+    expect(saved.ring_origins).toEqual({ fmrl_EEEE: fake.baseUrl });
     expect(await new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: envKey }).ringFor(envKey)).toBe(ring);
   });
   it("an environment key that is also the stored key seals under the stored key's ring", async () => {
@@ -136,6 +164,7 @@ describe("KeyStore rings", () => {
     const fresh = await store.withKey(async (k) => { await api.me(k); return k; });
     const saved = await readCredentials(file);
     expect(saved.rings).toEqual({ fmrl_SSSS: oldRing });
+    expect(saved.ring_origins).toEqual({ fmrl_SSSS: fake.baseUrl });
     expect(saved.keys[fake.baseUrl].ring).toBeUndefined();
     const ring = await store.ringFor(fresh);
     expect(ring).not.toBe(oldRing);
@@ -453,7 +482,7 @@ describe("KeyStore vault pins", () => {
     expect(adoption).toEqual({ same: false, replaced: "fmrl_old1" });
     expect(saved).toEqual({ version: 1,
       keys: { [fake.baseUrl]: { key: nextKey, prefix: "fmrl_new1", ring: next } },
-      rings: { fmrl_kept: keptRing, fmrl_old1: old }, extension: { kept: true },
+      rings: { fmrl_kept: keptRing, fmrl_old1: old }, ring_origins: { fmrl_old1: fake.baseUrl }, extension: { kept: true },
       vault_pins: { "https://fmrl.site": pin },
     });
     expect(await readCredentials(file)).toEqual(saved);

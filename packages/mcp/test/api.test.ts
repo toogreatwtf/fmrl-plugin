@@ -13,6 +13,7 @@ describe("FmrlApi", () => {
   it("PUTs boxes with the bearer and costs no publish quota", async () => {
     const { key } = await api.mint("x");
     fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    fake.ringClaims.set(key, new Set([fx.prefix]));
     expect((await api.me(key)).account_vault).toEqual({ pub: fx.pub, fingerprint: fx.fingerprint });
     expect(await api.putRings(key, [{ prefix: fx.prefix, box: fx.box }])).toEqual({ stored: 1 });
     expect(fake.requests.at(-1)).toMatchObject({ method: "PUT", path: "/api/v1/me/rings",
@@ -24,6 +25,7 @@ describe("FmrlApi", () => {
     await expect(api.putRings("wrong", [])).rejects.toMatchObject({ status: 401 });
     await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 403, message: "" });
     fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    fake.ringClaims.set(key, new Set([fx.prefix]));
     fake.ringStatus = 409;
     await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 409, code: "ring_409", message: "" });
     expect(fake.ringBatches).toEqual([]);
@@ -31,6 +33,7 @@ describe("FmrlApi", () => {
   it("validates a complete ring batch before changing rows", async () => {
     const { key } = await api.mint("x");
     fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    fake.ringClaims.set(key, new Set([fx.prefix]));
     const good = { prefix: fx.prefix, box: fx.box };
     await api.putRings(key, [good]);
     for (const rows of [
@@ -42,6 +45,13 @@ describe("FmrlApi", () => {
     expect(fake.ringBatches).toEqual([[good]]);
     expect([...fake.ringBoxes]).toEqual([[fx.prefix, fx.box]]);
     expect(await api.putRings(key, [])).toEqual({ stored: 0 });
+  });
+  it("rejects an unclaimed prefix atomically even alongside an owned prefix", async () => {
+    const { key } = await api.mint("x");
+    fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    await expect(api.putRings(key, [{ prefix: fake.prefixOf(key), box: fx.box },
+      { prefix: "fmrl_OLD1", box: fx.box }])).rejects.toMatchObject({ status: 400 });
+    expect(fake.ringBoxes.size).toBe(0);
   });
   it("mints, publishes, gets, reports and deletes", async () => {
     const minted = await api.mint("fmrl-mcp");

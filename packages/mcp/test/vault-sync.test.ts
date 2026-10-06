@@ -21,29 +21,22 @@ describe("collectVaultRings", () => {
     const rings = [newRing(), newRing(), newRing(), newRing()];
     const file: CredentialsFile = { version: 1, keys: {
       [baseUrl]: { key: "fmrl_test" + "x".repeat(28), prefix: "fmrl_test", ring: rings[3] },
-    }, rings: { "fmrl_test.10": rings[2], "fmrl_test.2": rings[1], fmrl_test: rings[0] } };
+    }, rings: { "fmrl_test.10": rings[2], "fmrl_test.2": rings[1], fmrl_test: rings[0] },
+      ring_origins: { "fmrl_test.10": "https://fmrl.site", "fmrl_test.2": "https://fmrl.site", fmrl_test: "https://fmrl.site" } };
     const list = collectVaultRings(file, baseUrl);
     expect(list).toEqual(rings.map(ring => ({ prefix: "fmrl_test", ring })));
     expect(batchVaultRings(list)).toEqual(list.map(row => [row]));
   });
-  it("includes every origin and revoked-key history, keeping the last exact pair occurrence", () => {
-    const history = newRing(); const active = newRing(); const other = newRing(); const legacy = newRing();
-    const file = { version: 1, keys: {
-      "https://z.site": { key: "fmrl_test" + "z".repeat(28), prefix: "fmrl_test", ring: other },
-      [baseUrl]: { key: "fmrl_test" + "x".repeat(28), prefix: "fmrl_test", ring: active },
-      "https://a.site": { key: "fmrl_lgcy" + "a".repeat(28), ring: legacy },
-      "https://b.site": { key: "fmrl_test" + "b".repeat(28), prefix: "fmrl_test", ring: history },
-      "https://bad.site": null,
-    }, rings: {
-      "fmrl_test.3": history, fmrl_test: history, "fmrl_test.2": active,
-      "fmrl_gone.12": other, "fmrl_gone.2": legacy, fmrl_gone: history,
-      "fmrl_test.11": other,
-    } } as unknown as CredentialsFile;
+  it("allows canonical origin aliases and exact legacy pairs, excluding foreign and unknown history", () => {
+    const active = newRing(); const alias = newRing(); const unknown = newRing();
+    const file: CredentialsFile = { version: 1, keys: {
+      [baseUrl]: { key: "fmrl_test", prefix: "fmrl_test", ring: active },
+      "https://FMRL.site:443/other": { key: "fmrl_alia", prefix: "fmrl_alia", ring: alias },
+      "https://preview.fmrl.site": { key: "fmrl_prev", prefix: "fmrl_prev", ring: unknown },
+    }, rings: { fmrl_test: active, "fmrl_test.2": unknown, fmrl_old1: unknown },
+      ring_origins: { fmrl_old1: "https://fmrl.site" } };
     expect(collectVaultRings(file, baseUrl)).toEqual([
-      { prefix: "fmrl_gone", ring: history }, { prefix: "fmrl_gone", ring: legacy },
-      { prefix: "fmrl_gone", ring: other }, { prefix: "fmrl_lgcy", ring: legacy },
-      { prefix: "fmrl_test", ring: history }, { prefix: "fmrl_test", ring: other },
-      { prefix: "fmrl_test", ring: active },
+      { prefix: "fmrl_old1", ring: unknown }, { prefix: "fmrl_alia", ring: alias }, { prefix: "fmrl_test", ring: active },
     ]);
   });
   it("ignores malformed prefixes and noncanonical rings, stripping only valid terminal variant suffixes", () => {
@@ -58,14 +51,14 @@ describe("collectVaultRings", () => {
       "fmrl_test.1": ring, "fmrl_test.02": ring, "fmrl_test.2.3": ring,
       "fmrl_test.0": ring, "fmrl_test.-2": ring, fmrl_bad_: ring,
       fmrl_test: "B".repeat(43), fmrl_num1: 7, "fmrl_evil\n": ring,
-    } } as unknown as CredentialsFile;
+    }, ring_origins: { "fmrl_good.2": "https://fmrl.site", "fmrl_long.123": "https://fmrl.site", fmrl_Ab12: "https://fmrl.site" } } as unknown as CredentialsFile;
     expect(collectVaultRings(file, baseUrl)).toEqual([
       { prefix: "fmrl_Ab12", ring }, { prefix: "fmrl_good", ring }, { prefix: "fmrl_long", ring },
     ]);
   });
   it("returns only credential-file rings, including when no configured key is stored", () => {
     const ring = newRing();
-    expect(collectVaultRings({ version: 1, keys: {}, rings: { fmrl_test: ring } }, baseUrl))
+    expect(collectVaultRings({ version: 1, keys: {}, rings: { fmrl_test: ring }, ring_origins: { fmrl_test: "https://fmrl.site" } }, baseUrl))
       .toEqual([{ prefix: "fmrl_test", ring }]);
     expect(collectVaultRings({ version: 1, keys: {} }, baseUrl)).toEqual([]);
   });
@@ -103,7 +96,7 @@ describe("VaultSync", () => {
     }, rings: { [fx.prefix]: fx.ring } });
     keys = new KeyStore({ api, baseUrl: fake.baseUrl, file });
     sync = new VaultSync({ api, keys, log: line => logs.push(line) });
-    fake.accountVaults.set(key, advertised); fake.requests.length = 0;
+    fake.accountVaults.set(key, advertised); fake.ringClaims.set(key, new Set([fx.prefix])); fake.requests.length = 0;
   });
   afterEach(async () => { vi.restoreAllMocks(); await fake.close(); await rm(dir, { recursive: true, force: true }); });
   const replacement = (): AccountVault => {
@@ -113,10 +106,90 @@ describe("VaultSync", () => {
   const puts = (): number => fake.requests.filter(q => q.path === "/api/v1/me/rings").length;
   const expectFixedLog = (): void => { expect(logs).toEqual(["fmrl-mcp: vault sync failed"]); };
 
-  it("seals every variant independently, with the active ring last and a durable first pin", async () => {
+  it("never seals production or unscoped legacy rings to a fresh preview vault", async () => {
+    const production = newRing(); const legacy = newRing();
+    const credentials: CredentialsFile = { version: 1, keys: {
+      "https://fmrl.site": { key: "fmrl_PROD" + "x".repeat(28), prefix: "fmrl_PROD", ring: production },
+      [fake.baseUrl]: { key, prefix: fx.prefix, ring: active },
+    }, rings: { fmrl_OLD1: legacy } };
+    await writeCredentials(file, credentials);
+    // Malicious preview claims all prefixes. Its first-use vault key must still learn only its ring.
+    fake.ringClaims.set(key, new Set([fx.prefix, "fmrl_PROD", "fmrl_OLD1"]));
+    await sync.sync(key);
+    const captured = fake.requests.filter(q => q.path === "/api/v1/me/rings")
+      .flatMap(q => (q.body as { boxes: { prefix: string; box: string }[] }).boxes)
+      .map(row => openTestVaultBox(fx, row.prefix, row.box));
+    expect(captured).toEqual([active]);
+    expect((await readCredentials(file)).rings).toEqual(credentials.rings);
+    expect((await readCredentials(file)).keys["https://fmrl.site"].ring).toBe(production);
+  });
+  it("uploads the active claimed prefix despite mixed claimed and unclaimed local history", async () => {
+    const rings = { fmrl_0000: newRing(), fmrl_0001: newRing() };
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
+      rings, ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) } as CredentialsFile);
+    fake.ringClaims.set(key, new Set([fx.prefix, "fmrl_0001"]));
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(fake.ringBoxes.has(fx.prefix)).toBe(true);
+    expect(openTestVaultBox(fx, fx.prefix, fake.ringBoxes.get(fx.prefix)!)).toBe(active);
+    expect(openTestVaultBox(fx, "fmrl_0001", fake.ringBoxes.get("fmrl_0001")!)).toBe(rings.fmrl_0001);
+    expect(fake.ringBoxes.has("fmrl_0000")).toBe(false);
+    expect((fake.requests.find(q => q.path === "/api/v1/me/rings")!.body as { boxes: { prefix: string }[] }).boxes[0].prefix).toBe(fx.prefix);
+    const before = puts(); await sync.sync(key); expect(puts()).toBeGreaterThan(before);
+  });
+  it("prioritizes active prefix before historical requests consume the edit budget", async () => {
+    const rings = { ...Object.fromEntries(Array.from({ length: 70 }, (_, n) => [`${fx.prefix}.${n + 2}`, newRing()])), fmrl_0000: newRing() };
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
+      rings, ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) } as CredentialsFile);
+    const original = api.putRings.bind(api); let calls = 0;
+    vi.spyOn(api, "putRings").mockImplementation(async (...args) => {
+      if (++calls === 2) throw new ApiError(429, "rate_limit", "");
+      return original(...args);
+    });
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(fake.ringBoxes.has(fx.prefix)).toBe(true);
+    expect(openTestVaultBox(fx, fx.prefix, fake.ringBoxes.get(fx.prefix)!)).toBe(active);
+    expect(calls).toBe(2);
+  });
+  it.each([429, 500, 0])("stops singleton fallback immediately on operational failure %s", async status => {
+    const rings = { fmrl_0000: newRing(), fmrl_0001: newRing(), fmrl_0002: newRing() };
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
+      rings, ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) });
+    const original = api.putRings.bind(api); let calls = 0;
+    vi.spyOn(api, "putRings").mockImplementation(async (...args) => {
+      if (++calls === 3) throw new ApiError(status, "failure", "");
+      return original(...args);
+    });
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(calls).toBe(3); expectFixedLog();
+    expect(openTestVaultBox(fx, fx.prefix, fake.ringBoxes.get(fx.prefix)!)).toBe(active);
+  });
+  it("bounds ownership isolation to 60 attempts and tries the active ring afresh next invocation", async () => {
+    const rings = Object.fromEntries(Array.from({ length: 100 }, (_, n) => [`fmrl_${String(n).padStart(4, "0")}`, newRing()]));
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
+      rings, ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) });
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(puts()).toBe(60); expectFixedLog();
+    const box = fake.ringBoxes.get(fx.prefix)!; expect(openTestVaultBox(fx, fx.prefix, box)).toBe(active);
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(puts()).toBe(120); expect(fake.ringBoxes.get(fx.prefix)).not.toBe(box);
+  });
+  it("keeps numeric variants and a stored-key variant last for non-active prefixes", async () => {
+    const history = [newRing(), newRing(), newRing()];
+    await writeCredentials(file, { version: 1, keys: {
+      [fake.baseUrl]: { key, prefix: fx.prefix, ring: active },
+      [`${fake.baseUrl}/alias`]: { key: "fmrl_OLD1", prefix: "fmrl_OLD1", ring: history[2] },
+    }, rings: { "fmrl_OLD1.10": history[1], "fmrl_OLD1.2": history[0] },
+      ring_origins: { "fmrl_OLD1.10": fake.baseUrl, "fmrl_OLD1.2": fake.baseUrl } });
+    fake.ringClaims.set(key, new Set([fx.prefix, "fmrl_OLD1"]));
+    expect(await sync.sync(key)).toMatchObject({ state: "synced" });
+    expect(fake.ringBatches.flat().map(row => openTestVaultBox(fx, row.prefix, row.box))).toEqual([active, ...history]);
+    expect(openTestVaultBox(fx, "fmrl_OLD1", fake.ringBoxes.get("fmrl_OLD1")!)).toBe(history[2]);
+  });
+  it("seals only the active-prefix ring first, preserving superseded history locally and a durable pin", async () => {
     expect(await sync.sync(key)).toEqual({ state: "synced", fingerprint: fx.fingerprint, firstPin: true });
-    expect(fake.ringBatches.map(batch => batch.length)).toEqual([1, 1]);
-    expect(fake.ringBatches.flat().map(row => openTestVaultBox(fx, row.prefix, row.box))).toEqual([fx.ring, active]);
+    expect(fake.ringBatches.map(batch => batch.length)).toEqual([1]);
+    expect(fake.ringBatches.flat().map(row => openTestVaultBox(fx, row.prefix, row.box))).toEqual([active]);
+    expect(fake.ringBoxes.has(fx.prefix)).toBe(true);
     expect(openTestVaultBox(fx, fx.prefix, fake.ringBoxes.get(fx.prefix)!)).toBe(active);
     expect((await readCredentials(file)).vault_pins).toEqual({ [new URL(api.viewerBase).origin]: fx.fingerprint });
     const freshKeys = new KeyStore({ api, baseUrl: fake.baseUrl, file });
@@ -158,7 +231,7 @@ describe("VaultSync", () => {
       expect(puts()).toBe(0); expect((await readCredentials(file)).vault_pins?.[new URL(api.viewerBase).origin]).toBe(fx.fingerprint);
     }
     expect(await sync.sync(key, { trust: next.fingerprint })).toEqual({ state: "synced", fingerprint: next.fingerprint, firstPin: false });
-    expect(puts()).toBe(2); expect((await readCredentials(file)).vault_pins?.[new URL(api.viewerBase).origin]).toBe(next.fingerprint);
+    expect(puts()).toBe(1); expect((await readCredentials(file)).vault_pins?.[new URL(api.viewerBase).origin]).toBe(next.fingerprint);
   });
   it("rejects incorrect trust on a first pin without writing or uploading", async () => {
     expect(await sync.sync(key, { trust: "wrong" })).toEqual({ state: "unknown", fingerprint: fx.fingerprint, firstPin: false });
@@ -188,7 +261,8 @@ describe("VaultSync", () => {
   });
   it.each([403, 409, 429, 500, 0])("stops after a successful batch then failed batch %i without claiming sync", async status => {
     await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
-      rings: { [fx.prefix]: fx.ring, [`${fx.prefix}.2`]: newRing() } });
+      rings: { fmrl_old1: fx.ring, "fmrl_old1.2": newRing() },
+      ring_origins: { fmrl_old1: fake.baseUrl, "fmrl_old1.2": fake.baseUrl } });
     const original = api.putRings.bind(api); let calls = 0;
     vi.spyOn(api, "putRings").mockImplementation(async (...args) => {
       if (++calls === 2) throw new ApiError(status, "test", fx.vault_key);
@@ -203,22 +277,24 @@ describe("VaultSync", () => {
     expect(await sync.sync(key)).toEqual({ state: "unknown", fingerprint: fx.fingerprint, firstPin: true });
     expect(put).toHaveBeenCalledTimes(1); expectFixedLog();
   });
-  it("sends one empty batch when no local rings exist", async () => {
+  it("sends one empty batch without claiming synced when no local rings exist", async () => {
     await writeCredentials(file, { version: 1, keys: {} });
-    expect(await sync.sync(key)).toEqual({ state: "synced", fingerprint: fx.fingerprint, firstPin: true });
+    expect(await sync.sync(key)).toEqual({ state: "unknown", fingerprint: fx.fingerprint, firstPin: true });
     expect(fake.ringBatches).toEqual([[]]);
   });
   it("uploads 51 distinct prefixes in 50 and 1 boxes without losing rings", async () => {
     const rings = Object.fromEntries(Array.from({ length: 51 }, (_, n) => [`fmrl_${String(n).padStart(4, "0")}`, newRing()]));
-    await writeCredentials(file, { version: 1, keys: {}, rings });
-    expect(await sync.sync(key)).toMatchObject({ state: "synced" });
+    await writeCredentials(file, { version: 1, keys: {}, rings,
+      ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) });
+    fake.ringClaims.set(key, new Set(Object.keys(rings)));
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
     expect(fake.ringBatches.map(batch => batch.length)).toEqual([50, 1]);
     expect(fake.ringBatches.flat().map(row => [row.prefix, openTestVaultBox(fx, row.prefix, row.box)])).toEqual(Object.entries(rings));
   });
   it("uses a supplied invocation's fresh me without another GET", async () => {
     const me = await api.me(key); fake.requests.length = 0;
     expect(await sync.sync(key, { me })).toMatchObject({ state: "synced" });
-    expect(fake.requests.map(q => q.method)).toEqual(["PUT", "PUT"]);
+    expect(fake.requests.map(q => q.method)).toEqual(["PUT"]);
   });
   it("serializes whole passes without collapsing either and frees the file queue during upload", async () => {
     let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
@@ -235,7 +311,7 @@ describe("VaultSync", () => {
     expect(fake.requests.map(q => q.method)).toEqual(["GET"]);
     release(); expect(await first).toMatchObject({ state: "synced", firstPin: true });
     expect(await second).toMatchObject({ state: "synced", firstPin: false });
-    expect(fake.requests.map(q => q.method)).toEqual(["GET", "PUT", "PUT", "GET", "PUT", "PUT"]);
+    expect(fake.requests.map(q => q.method)).toEqual(["GET", "PUT", "GET", "PUT"]);
   });
   it("contains primary me failures without reminting and leaves the queue usable", async () => {
     const original = api.me.bind(api);

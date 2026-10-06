@@ -1,5 +1,5 @@
 import { ApiError, isRevoked, type FmrlApi } from "./api.js";
-import { readCredentials, writeCredentials, type CredentialsFile } from "./credentials.js";
+import { credentialOrigin, readCredentials, writeCredentials, type CredentialsFile } from "./credentials.js";
 import { isRing, newRing } from "./crypto.js";
 import { isVaultFingerprint } from "./vault-crypto.js";
 
@@ -65,8 +65,15 @@ function storedRing(file: CredentialsFile, baseUrl: string, key: string): string
   const entry = file.keys[baseUrl];
   const prefix = keyPrefix(file, baseUrl, key);
   if (entry && entryPrefix(entry) === prefix && isRing(entry.ring)) return entry.ring;
+  const origin = credentialOrigin(baseUrl);
+  const slots = Object.entries(file.rings ?? {}).filter(([name, ring]) =>
+    (name === prefix || name.startsWith(`${prefix}.`)) && isRing(ring));
+  // A known foreign ring must not become this origin's active ring. Legacy
+  // unscoped rings remain usable locally, but are not thereby exportable.
+  const scoped = slots.find(([name]) => origin && file.ring_origins?.[name] === origin);
+  if (scoped) return scoped[1];
   const ring = file.rings?.[prefix];
-  return isRing(ring) ? ring : undefined;
+  return !file.ring_origins?.[prefix] && isRing(ring) ? ring : undefined;
 }
 
 /**
@@ -74,13 +81,18 @@ function storedRing(file: CredentialsFile, baseUrl: string, key: string): string
  * already filed there stays put, and this one goes under prefix.2, .3, …,
  * which ringsFor still reads: a ring is never overwritten.
  */
-function fileRing(file: CredentialsFile, prefix: string, ring: string): void {
+function fileRing(file: CredentialsFile, prefix: string, ring: string, baseUrl: string): void {
+  const origin = credentialOrigin(baseUrl);
   const rings = { ...file.rings };
-  if (Object.values(rings).includes(ring)) return;
+  const existing = Object.keys(rings).find(name =>
+    (name === prefix || name.startsWith(`${prefix}.`)) && rings[name] === ring &&
+    file.ring_origins?.[name] === origin);
+  if (existing) return;
   let name = prefix;
   for (let n = 2; isRing(rings[name]); n++) name = `${prefix}.${n}`;
   rings[name] = ring;
   file.rings = rings;
+  if (origin) file.ring_origins = { ...file.ring_origins, [name]: origin };
 }
 
 /**
@@ -122,6 +134,12 @@ export class KeyStore {
   /** Snapshot after earlier credential mutations, without vault-path diagnostics. */
   vaultSnapshot(): Promise<CredentialsFile> {
     return this.serialize(() => readCredentials(this.o.file));
+  }
+
+  /** Actual active pair from this snapshot, including an override, without minting or persisting it. */
+  vaultActiveRing(file: CredentialsFile, key: string): { prefix: string; ring?: string } {
+    return { prefix: keyPrefix(file, this.o.baseUrl, key),
+      ring: this.o.ringFromEnv ?? storedRing(file, this.o.baseUrl, key) };
   }
 
   /** Persist an origin's vault pin before upload; changes require matching explicit trust. */
@@ -247,7 +265,7 @@ export class KeyStore {
       const entry = file.keys[this.o.baseUrl];
       const prefix = keyPrefix(file, this.o.baseUrl, key);
       if (entry && entryPrefix(entry) === prefix) entry.ring = ring;
-      else file.rings = { ...file.rings, [prefix]: ring };
+      else fileRing(file, prefix, ring, this.o.baseUrl);
       await writeCredentials(this.o.file, file);
       this.o.log?.(`fmrl-mcp: minted a key ring for ${prefix}…, saved to ${this.o.file}`);
       return ring;
@@ -279,7 +297,7 @@ export class KeyStore {
       if (same) {
         file.keys[this.o.baseUrl] = { ...old, key, prefix };
       } else {
-        if (old && isRing(old.ring)) fileRing(file, oldPrefix!, old.ring);
+        if (old && isRing(old.ring)) fileRing(file, oldPrefix!, old.ring, this.o.baseUrl);
         file.keys[this.o.baseUrl] = { key, prefix };
         replaced = oldPrefix;
       }
@@ -311,7 +329,7 @@ export class KeyStore {
       if (old?.key && old.key !== replacing) return dropFor(old.key);
       // A replaced key's ring stays, under its prefix: its pages still exist,
       // and their sealed records open only under it.
-      if (old && isRing(old.ring)) fileRing(file, entryPrefix(old), old.ring);
+      if (old && isRing(old.ring)) fileRing(file, entryPrefix(old), old.ring, this.o.baseUrl);
       file.keys[this.o.baseUrl] = { key: minted.key, prefix: minted.prefix, created_at: minted.created_at };
       await writeCredentials(this.o.file, file);
       // An adopt during the write wins too: its own write is queued behind this one.

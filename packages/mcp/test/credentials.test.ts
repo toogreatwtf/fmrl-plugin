@@ -148,6 +148,18 @@ describe("read and write", () => {
 
 
 describe("additive vault pins", () => {
+  it("preserves only canonical provenance for existing ring slots without attributing legacy history", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-")); const file = path.join(dir, "credentials.json");
+    const ring = newRing();
+    const rings = { fmrl_good: ring, fmrl_bad1: ring, fmrl_bad2: ring, fmrl_bad3: ring, fmrl_lgcy: ring };
+    await writeFile(file, JSON.stringify({ version: 1, keys: {}, rings, extension: true,
+      ring_origins: { fmrl_good: "https://fmrl.site", fmrl_bad1: "file:///tmp", fmrl_bad2: "https://FMRL.site/path",
+        fmrl_bad3: 7, fmrl_gone: "https://fmrl.site" } }));
+    const saved = await readCredentials(file);
+    expect(saved).toEqual({ version: 1, keys: {}, rings, extension: true, ring_origins: { fmrl_good: "https://fmrl.site" } });
+    await writeCredentials(file, saved); expect(await readCredentials(file)).toEqual(saved);
+    expect(await readdir(dir)).toEqual(["credentials.json"]);
+  });
   function fingerprint(): string {
     const ecdh = createECDH("prime256v1");
     return vaultFingerprint(ecdh.generateKeys().toString("base64url"));

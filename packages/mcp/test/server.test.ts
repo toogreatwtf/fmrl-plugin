@@ -72,6 +72,25 @@ describe("account vault sync integration", () => {
   };
   const warm = async () => { await call("fmrl_list"); return fake.requests.length; };
 
+  it.each(["environment-only", "different", "equal"])("whoami vault status reflects the actual %s environment ring", async mode => {
+    const key = await seed();
+    const saved = await readCredentials(credFile); const stored = saved.keys[fake.baseUrl].ring!;
+    if (mode === "environment-only") { delete saved.keys[fake.baseUrl].ring; await writeCredentials(credFile, saved); }
+    const api = new FmrlApi(fake.baseUrl);
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile, ringFromEnv: mode === "equal" ? stored : newRing() });
+    const c = await connect({ api, keys });
+    try {
+      const result = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
+      expect(result.isError).not.toBe(true);
+      expect(text(result)).toContain(RING_ENV_LINE);
+      if (mode === "equal") expect(text(result)).toContain(synced(fx.fingerprint));
+      else {
+        expect(text(result)).not.toContain("Private page keys:");
+        expect(fake.ringBatches).toEqual([[]]);
+        expect(fake.ringBoxes.has(fake.prefixOf(key))).toBe(false);
+      }
+    } finally { await c.close(); }
+  });
   it("whoami without an account vault uses the exact not-synced line", async () => {
     await seed(false);
     const r = await call("fmrl_whoami");
@@ -213,10 +232,11 @@ describe("account vault sync integration", () => {
     expect(r.isError).toBeFalsy();
     const replacement = (await readCredentials(credFile)).keys[fake.baseUrl].key;
     expect(replacement).not.toBe(key);
-    expect(ringRequests()).toHaveLength(1);
-    expect(ringRequests()[0].auth).toBe(`Bearer ${replacement}`);
+    expect(ringRequests()).toHaveLength(2);
+    expect(ringRequests().every(q => q.auth === `Bearer ${replacement}`)).toBe(true);
+    expect(fake.ringBoxes.has(fake.prefixOf(replacement))).toBe(true);
     const successfulPublish = fake.requests.slice(offset).filter(q => q.path === "/api/v1/publish").at(-1)!;
-    expect(fake.requests.slice(fake.requests.indexOf(successfulPublish) + 1).map(q => q.path)).toEqual(["/api/v1/me", "/api/v1/me/rings"]);
+    expect(fake.requests.slice(fake.requests.indexOf(successfulPublish) + 1).map(q => q.path)).toEqual(["/api/v1/me", "/api/v1/me/rings", "/api/v1/me/rings"]);
     expect(fake.publishes.get(replacement)).toBe(1);
   });
   it("vault sync 401 never remints or republishes a successful publish", async () => {

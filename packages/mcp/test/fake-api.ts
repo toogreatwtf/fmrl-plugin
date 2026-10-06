@@ -24,6 +24,7 @@ export interface FakeApi {
   requests: RequestLog[];
   publishes: Map<string, number>;
   accountVaults: Map<string, AccountVault>;
+  ringClaims: Map<string, Set<string>>;
   ringBatches: RingBoxInput[][];
   ringBoxes: Map<string, string>;
   ringStatus?: number;
@@ -145,6 +146,7 @@ export async function startFakeApi(): Promise<FakeApi> {
     requests: [],
     publishes: new Map(),
     accountVaults: new Map(),
+    ringClaims: new Map(),
     ringBatches: [],
     ringBoxes: new Map(),
     linked: new Set(),
@@ -388,6 +390,8 @@ export async function startFakeApi(): Promise<FakeApi> {
         if (rawBox.length !== 125 || rawBox[0] !== 4 || rawBox.toString("base64url") !== row.box || seen.has(row.prefix)) {
           return fail(res, 400, "bad_request", "");
         }
+        const owned = api.ringClaims.get(key) ?? new Set([api.prefixOf(key)]);
+        if (!owned.has(row.prefix)) return fail(res, 400, "bad_request", "");
         seen.add(row.prefix);
       }
       // Validation is atomic; a refused batch never changes last-writer rows.

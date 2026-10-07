@@ -23,11 +23,13 @@ describe("FmrlApi", () => {
   it("refuses invalid bearer, unavailable vault, and controlled ring failures", async () => {
     const { key } = await api.mint("x");
     await expect(api.putRings("wrong", [])).rejects.toMatchObject({ status: 401 });
-    await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 403, message: "" });
+    await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 403, code: "not_claimed", message: "" });
+    fake.linked.add(key);
+    await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 409, code: "no_vault" });
     fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
     fake.ringClaims.set(key, new Set([fx.prefix]));
     fake.ringStatus = 409;
-    await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 409, code: "ring_409", message: "" });
+    await expect(api.putRings(key, [])).rejects.toMatchObject({ status: 409, code: "vault_changed", message: "" });
     expect(fake.ringBatches).toEqual([]);
   });
   it("validates a complete ring batch before changing rows", async () => {

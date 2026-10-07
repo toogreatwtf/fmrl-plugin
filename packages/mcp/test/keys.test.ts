@@ -487,12 +487,25 @@ describe("KeyStore vault pins", () => {
     });
     expect(await readCredentials(file)).toEqual(saved);
   });
-  it("vault reads suppress existing move-aside diagnostics", async () => {
+  it("vault reads preserve backups and emit only fixed move-aside warnings", async () => {
     const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, log: (line) => logs.push(line) });
     await writeFile(file, "invalid json");
     expect(await store.vaultSnapshot()).toEqual({ version: 1, keys: {} });
+    const pinFile = path.join(path.dirname(file), "pin-credentials.json");
+    await writeFile(pinFile, "invalid json");
+    const pinStore = new KeyStore({ api, baseUrl: fake.baseUrl, file: pinFile, log: line => logs.push(line) });
+    await pinStore.pinVault("https://fmrl.site", fingerprint());
+    expect(logs).toEqual(["fmrl-mcp: credentials moved aside", "fmrl-mcp: credentials moved aside"]);
+    const backups = (await readdir(path.dirname(file))).filter(name => name.includes(".unreadable-"));
+    expect(backups).toHaveLength(2);
+    for (const backup of backups) expect(await readFile(path.join(path.dirname(file), backup), "utf8")).toBe("invalid json");
+    expect(logs.join()).not.toContain(file);
+  });
+  it("vault recovery tolerates a throwing logger", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, log: () => { throw new Error("poisoned"); } });
     await writeFile(file, "invalid json");
-    await store.pinVault("https://fmrl.site", fingerprint());
-    expect(logs).toEqual([]);
+    expect(await store.vaultSnapshot()).toEqual({ version: 1, keys: {} });
+    await writeFile(file, "invalid json");
+    expect(await store.pinVault("https://fmrl.site", fingerprint())).toEqual({ kind: "accepted", first: true });
   });
 });

@@ -27,7 +27,9 @@ export interface FakeApi {
   ringClaims: Map<string, Set<string>>;
   ringBatches: RingBoxInput[][];
   ringBoxes: Map<string, string>;
+  // Refusal seam only: no full edit limiter or on-curve server conformance simulation.
   ringStatus?: number;
+  ringCode?: string;
   /** linked holds the keys a browser has been linked to: publish stops carrying link_url and me reports linked_at. */
   linked: Set<string>;
   /** labels holds each key's name (from mint's label or a later PATCH /me), "" until set. */
@@ -374,8 +376,9 @@ export async function startFakeApi(): Promise<FakeApi> {
     if (method === "PUT" && url.pathname === "/api/v1/me/rings") {
       const key = auth();
       if (!key) return unauthorized();
-      if (!api.accountVaults.has(key)) return fail(res, 403, "vault_unavailable", "");
-      if (api.ringStatus !== undefined) return fail(res, api.ringStatus, `ring_${api.ringStatus}`, "");
+      if (!api.accountVaults.has(key)) return api.linked.has(key) ?
+        fail(res, 409, "no_vault", "") : fail(res, 403, "not_claimed", "");
+      if (api.ringStatus !== undefined) return fail(res, api.ringStatus, api.ringCode ?? ({ 403: "not_claimed", 409: "vault_changed", 404: "not_found" }[api.ringStatus] ?? `ring_${api.ringStatus}`), "");
       const boxes = body && typeof body === "object" && !Array.isArray(body) ?
         (body as { boxes?: unknown }).boxes : undefined;
       if (!Array.isArray(boxes) || boxes.length > 50) return fail(res, 400, "bad_request", "");

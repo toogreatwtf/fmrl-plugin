@@ -163,15 +163,15 @@ describe("VaultSync", () => {
     expect(calls).toBe(3); expectFixedLog();
     expect(openTestVaultBox(fx, fx.prefix, fake.ringBoxes.get(fx.prefix)!)).toBe(active);
   });
-  it("bounds ownership isolation to 60 attempts and tries the active ring afresh next invocation", async () => {
+  it("bounds ownership isolation to 10 attempts and tries the active ring afresh next invocation", async () => {
     const rings = Object.fromEntries(Array.from({ length: 100 }, (_, n) => [`fmrl_${String(n).padStart(4, "0")}`, newRing()]));
     await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
       rings, ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) });
     expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
-    expect(puts()).toBe(60); expectFixedLog();
+    expect(puts()).toBe(10); expectFixedLog();
     const box = fake.ringBoxes.get(fx.prefix)!; expect(openTestVaultBox(fx, fx.prefix, box)).toBe(active);
     expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
-    expect(puts()).toBe(120); expect(fake.ringBoxes.get(fx.prefix)).not.toBe(box);
+    expect(puts()).toBe(20); expect(fake.ringBoxes.get(fx.prefix)).not.toBe(box);
   });
   it("keeps numeric variants and a stored-key variant last for non-active prefixes", async () => {
     const history = [newRing(), newRing(), newRing()];
@@ -244,9 +244,31 @@ describe("VaultSync", () => {
     expect(await badSync.sync(key)).toEqual({ state: "unknown", fingerprint: fx.fingerprint, firstPin: false });
     expect(puts()).toBe(0); expectFixedLog();
   });
+  it.each([[403, "not_claimed"], [409, "no_vault"], [409, "vault_changed"], [404, "not_found"]] as const)("fake returns actual ring refusal %i %s", async (status, code) => {
+    fake.ringStatus = status;
+    fake.ringCode = code;
+    await expect(api.putRings(key, [])).rejects.toMatchObject({ status, code });
+    expect(puts()).toBe(1);
+  });
+  it.each(["no_vault", "vault_changed"])("%s 409 is unknown before and after a completed batch", async code => {
+    fake.ringStatus = 409; fake.ringCode = code;
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(puts()).toBe(1); expect(logs).toEqual([]);
+    fake.ringStatus = undefined;
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
+      rings: { fmrl_old1: fx.ring }, ring_origins: { fmrl_old1: fake.baseUrl } });
+    const original = api.putRings.bind(api);
+    vi.spyOn(api, "putRings").mockImplementation(async (...args) => {
+      const result = await original(...args);
+      fake.ringStatus = 409;
+      return result;
+    });
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(puts()).toBe(3); expect(logs).toEqual([]);
+  });
   it.each([403, 409])("initial PUT %i is silent and preserves the first pin", async status => {
     fake.ringStatus = status;
-    expect(await sync.sync(key)).toEqual({ state: "none", fingerprint: fx.fingerprint, firstPin: true });
+    expect(await sync.sync(key)).toEqual({ state: status === 409 ? "unknown" : "none", fingerprint: fx.fingerprint, firstPin: true });
     expect(puts()).toBe(1); expect(fake.ringBatches).toEqual([]); expect(logs).toEqual([]);
     expect((await readCredentials(file)).vault_pins).toBeDefined();
     fake.ringStatus = undefined;

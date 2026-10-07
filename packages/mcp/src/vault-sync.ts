@@ -121,7 +121,7 @@ export class VaultSync {
       let attempts = 0;
       let activeUploaded = false;
       const upload = async (batch: LocalVaultRing[]): Promise<void> => {
-        if (attempts >= 60) throw new Error("vault sync attempt limit");
+        if (attempts >= 10) throw new Error("vault sync attempt limit");
         attempts++;
         const boxes = batch.map(({ prefix, ring }) => ({ prefix, box: sealVaultRing(vault.pub, prefix, ring) }));
         try {
@@ -142,7 +142,7 @@ export class VaultSync {
       return { state: activeUploaded ? "synced" : "unknown", fingerprint, firstPin };
     } catch (e) {
       if (e instanceof ApiError && (e.status === 403 || e.status === 409)) {
-        return { state: completedBatch || refused ? "unknown" : "none", fingerprint, firstPin };
+        return { state: e.status === 409 || completedBatch || refused ? "unknown" : "none", fingerprint, firstPin };
       }
       // Diagnostics are best effort too: a logger failure must not reject the primary tool call.
       try { this.o.log?.("fmrl-mcp: vault sync failed"); } catch {}

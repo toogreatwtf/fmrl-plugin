@@ -131,10 +131,14 @@ export class KeyStore {
     return result;
   }
 
-  /** Snapshot after earlier credential mutations, without vault-path diagnostics. */
+  /** Snapshot after earlier credential mutations, with safe recovery diagnostics. */
   vaultSnapshot(): Promise<CredentialsFile> {
-    return this.serialize(() => readCredentials(this.o.file));
+    return this.serialize(() => readCredentials(this.o.file, this.vaultRecoveryLog));
   }
+
+  private readonly vaultRecoveryLog = (): void => {
+    try { this.o.log?.("fmrl-mcp: credentials moved aside"); } catch {}
+  };
 
   /** Actual active pair from this snapshot, including an override, without minting or persisting it. */
   vaultActiveRing(file: CredentialsFile, key: string): { prefix: string; ring?: string } {
@@ -152,7 +156,7 @@ export class KeyStore {
       }
       if (!isVaultFingerprint(fingerprint)) throw new Error("invalid vault fingerprint");
       const canonicalOrigin = url.origin;
-      const file = await readCredentials(this.o.file);
+      const file = await readCredentials(this.o.file, this.vaultRecoveryLog);
       const previous = file.vault_pins?.[canonicalOrigin];
       if (previous === fingerprint) return { kind: "accepted", first: false };
       if (previous && trust !== fingerprint) return { kind: "changed", previous };

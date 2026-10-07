@@ -782,29 +782,25 @@ export function createServer(deps: ServerDeps): McpServer {
   /**
    * fmrl_status answers from this process and the files beside the key:
    * nothing is minted, written or asked of the network unless verbose, and
-   * then each call is bounded by probeTimeoutMs and the key is used as it
-   * is, never named, replaced or minted. Text only — no structured content
-   * — so a client that prefers the structured half never hides a line.
+   * then each probe carries its own timeout (probeTimeoutMs), so a hung
+   * site aborts the request rather than leaving it running, and is not
+   * recorded as lastCall, which stays the user's own last call. The key is
+   * used as it is, never named, replaced or minted. Text only — no
+   * structured content — so a client that prefers the structured half
+   * never hides a line.
    */
   const startedAt = Date.now();
-  const probeMs = deps.probeTimeoutMs ?? 3000;
-  const bounded = <T>(p: Promise<T>): Promise<T> => {
-    let timer: NodeJS.Timeout | undefined;
-    const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ApiError(0, "timeout", `No answer within ${probeMs / 1000} s.`)), probeMs); });
-    // The call that loses the race may still fail later; that is nobody's business.
-    p.catch(() => undefined);
-    return Promise.race([p, limit]).finally(() => clearTimeout(timer));
-  };
+  const probe = { timeoutMs: deps.probeTimeoutMs ?? 3000, record: false };
   const apiCheck = async (): Promise<ApiCheck> => {
     const k = await keys.storedKey();
     const t0 = Date.now();
     try {
       // No key: a bare GET /me answers 401, which says the site is up without spending a mint.
-      const me = await bounded(api.me(k ?? ""));
+      const me = await api.me(k ?? "", probe);
       const ms = Date.now() - t0;
       if (!k) return { kind: "no_key", ms };
       let inbox: number | undefined;
-      try { inbox = (await bounded(api.inbox(k))).items.length; } catch { inbox = undefined; }
+      try { inbox = (await api.inbox(k, probe)).items.length; } catch { inbox = undefined; }
       return { kind: "ok", ms, me, inbox };
     } catch (e) {
       const ms = Date.now() - t0;
@@ -854,7 +850,6 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: { verbose: z.boolean().optional().describe("Add the network checks: reachability, quota, inbox and npm. Each is bounded, so the answer takes a few seconds at most.") },
     },
     async ({ verbose }) => {
-      // Snapshot before the lookups land in lastCall, so the line is the call before this one.
       const s = await snapshot(verbose === true);
       return { content: [{ type: "text", text: statusText(s) }] };
     },

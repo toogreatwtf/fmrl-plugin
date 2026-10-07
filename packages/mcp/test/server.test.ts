@@ -15,7 +15,7 @@ import { PageStore } from "../src/pages.js";
 import { createServer, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
-import { startFakeApi, type FakeApi } from "./fake-api.js";
+import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;
 type ToolResult = { content: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown>; isError?: boolean };
@@ -1714,6 +1714,8 @@ describe("fmrl_status", () => {
         expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. No browser link recorded\. Inbox: empty\.$/m);
         expect(t).toContain(`npm: fmrl-mcp 9.9.9 is the latest; this session runs ${VERSION}, so restart the client that started it to pick it up.`);
         expect(asked).toBe(1);
+        // The probes are not the user's calls: the last call is still the publish.
+        expect(await status(c)).toMatch(/^Last call: POST \/publish → 201 in \d+ ms, just now\.$/m);
       });
     });
     it("probes without a key rather than minting one", async () => {
@@ -1750,13 +1752,14 @@ describe("fmrl_status", () => {
       await withDeps({ latestOnNpm: async () => VERSION }, async (c) => {
         expect(await status(c, { verbose: true })).toMatch(/^http:\/\/127\.0\.0\.1:1: unreachable \(Couldn't reach http:\/\/127\.0\.0\.1:1\/api\/v1: .*\)\.$/m);
       }, new FmrlApi("http://127.0.0.1:1"));
-      const hang = (() => new Promise<Response>(() => undefined)) as typeof fetch;
       await withDeps({ latestOnNpm: async () => VERSION, probeTimeoutMs: 50 }, async (c) => {
         const t0 = Date.now();
         const t = await status(c, { verbose: true });
         expect(Date.now() - t0).toBeLessThan(2_000);
-        expect(t).toMatch(/: unreachable \(No answer within 0\.05 s\.\)\.$/m);
-      }, new FmrlApi(fake.baseUrl, { fetchImpl: hang }));
+        expect(t).toMatch(/: unreachable \(No answer from http:\/\/127\.0\.0\.1:\d+\/api\/v1 within 0\.05s\.\)\.$/m);
+        // The hung probe was aborted, not left to land in lastCall later.
+        expect(await status(c)).toContain("No API call yet this session.");
+      }, new FmrlApi(fake.baseUrl, { fetchImpl: hangingFetch }));
     });
   });
 });

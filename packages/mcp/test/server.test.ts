@@ -86,7 +86,7 @@ describe("account vault sync integration", () => {
       if (mode === "equal") expect(text(result)).toContain(synced(fx.fingerprint));
       else {
         expect(text(result)).not.toContain("Private page keys:");
-        expect(fake.ringBatches).toEqual([[]]);
+        expect(fake.ringBatches).toEqual([]);
         expect(fake.ringBoxes.has(fake.prefixOf(key))).toBe(false);
       }
     } finally { await c.close(); }
@@ -154,6 +154,14 @@ describe("account vault sync integration", () => {
     expect(text(await call("fmrl_whoami"))).not.toContain("First sync:");
     expect(fake.requests.filter(q => q.path === "/api/v1/keys")).toHaveLength(1);
     expect(ringRequests()).toHaveLength(2);
+  });
+  it("null account vault preserves primary whoami identity quota and link", async () => {
+    const key = await seed(); fake.accountVaults.set(key, null);
+    const r = await call("fmrl_whoami");
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toMatchObject({ prefix: fake.prefixOf(key), quota: { publishes: { used: 0 } }, link_url: expect.any(String) });
+    expect(r.structuredContent).not.toHaveProperty("account_vault");
+    expect(text(r)).not.toContain("Private page keys:"); expect(ringRequests()).toHaveLength(0);
   });
   it("malformed vault is unknown and stripped from whoami output", async () => {
     const key = await seed();

@@ -78,7 +78,7 @@ export type VaultSyncResult =
 
 export interface VaultSyncOptions { api: FmrlApi; keys: KeyStore; log?: (line: string) => void }
 
-/** Seals an origin-scoped snapshot; bounded 400 isolation, no operational retries or caching. */
+/** Seals an origin-scoped snapshot; bounded ownership isolation, no operational retries or caching. */
 export class VaultSync {
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly o: VaultSyncOptions) {}
@@ -103,7 +103,8 @@ export class VaultSync {
           typeof vault.pub !== "string" || typeof vault.fingerprint !== "string") {
         throw new Error("invalid account vault");
       }
-      fingerprint = vaultFingerprint(vault.pub);
+      const pub = vault.pub;
+      fingerprint = vaultFingerprint(pub);
       if (fingerprint !== vault.fingerprint) throw new Error("invalid vault fingerprint");
       const pin = await this.o.keys.pinVault(new URL(this.o.api.viewerBase).origin, fingerprint, options.trust);
       if (pin.kind === "changed") return { state: "changed", previous: pin.previous, fingerprint };
@@ -117,20 +118,20 @@ export class VaultSync {
       // superseded variants first risks budget starvation; sending them later
       // would overwrite the useful box. Keep those variants on disk instead.
       const rest = rows.filter(row => row.prefix !== active.prefix);
-      const batches = activeRow ? [[activeRow], ...(rest.length ? batchVaultRings(rest) : [])] : batchVaultRings(rest);
+      const batches = activeRow ? [[activeRow], ...(rest.length ? batchVaultRings(rest) : [])] : rest.length ? batchVaultRings(rest) : [];
       let attempts = 0;
       let activeUploaded = false;
       const upload = async (batch: LocalVaultRing[]): Promise<void> => {
         if (attempts >= 10) throw new Error("vault sync attempt limit");
         attempts++;
-        const boxes = batch.map(({ prefix, ring }) => ({ prefix, box: sealVaultRing(vault.pub, prefix, ring) }));
+        const boxes = batch.map(({ prefix, ring }) => ({ prefix, box: sealVaultRing(pub, prefix, ring) }));
         try {
-          const response = await this.o.api.putRings(key, boxes);
+          const response = await this.o.api.putRings(key, boxes, fingerprint);
           if (response.stored !== boxes.length) throw new Error("incomplete vault sync");
           completedBatch = true;
           if (activeRow && batch.includes(activeRow)) activeUploaded = true;
         } catch (e) {
-          if (!(e instanceof ApiError) || e.status !== 400) throw e;
+          if (!(e instanceof ApiError) || e.status !== 400 || e.code !== "ring_ownership") throw e;
           refused = true;
           // PR1 rejects atomically. Isolate each member once, never repeat a
           // refused singleton or retry an operational/network failure.

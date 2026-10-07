@@ -106,6 +106,48 @@ describe("VaultSync", () => {
   const puts = (): number => fake.requests.filter(q => q.path === "/api/v1/me/rings").length;
   const expectFixedLog = (): void => { expect(logs).toEqual(["fmrl-mcp: vault sync failed"]); };
 
+  it("sends the original sealing fingerprint in every chunk and isolation request", async () => {
+    const rings = { fmrl_0000: newRing(), fmrl_0001: newRing() };
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } }, rings,
+      ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) });
+    await sync.sync(key);
+    const requests = fake.requests.filter(q => q.path === "/api/v1/me/rings");
+    expect(requests).toHaveLength(4);
+    for (const q of requests) expect(q.body).toMatchObject({ fingerprint: fx.fingerprint });
+  });
+  it("keeps the originally validated public key even if supplied me changes during upload", async () => {
+    const me = await api.me(key);
+    const ring = newRing();
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } },
+      rings: { fmrl_0001: ring }, ring_origins: { fmrl_0001: fake.baseUrl } });
+    fake.ringClaims.set(key, new Set([fx.prefix, "fmrl_0001"]));
+    const original = api.putRings.bind(api); let calls = 0;
+    vi.spyOn(api, "putRings").mockImplementation(async (...args) => {
+      const result = await original(...args);
+      if (++calls === 1) Object.assign(me.account_vault!, replacement());
+      return result;
+    });
+    expect(await sync.sync(key, { me })).toMatchObject({ state: "synced", fingerprint: fx.fingerprint });
+    expect(openTestVaultBox(fx, "fmrl_0001", fake.ringBoxes.get("fmrl_0001")!)).toBe(ring);
+  });
+  it("refuses an intervening vault key change atomically without retry", async () => {
+    const me = await api.me(key);
+    fake.accountVaults.set(key, replacement()); fake.requests.length = 0;
+    expect(await sync.sync(key, { me })).toMatchObject({ state: "unknown" });
+    expect(puts()).toBe(1); expect(fake.ringBoxes.size).toBe(0); expect(logs).toEqual([]);
+  });
+  it("does not isolate malformed 400 batches", async () => {
+    const rings = { fmrl_0000: newRing(), fmrl_0001: newRing() };
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key, prefix: fx.prefix, ring: active } }, rings,
+      ring_origins: Object.fromEntries(Object.keys(rings).map(p => [p, fake.baseUrl])) });
+    const original = api.putRings.bind(api); let calls = 0;
+    vi.spyOn(api, "putRings").mockImplementation(async (...args) => {
+      if (++calls === 2) throw new ApiError(400, "bad_request", "");
+      return original(...args);
+    });
+    expect(await sync.sync(key)).toMatchObject({ state: "unknown" });
+    expect(calls).toBe(2); expectFixedLog();
+  });
   it("never seals production or unscoped legacy rings to a fresh preview vault", async () => {
     const production = newRing(); const legacy = newRing();
     const credentials: CredentialsFile = { version: 1, keys: {
@@ -299,10 +341,10 @@ describe("VaultSync", () => {
     expect(await sync.sync(key)).toEqual({ state: "unknown", fingerprint: fx.fingerprint, firstPin: true });
     expect(put).toHaveBeenCalledTimes(1); expectFixedLog();
   });
-  it("sends one empty batch without claiming synced when no local rings exist", async () => {
+  it("skips empty PUT without claiming synced when no local rings exist", async () => {
     await writeCredentials(file, { version: 1, keys: {} });
     expect(await sync.sync(key)).toEqual({ state: "unknown", fingerprint: fx.fingerprint, firstPin: true });
-    expect(fake.ringBatches).toEqual([[]]);
+    expect(fake.ringBatches).toEqual([]); expect(puts()).toBe(0);
   });
   it("uploads 51 distinct prefixes in 50 and 1 boxes without losing rings", async () => {
     const rings = Object.fromEntries(Array.from({ length: 51 }, (_, n) => [`fmrl_${String(n).padStart(4, "0")}`, newRing()]));

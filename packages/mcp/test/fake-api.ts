@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
+import { isVaultFingerprint } from "../src/vault-crypto.js";
 import type { AccountVault, RingBoxInput } from "../src/api.js";
 
 /** FakeEditor and FakeRevision are the fake's in-memory shape of the server's editor and revision wire types. */
@@ -23,7 +24,7 @@ export interface FakeApi {
   docs: Map<string, FakeDoc>;
   requests: RequestLog[];
   publishes: Map<string, number>;
-  accountVaults: Map<string, AccountVault>;
+  accountVaults: Map<string, AccountVault | null>;
   ringClaims: Map<string, Set<string>>;
   ringBatches: RingBoxInput[][];
   ringBoxes: Map<string, string>;
@@ -379,6 +380,10 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (!api.accountVaults.has(key)) return api.linked.has(key) ?
         fail(res, 409, "no_vault", "") : fail(res, 403, "not_claimed", "");
       if (api.ringStatus !== undefined) return fail(res, api.ringStatus, api.ringCode ?? ({ 403: "not_claimed", 409: "vault_changed", 404: "not_found" }[api.ringStatus] ?? `ring_${api.ringStatus}`), "");
+      const fingerprint = body && typeof body === "object" && !Array.isArray(body) ?
+        (body as { fingerprint?: unknown }).fingerprint : undefined;
+      if (fingerprint !== undefined && !isVaultFingerprint(fingerprint)) return fail(res, 400, "bad_request", "");
+      if (fingerprint !== undefined && fingerprint !== api.accountVaults.get(key)?.fingerprint) return fail(res, 409, "vault_changed", "");
       const boxes = body && typeof body === "object" && !Array.isArray(body) ?
         (body as { boxes?: unknown }).boxes : undefined;
       if (!Array.isArray(boxes) || boxes.length > 50) return fail(res, 400, "bad_request", "");
@@ -394,7 +399,7 @@ export async function startFakeApi(): Promise<FakeApi> {
           return fail(res, 400, "bad_request", "");
         }
         const owned = api.ringClaims.get(key) ?? new Set([api.prefixOf(key)]);
-        if (!owned.has(row.prefix)) return fail(res, 400, "bad_request", "");
+        if (!owned.has(row.prefix)) return fail(res, 400, "ring_ownership", "");
         seen.add(row.prefix);
       }
       // Validation is atomic; a refused batch never changes last-writer rows.

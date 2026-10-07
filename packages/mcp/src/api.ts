@@ -17,7 +17,7 @@ export interface AccountVault { pub: string; fingerprint: string }
 export interface RingBoxInput { prefix: string; box: string }
 
 /** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. rotated_at is when the key's secret was last replaced, absent until it first is. */
-export interface MeResponse { prefix: string; created_at: string; label: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; rotated_at?: string; link_url?: string; account_vault?: AccountVault }
+export interface MeResponse { prefix: string; created_at: string; label: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; rotated_at?: string; link_url?: string; account_vault?: AccountVault | null }
 /** RedeemResponse is POST /api/v1/keys/redeem: the key a key code carries, given once. */
 export interface RedeemResponse { key: string; prefix: string }
 /** RotateResponse is POST /api/v1/me/rotate: the calling key's new secret, given once, under the same prefix. */
@@ -97,8 +97,8 @@ export class FmrlApi {
   me(key: string): Promise<MeResponse> {
     return this.call<MeResponse>("GET", "/me", key);
   }
-  putRings(key: string, boxes: RingBoxInput[]): Promise<{ stored: number }> {
-    return this.call<{ stored: number }>("PUT", "/me/rings", key, { boxes });
+  putRings(key: string, boxes: RingBoxInput[], fingerprint?: string): Promise<{ stored: number }> {
+    return this.call<{ stored: number }>("PUT", "/me/rings", key, { boxes, ...(fingerprint === undefined ? {} : { fingerprint }) });
   }
   setLabel(key: string, label: string): Promise<MeResponse> {
     return this.call<MeResponse>("PATCH", "/me", key, { label });

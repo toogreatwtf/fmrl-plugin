@@ -20,6 +20,17 @@ describe("FmrlApi", () => {
       auth: `Bearer ${key}`, body: { boxes: [{ prefix: fx.prefix, box: fx.box }] } });
     expect((await api.me(key)).quota.publishes.used).toBe(0);
   });
+  it("sends an optional sealing fingerprint and rejects a changed identity atomically", async () => {
+    const { key } = await api.mint("x");
+    fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    fake.ringClaims.set(key, new Set([fx.prefix]));
+    await api.putRings(key, [{ prefix: fx.prefix, box: fx.box }], fx.fingerprint);
+    expect(fake.requests.at(-1)?.body).toMatchObject({ fingerprint: fx.fingerprint });
+    fake.ringBoxes.clear();
+    await expect(api.putRings(key, [{ prefix: fx.prefix, box: fx.box }], "AAAA AAAA AAAA AAAA AAAA AAAA AA")).rejects.toMatchObject({ status: 409, code: "vault_changed" });
+    expect(fake.ringBoxes.size).toBe(0);
+    await expect(api.putRings(key, [], "bad")).rejects.toMatchObject({ status: 400, code: "bad_request" });
+  });
   it("refuses invalid bearer, unavailable vault, and controlled ring failures", async () => {
     const { key } = await api.mint("x");
     await expect(api.putRings("wrong", [])).rejects.toMatchObject({ status: 401 });
@@ -52,7 +63,7 @@ describe("FmrlApi", () => {
     const { key } = await api.mint("x");
     fake.accountVaults.set(key, { pub: fx.pub, fingerprint: fx.fingerprint });
     await expect(api.putRings(key, [{ prefix: fake.prefixOf(key), box: fx.box },
-      { prefix: "fmrl_OLD1", box: fx.box }])).rejects.toMatchObject({ status: 400 });
+      { prefix: "fmrl_OLD1", box: fx.box }])).rejects.toMatchObject({ status: 400, code: "ring_ownership" });
     expect(fake.ringBoxes.size).toBe(0);
   });
   it("mints, publishes, gets, reports and deletes", async () => {

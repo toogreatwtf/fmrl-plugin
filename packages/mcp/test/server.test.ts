@@ -1680,12 +1680,14 @@ describe("fmrl_status", () => {
     expect(lines[4]).toBe(VERBOSE_HINT);
   });
   it("describes the key, its ring, the pages remembered and the last call once other tools have run", async () => {
-    await call("fmrl_publish", { content: "# Hello" });
+    const pub = await call("fmrl_publish", { content: "# Hello" });
+    // A publish ends with the vault sync's own calls, so read the page back: the last call is then the read, with its id blanked.
+    await call("fmrl_get", { id: (pub.structuredContent as { id: string }).id });
     const n = fake.requests.length;
     const t = text(await call("fmrl_status"));
     expect(fake.requests).toHaveLength(n);
     expect(t).toMatch(/^API .*: key fmrl_[A-Za-z0-9]{4}… from .*credentials\.json, minted 2026-09-08; key ring in that file; 1 page remembered\.$/m);
-    expect(t).toMatch(/^Last call: POST \/publish → 201 in \d+ ms, just now\.$/m);
+    expect(t).toMatch(/^Last call: GET \/docs\/…\/revisions\/1 → 200 in \d+ ms, just now\.$/m);
   });
   it("carries the plugin line, names the launcher, and says when a newer plugin is already installed beside this session's", async () => {
     await withDeps({ pluginRoot: await cache([current], current), pluginSurface: "claude-cli" }, async (c) => {
@@ -1707,15 +1709,16 @@ describe("fmrl_status", () => {
     it("asks fmrl.site and npm, in a bounded time, and never names or replaces the key", async () => {
       let asked = 0;
       await withDeps({ latestOnNpm: async () => { asked++; return "9.9.9"; } }, async (c) => {
-        await c.callTool({ name: "fmrl_publish", arguments: { content: "# Hello" } });
+        const pub = (await c.callTool({ name: "fmrl_publish", arguments: { content: "# Hello" } })) as ToolResult;
+        await c.callTool({ name: "fmrl_get", arguments: { id: (pub.structuredContent as { id: string }).id } });
         const n = fake.requests.length;
         const t = await status(c, { verbose: true });
         expect(fake.requests.slice(n).map((q) => `${q.method} ${q.path}`)).toEqual(["GET /api/v1/me", "GET /api/v1/inbox"]);
         expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. No browser link recorded\. Inbox: empty\.$/m);
         expect(t).toContain(`npm: fmrl-mcp 9.9.9 is the latest; this session runs ${VERSION}, so restart the client that started it to pick it up.`);
         expect(asked).toBe(1);
-        // The probes are not the user's calls: the last call is still the publish.
-        expect(await status(c)).toMatch(/^Last call: POST \/publish → 201 in \d+ ms, just now\.$/m);
+        // The probes are not the user's calls: the last call is still the read.
+        expect(await status(c)).toMatch(/^Last call: GET \/docs\/…\/revisions\/1 → 200 in \d+ ms, just now\.$/m);
       });
     });
     it("probes without a key rather than minting one", async () => {

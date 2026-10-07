@@ -70,8 +70,8 @@ Each `PUT /api/v1/me/rings` contains at most 50 boxes and no repeated prefix. Re
 
 Production code only seals ring boxes; it has no vault opener or vault private-key input. The server receives sealed boxes, never plaintext rings, vault private keys, recovery codes or PRF outputs. Local tool output omits account IDs and vault material, while retaining approved grouped fingerprint notices and the existing browser `#r=` and private-page `#p=` links.
 
+Ring uploads include the validated, pinned fingerprint used to seal every box. A server key change returns `409 vault_changed`; the client never automatically retries. `400 bad_request` stops the pass without isolation. `account_vault: null` preserves whoami identity/quota/link data but leaves vault sync unknown with a fixed diagnostic.
+
 ## License
 
 MIT, Too Great LLC.
-
-Ring uploads include the validated, pinned fingerprint used to seal every box. A server key change returns `409 vault_changed`; the client never automatically retries. `400 bad_request` stops the pass without isolation. `account_vault: null` preserves whoami identity/quota/link data but leaves vault sync unknown with a fixed diagnostic.

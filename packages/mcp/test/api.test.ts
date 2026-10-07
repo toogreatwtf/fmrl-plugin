@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiError, FmrlApi } from "../src/api.js";
-import { startFakeApi, type FakeApi } from "./fake-api.js";
+import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
 import fx from "./fixtures/vault.json";
 import { newRing, sealRecord } from "../src/crypto.js";
 
@@ -327,5 +327,41 @@ describe("FmrlApi", () => {
       await expect(api.watch(key, other.id)).rejects.toMatchObject({ status: 409, code: "watch_limit" });
       expect((await api.watch(key, pub.id)).rev).toBe(1); // re-watching an already-watched page never hits the cap
     });
+  });
+});
+
+describe("lastCall", () => {
+  it("remembers the most recent request's method, path, status and timing, with page ids blanked", async () => {
+    expect(api.lastCall).toBeUndefined();
+    const { key } = await api.mint("x");
+    expect(api.lastCall).toMatchObject({ method: "POST", path: "/keys" });
+    expect(api.lastCall!.status).toBeLessThan(300);
+    const pub = await api.publish(key, { content: "# hi" });
+    await api.get(key, pub.id);
+    expect(api.lastCall).toMatchObject({ method: "GET", path: "/docs/…", status: 200 });
+    expect(api.lastCall!.code).toBeUndefined();
+    expect(api.lastCall!.ms).toBeGreaterThanOrEqual(0);
+    expect(api.lastCall!.at).toBeGreaterThan(Date.now() - 5_000);
+    await api.revisions(key, pub.id);
+    expect(api.lastCall).toMatchObject({ method: "GET", path: "/docs/…/revisions", status: 200 });
+    await api.get(key, "nope").catch(() => undefined);
+    expect(api.lastCall).toMatchObject({ method: "GET", path: "/docs/…", status: 404, code: "not_found" });
+  });
+  it("a per-call timeout bounds that one request, and a call that is not to be recorded leaves lastCall alone", async () => {
+    const { key } = await api.mint("x");
+    const before = api.lastCall;
+    const slow = new FmrlApi(fake.baseUrl, { fetchImpl: hangingFetch });
+    const t0 = Date.now();
+    await expect(slow.me(key, { timeoutMs: 20 })).rejects.toMatchObject({ status: 0, code: "timeout", message: `No answer from ${fake.baseUrl}/api/v1 within 0.02s.` });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(slow.lastCall).toMatchObject({ method: "GET", path: "/me", status: 0, code: "timeout" });
+    await api.me(key, { record: false });
+    await api.inbox(key, { record: false });
+    expect(api.lastCall).toBe(before);
+  });
+  it("records no answer at all as status 0 with the failure's code", async () => {
+    const dead = new FmrlApi("http://127.0.0.1:1");
+    await dead.me("fmrl_x").catch(() => undefined);
+    expect(dead.lastCall).toMatchObject({ method: "GET", path: "/me", status: 0, code: "network" });
   });
 });

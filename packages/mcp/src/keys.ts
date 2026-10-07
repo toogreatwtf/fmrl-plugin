@@ -18,6 +18,18 @@ export interface KeyStoreOptions {
   log?: (line: string) => void;
 }
 
+/** KeyFacts is what fmrl_status says about this machine's key, read without minting anything. */
+export interface KeyFacts {
+  prefix: string;
+  /** source is where the key comes from: FMRL_API_KEY, or the credentials file. */
+  source: "env" | "file";
+  file: string;
+  /** createdAt is when a stored key was minted; absent for a key from the environment, or one redeemed from a key code. */
+  createdAt?: string;
+  /** ring is where the key's ring comes from: FMRL_RING, the file, or nowhere yet. */
+  ring: "env" | "file" | "none";
+}
+
 /** MINT_LABEL is the name every key this plugin mints starts with; the MCP client's name replaces it as it fills an empty one. */
 export const MINT_LABEL = "fmrl-mcp";
 
@@ -224,6 +236,21 @@ export class KeyStore {
     if (this.cached) return this.cached;
     const stored = (await readCredentials(this.o.file, this.o.log)).keys[this.o.baseUrl];
     return stored?.key ? (this.cached = stored.key) : undefined;
+  }
+
+  /**
+   * peek describes the key calls would use and where its ring is, by
+   * reading alone: it never mints a key or a ring, and never writes.
+   * undefined when there is no key yet.
+   */
+  async peek(): Promise<KeyFacts | undefined> {
+    const key = await this.storedKey();
+    if (!key) return undefined;
+    const file = await readCredentials(this.o.file, this.o.log);
+    const source = this.o.apiKeyFromEnv ? "env" : "file";
+    const ring = this.o.ringFromEnv ? "env" : storedRing(file, this.o.baseUrl, key) ? "file" : "none";
+    const createdAt = source === "file" ? file.keys[this.o.baseUrl]?.created_at : undefined;
+    return { prefix: keyPrefix(file, this.o.baseUrl, key), source, file: this.o.file, ...(createdAt ? { createdAt } : {}), ring };
   }
 
   /** prefixFor is key's prefix as the server names it: the stored entry's when key is its secret, else key's first characters; see keyPrefix. */

@@ -16,6 +16,8 @@ import type { PageStore } from "./pages.js";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { VaultSync, type VaultSyncResult } from "./vault-sync.js";
 import { pluginInstructions, pluginLine, pluginStatus, type PluginSurface } from "./plugin.js";
+import { latestOnNpm as latestOnNpmDefault } from "./registry.js";
+import { newestCachedPlugin, statusText, type ApiCheck, type NpmCheck, type StatusSnapshot } from "./status.js";
 
 // The version the server reports to MCP clients is the package's, read at
 // runtime, so a release bump in package.json cannot leave this behind.
@@ -40,6 +42,12 @@ export interface ServerDeps {
   offerAutoUpdate?: boolean;
   /** autoUpdatePass is whether Claude Code's plugin auto-update pass can run in this environment (autoupdate.autoUpdatePass); undefined reads as it can. */
   autoUpdatePass?: AutoUpdatePass;
+  /** latestOnNpm is fmrl_status's verbose question to the npm registry (registry.latestOnNpm); tests answer it themselves. */
+  latestOnNpm?: () => Promise<string>;
+  /** nonessentialTrafficOff is CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: then fmrl_status never asks npm. */
+  nonessentialTrafficOff?: boolean;
+  /** probeTimeoutMs bounds each of fmrl_status's verbose calls to fmrl.site; 3 s unless a test says otherwise. */
+  probeTimeoutMs?: number;
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -768,6 +776,82 @@ export function createServer(deps: ServerDeps): McpServer {
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }
+    },
+  );
+
+  /**
+   * fmrl_status answers from this process and the files beside the key:
+   * nothing is minted, written or asked of the network unless verbose, and
+   * then each probe carries its own timeout (probeTimeoutMs), so a hung
+   * site aborts the request rather than leaving it running, and is not
+   * recorded as lastCall, which stays the user's own last call. The key is
+   * used as it is, never named, replaced or minted. Text only — no
+   * structured content — so a client that prefers the structured half
+   * never hides a line.
+   */
+  const startedAt = Date.now();
+  const probe = { timeoutMs: deps.probeTimeoutMs ?? 3000, record: false };
+  const apiCheck = async (): Promise<ApiCheck> => {
+    const k = await keys.storedKey();
+    const t0 = Date.now();
+    try {
+      // No key: a bare GET /me answers 401, which says the site is up without spending a mint.
+      const me = await api.me(k ?? "", probe);
+      const ms = Date.now() - t0;
+      if (!k) return { kind: "no_key", ms };
+      let inbox: number | undefined;
+      try { inbox = (await api.inbox(k, probe)).items.length; } catch { inbox = undefined; }
+      return { kind: "ok", ms, me, inbox };
+    } catch (e) {
+      const ms = Date.now() - t0;
+      if (!(e instanceof ApiError) || e.status === 0) return { kind: "down", why: errorText(e) };
+      if (!k) return { kind: "no_key", ms };
+      if (e.status === 401) return { kind: "rejected", ms, code: e.code };
+      return { kind: "error", ms, status: e.status, code: e.code };
+    }
+  };
+  const npmCheck = async (): Promise<NpmCheck> => {
+    if (deps.nonessentialTrafficOff) return { kind: "skipped", why: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set" };
+    try {
+      return { kind: "latest", version: await (deps.latestOnNpm ?? latestOnNpmDefault)() };
+    } catch (e) {
+      return { kind: "failed", why: errorText(e) };
+    }
+  };
+  const snapshot = async (verbose: boolean): Promise<StatusSnapshot> => {
+    const now = Date.now();
+    const client = server.server.getClientVersion();
+    const s: StatusSnapshot = {
+      server: VERSION,
+      upMs: now - startedAt,
+      ...(client ? { client: { name: client.name, version: client.version } } : {}),
+      surface: deps.pluginSurface ?? "unknown",
+      pluginRoot: deps.pluginRoot,
+      pluginLine: pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface),
+      installed: plugin?.installed,
+      newerCached: deps.pluginRoot && plugin ? await newestCachedPlugin(deps.pluginRoot, plugin.installed) : undefined,
+      baseUrl: api.viewerBase,
+      key: await keys.peek(),
+      pages: await pages.count(),
+      lastCall: api.lastCall,
+      now,
+    };
+    if (verbose) {
+      const [a, n] = await Promise.all([apiCheck(), npmCheck()]);
+      s.network = { api: a, npm: n };
+    }
+    return s;
+  };
+  server.registerTool(
+    "fmrl_status",
+    {
+      title: "This fmrl-mcp's status",
+      description: "How this fmrl-mcp is doing, from memory and local files alone: its version and uptime, what launched it, the installed plugin and whether it is current, the key and key ring on this machine, and the last API call. verbose adds the network checks: whether fmrl.site answers and how fast, this month's quota, the inbox, and the newest fmrl-mcp on npm. It never mints a key, writes a file or changes anything.",
+      inputSchema: { verbose: z.boolean().optional().describe("Add the network checks: reachability, quota, inbox and npm. Each is bounded, so the answer takes a few seconds at most.") },
+    },
+    async ({ verbose }) => {
+      const s = await snapshot(verbose === true);
+      return { content: [{ type: "text", text: statusText(s) }] };
     },
   );
 

@@ -16,6 +16,11 @@ export interface FakeDoc {
   /** watchers maps a watching key to the revision it last saw. */
   watchers?: Map<string, number>;
 }
+/** hangingFetch never answers, but honours the request's AbortSignal as fetch does: when the signal fires it rejects with a TimeoutError. A fake that ignored the signal would hide a timeout that works. */
+export const hangingFetch = ((_url: unknown, init?: RequestInit) => new Promise<Response>((_, reject) => {
+  init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })));
+})) as typeof fetch;
+
 export interface RequestLog { method: string; path: string; auth?: string; body?: unknown; manageToken?: string }
 
 export interface FakeApi {

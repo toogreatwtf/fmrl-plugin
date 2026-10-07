@@ -40,9 +40,18 @@ export interface PluginStatus {
 const IDENTS = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
 const SEMVER = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-${IDENTS})?(?:\\+${IDENTS})?$`);
 
-function majorMinor(v: string): [number, number] | undefined {
+/** semverParts is a strict SemVer string's major, minor and patch; undefined for anything else. A prerelease or build suffix is ignored. */
+export function semverParts(v: string): [number, number, number] | undefined {
   const m = SEMVER.exec(v);
-  return m ? [Number(m[1]), Number(m[2])] : undefined;
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+}
+/** compareVersions orders two strict SemVer strings on major, minor, patch: negative, zero or positive, as a sort comparator. */
+export function compareVersions(a: [number, number, number], b: [number, number, number]): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+function majorMinor(v: string): [number, number] | undefined {
+  const p = semverParts(v);
+  return p ? [p[0], p[1]] : undefined;
 }
 const short = (v: string) => majorMinor(v)!.join(".");
 

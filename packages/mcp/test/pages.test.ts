@@ -159,3 +159,16 @@ describe("PageStore", () => {
     expect(asideNames).toHaveLength(1);
   });
 });
+
+describe("PageStore.count", () => {
+  it("counts the pages remembered for this base URL alone, zero on a fresh store", async () => {
+    const file = path.join(await mkdtemp(path.join(tmpdir(), "fmrl-")), "pages.json");
+    const store = new PageStore("https://fmrl.test", file);
+    expect(await store.count()).toBe(0);
+    await store.remember("aaaaaa", { manage: "m1" });
+    await store.remember("bbbbbb", { key: "k2" });
+    await store.remember("aaaaaa", { key: "k1" });
+    await new PageStore("https://other.test", file).remember("cccccc", { manage: "m3" });
+    expect(await store.count()).toBe(2);
+  });
+});

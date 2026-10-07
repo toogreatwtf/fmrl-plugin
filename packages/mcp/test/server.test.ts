@@ -14,7 +14,8 @@ import { KeyStore } from "../src/keys.js";
 import { PageStore } from "../src/pages.js";
 import { createServer, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
-import { startFakeApi, type FakeApi } from "./fake-api.js";
+import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
+import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;
 type ToolResult = { content: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown>; isError?: boolean };
@@ -310,9 +311,9 @@ describe("account vault sync integration", () => {
 });
 
 describe("tools", () => {
-  it("lists exactly the eleven tools", async () => {
+  it("lists exactly the twelve tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_watch", "fmrl_whoami"]);
+    expect(names).toEqual(["fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
   });
   it("fmrl_publish mints a key on first use and returns url, expiry, the seven-days line and the manage link", async () => {
     const r = await call("fmrl_publish", { content: "# Hello", title: "Hello" });
@@ -1642,5 +1643,126 @@ describe("key codes, rotation and revocation", () => {
     } finally {
       await c.close();
     }
+  });
+});
+
+describe("fmrl_status", () => {
+  /** cache lays out a plugin cache directory with one manifest per version and answers the root for `started`, the way CLAUDE_PLUGIN_ROOT names it. */
+  const cache = async (versions: string[], started: string): Promise<string> => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fmrl-cache-"));
+    for (const v of versions) {
+      await mkdir(path.join(dir, v, ".claude-plugin"), { recursive: true });
+      await writeFile(path.join(dir, v, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "fmrl", version: v }));
+    }
+    return path.join(dir, started);
+  };
+  const [major, minor] = VERSION.split(".");
+  const current = `${major}.${minor}.0`;
+  const status = async (c: Client, args: Record<string, unknown> = {}) => text((await c.callTool({ name: "fmrl_status", arguments: args })) as ToolResult);
+  const withDeps = async (extra: Partial<ServerDeps>, fn: (c: Client) => Promise<void>, api = new FmrlApi(fake.baseUrl)) => {
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys, ...extra });
+    try { await fn(c); } finally { await c.close(); }
+  };
+
+  it("answers from local state alone: no request, no key minted, nothing written, text only", async () => {
+    const r = await call("fmrl_status");
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toBeUndefined();
+    expect(fake.requests).toHaveLength(0);
+    expect((await readCredentials(credFile)).keys).toEqual({});
+    const lines = text(r).split("\n");
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toMatch(new RegExp(`^fmrl-mcp ${VERSION.replace(/\./g, "\\.")}, up \\d+ s, launched by test 0\\.$`));
+    expect(lines[1]).toBe(NO_PLUGIN_LINE);
+    expect(lines[2]).toBe(`API ${fake.baseUrl}: no key yet, the first publish mints one (nothing was minted now); no pages remembered.`);
+    expect(lines[3]).toBe("No API call yet this session.");
+    expect(lines[4]).toBe(VERBOSE_HINT);
+  });
+  it("describes the key, its ring, the pages remembered and the last call once other tools have run", async () => {
+    const pub = await call("fmrl_publish", { content: "# Hello" });
+    // A publish ends with the vault sync's own calls, so read the page back: the last call is then the read, with its id blanked.
+    await call("fmrl_get", { id: (pub.structuredContent as { id: string }).id });
+    const n = fake.requests.length;
+    const t = text(await call("fmrl_status"));
+    expect(fake.requests).toHaveLength(n);
+    expect(t).toMatch(/^API .*: key fmrl_[A-Za-z0-9]{4}… from .*credentials\.json, minted 2026-09-08; key ring in that file; 1 page remembered\.$/m);
+    expect(t).toMatch(/^Last call: GET \/docs\/…\/revisions\/1 → 200 in \d+ ms, just now\.$/m);
+  });
+  it("carries the plugin line, names the launcher, and says when a newer plugin is already installed beside this session's", async () => {
+    await withDeps({ pluginRoot: await cache([current], current), pluginSurface: "claude-cli" }, async (c) => {
+      const t = await status(c);
+      expect(t).toContain("launched by extra 0 (Claude Code CLI).");
+      expect(t).toContain(`The fmrl plugin is up to date (plugin ${current}, fmrl-mcp ${VERSION}).`);
+      expect(t).not.toContain("already installed");
+    });
+    await withDeps({ pluginRoot: await cache(["0.3.0", "9.9.9"], "0.3.0"), pluginSurface: "claude-cli" }, async (c) => {
+      const t = await status(c);
+      expect(t).toContain(`The fmrl plugin is out of date: installed 0.3, fmrl-mcp is at ${major}.${minor}.`);
+      expect(t).toContain("Plugin 9.9.9 is already installed, but this session started on 0.3.0: restart Claude Code to load it.");
+    });
+    await withDeps({ pluginRoot: "/nonexistent/fmrl/0.1.0" }, async (c) => {
+      expect(await status(c)).toContain("Plugin: manifest unreadable under /nonexistent/fmrl/0.1.0.");
+    });
+  });
+  describe("verbose", () => {
+    it("asks fmrl.site and npm, in a bounded time, and never names or replaces the key", async () => {
+      let asked = 0;
+      await withDeps({ latestOnNpm: async () => { asked++; return "9.9.9"; } }, async (c) => {
+        const pub = (await c.callTool({ name: "fmrl_publish", arguments: { content: "# Hello" } })) as ToolResult;
+        await c.callTool({ name: "fmrl_get", arguments: { id: (pub.structuredContent as { id: string }).id } });
+        const n = fake.requests.length;
+        const t = await status(c, { verbose: true });
+        expect(fake.requests.slice(n).map((q) => `${q.method} ${q.path}`)).toEqual(["GET /api/v1/me", "GET /api/v1/inbox"]);
+        expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. No browser link recorded\. Inbox: empty\.$/m);
+        expect(t).toContain(`npm: fmrl-mcp 9.9.9 is the latest; this session runs ${VERSION}, so restart the client that started it to pick it up.`);
+        expect(asked).toBe(1);
+        // The probes are not the user's calls: the last call is still the read.
+        expect(await status(c)).toMatch(/^Last call: GET \/docs\/…\/revisions\/1 → 200 in \d+ ms, just now\.$/m);
+      });
+    });
+    it("probes without a key rather than minting one", async () => {
+      await withDeps({ latestOnNpm: async () => VERSION }, async (c) => {
+        const t = await status(c, { verbose: true });
+        expect(fake.requests.map((q) => `${q.method} ${q.path} ${q.auth ?? "-"}`)).toEqual(["GET /api/v1/me -"]);
+        expect((await readCredentials(credFile)).keys).toEqual({});
+        expect(t).toMatch(/: reachable, \d+ ms \(answered 401 without a key, as expected\)\.$/m);
+        expect(t).toContain(`npm: fmrl-mcp ${VERSION} is the latest.`);
+      });
+    });
+    it("reports a refused key without replacing it", async () => {
+      await withDeps({ latestOnNpm: async () => VERSION }, async (c) => {
+        await c.callTool({ name: "fmrl_publish", arguments: { content: "# Hello" } });
+        const key = keyOf(firstPublish());
+        fake.revoked.add(key);
+        const t = await status(c, { verbose: true });
+        expect(t).toMatch(/: reachable, \d+ ms, but it refused key fmrl_[A-Za-z0-9]{4}… \(key_revoked\); nothing was replaced\. fmrl_whoami says how to get a new one\.$/m);
+        expect((await readCredentials(credFile)).keys[fake.baseUrl].key).toBe(key);
+        expect(fake.requests.filter((q) => q.path === "/api/v1/keys")).toHaveLength(1);
+      });
+    });
+    it("skips npm where nonessential traffic is off, and says when npm did not answer", async () => {
+      let asked = 0;
+      await withDeps({ nonessentialTrafficOff: true, latestOnNpm: async () => { asked++; return "9.9.9"; } }, async (c) => {
+        expect(await status(c, { verbose: true })).toContain("npm: not checked (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set).");
+        expect(asked).toBe(0);
+      });
+      await withDeps({ latestOnNpm: async () => { throw new Error("No answer from the npm registry within 3 s."); } }, async (c) => {
+        expect(await status(c, { verbose: true })).toContain("npm: not reached (No answer from the npm registry within 3 s.).");
+      });
+    });
+    it("says fmrl.site is unreachable, and gives up on an API that hangs within the bound", async () => {
+      await withDeps({ latestOnNpm: async () => VERSION }, async (c) => {
+        expect(await status(c, { verbose: true })).toMatch(/^http:\/\/127\.0\.0\.1:1: unreachable \(Couldn't reach http:\/\/127\.0\.0\.1:1\/api\/v1: .*\)\.$/m);
+      }, new FmrlApi("http://127.0.0.1:1"));
+      await withDeps({ latestOnNpm: async () => VERSION, probeTimeoutMs: 50 }, async (c) => {
+        const t0 = Date.now();
+        const t = await status(c, { verbose: true });
+        expect(Date.now() - t0).toBeLessThan(2_000);
+        expect(t).toMatch(/: unreachable \(No answer from http:\/\/127\.0\.0\.1:\d+\/api\/v1 within 0\.05s\.\)\.$/m);
+        // The hung probe was aborted, not left to land in lastCall later.
+        expect(await status(c)).toContain("No API call yet this session.");
+      }, new FmrlApi(fake.baseUrl, { fetchImpl: hangingFetch }));
+    });
   });
 });

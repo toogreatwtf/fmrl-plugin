@@ -1,17 +1,19 @@
-import type { Stats } from "node:fs";
+import { readFileSync, type Stats } from "node:fs";
+import { createECDH } from "node:crypto";
 import { mkdir, mkdtemp, unlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FmrlApi } from "../src/api.js";
+import { ApiError, FmrlApi } from "../src/api.js";
 import { readCredentials, writeCredentials } from "../src/credentials.js";
 import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/crypto.js";
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
 import { PageStore } from "../src/pages.js";
 import { createServer, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
+import { vaultFingerprint } from "../src/vault-crypto.js";
 import { startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;
@@ -24,6 +26,7 @@ const RING_PAIR = /#r=([A-Za-z0-9_]{1,16})\.([A-Za-z0-9_-]{43})$/;
 const keyOf = (q: { auth?: string }) => (q.auth as string).slice("Bearer ".length);
 // The first publish request: naming the key (GET /me) comes before the first tool call's own work.
 const firstPublish = () => fake.requests.find((q) => q.path === "/api/v1/publish")!;
+const lastPublish = () => fake.requests.filter((q) => q.path === "/api/v1/publish").at(-1)!;
 const pagesAt = () => new PageStore(fake.baseUrl, pagesFile);
 const connect = async (deps: Omit<ServerDeps, "pages"> & Partial<Pick<ServerDeps, "pages">>, clientName = "extra"): Promise<Client> => {
   const s = createServer({ pages: pagesAt(), ...deps });
@@ -49,6 +52,263 @@ beforeEach(async () => {
 });
 afterEach(async () => { await client.close(); await fake.close(); });
 
+
+describe("account vault sync integration", () => {
+  const fx = JSON.parse(readFileSync(new URL("./fixtures/vault.json", import.meta.url), "utf8")) as { pub: string; fingerprint: string; vault_key: string; private_pkcs8: string };
+  const second = createECDH("prime256v1");
+  second.generateKeys();
+  const pub2 = second.getPublicKey().toString("base64url");
+  const next = { pub: pub2, fingerprint: vaultFingerprint(pub2) };
+  const synced = (f: string) => `Private page keys: synced to your fmrl account (vault ${f}).`;
+  const firstPin = (f: string) => `First sync: pinned your account's vault ${f}. If /account shows a different fingerprint, tell me.`;
+  const noVault = "Private page keys: not synced (this key isn't in an account, or the account hasn't turned on sync).";
+  const changed = `Your account's vault fingerprint changed from ${fx.fingerprint} to ${next.fingerprint}, so I didn't send your key rings. If you reset private page sync on fmrl.site/account and it shows ${next.fingerprint}, ask me to trust it.`;
+  const ringRequests = () => fake.requests.filter(q => q.path === "/api/v1/me/rings");
+  const seed = async (vault = true) => {
+    const minted = await new FmrlApi(fake.baseUrl).mint("test");
+    await writeCredentials(credFile, { version: 1, keys: { [fake.baseUrl]: { ...minted, ring: newRing() } } });
+    if (vault) fake.accountVaults.set(minted.key, { pub: fx.pub, fingerprint: fx.fingerprint });
+    return minted.key;
+  };
+  const warm = async () => { await call("fmrl_list"); return fake.requests.length; };
+
+  it.each(["environment-only", "different", "equal"])("whoami vault status reflects the actual %s environment ring", async mode => {
+    const key = await seed();
+    const saved = await readCredentials(credFile); const stored = saved.keys[fake.baseUrl].ring!;
+    if (mode === "environment-only") { delete saved.keys[fake.baseUrl].ring; await writeCredentials(credFile, saved); }
+    const api = new FmrlApi(fake.baseUrl);
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile, ringFromEnv: mode === "equal" ? stored : newRing() });
+    const c = await connect({ api, keys });
+    try {
+      const result = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
+      expect(result.isError).not.toBe(true);
+      expect(text(result)).toContain(RING_ENV_LINE);
+      if (mode === "equal") expect(text(result)).toContain(synced(fx.fingerprint));
+      else {
+        expect(text(result)).not.toContain("Private page keys:");
+        expect(fake.ringBatches).toEqual([]);
+        expect(fake.ringBoxes.has(fake.prefixOf(key))).toBe(false);
+      }
+    } finally { await c.close(); }
+  });
+  it("whoami without an account vault uses the exact not-synced line", async () => {
+    await seed(false);
+    const r = await call("fmrl_whoami");
+    expect(text(r)).toContain(noVault);
+    expect(text(r)).not.toContain("Signing in does not back up private-page keys");
+    expect(ringRequests()).toHaveLength(0);
+  });
+  it("whoami sync uses its fresh me, pins once and strips account_vault", async () => {
+    await seed();
+    const offset = await warm();
+    const a = await call("fmrl_whoami");
+    expect(text(a)).toContain(synced(fx.fingerprint));
+    expect(text(a)).toContain(firstPin(fx.fingerprint));
+    expect(a.structuredContent).not.toHaveProperty("account_vault");
+    expect(text(a)).toContain(RING_FILE_LINE(credFile));
+    expect(text(a)).not.toContain("Signing in does not back up private-page keys");
+    const b = await call("fmrl_whoami");
+    expect(text(b)).toContain(synced(fx.fingerprint));
+    expect(text(b)).not.toContain(firstPin(fx.fingerprint));
+    expect(fake.requests.slice(offset).map(q => [q.method, q.path])).toEqual([
+      ["GET", "/api/v1/me"], ["PUT", "/api/v1/me/rings"],
+      ["GET", "/api/v1/me"], ["PUT", "/api/v1/me/rings"],
+    ]);
+  });
+  it("vault changes require exact trust and never automatically repin", async () => {
+    const key = await seed();
+    await call("fmrl_whoami");
+    fake.accountVaults.set(key, next);
+    const offset = ringRequests().length;
+    const a = await call("fmrl_whoami");
+    expect(text(a)).toContain(changed);
+    expect(text(a)).not.toContain(synced(next.fingerprint));
+    expect(ringRequests()).toHaveLength(offset);
+    const wrong = await call("fmrl_whoami", { trust_vault: fx.fingerprint });
+    expect(text(wrong)).not.toContain(synced(next.fingerprint));
+    expect((await readCredentials(credFile)).vault_pins).toEqual({ [fake.baseUrl]: fx.fingerprint });
+    expect(ringRequests()).toHaveLength(offset);
+    const trusted = await call("fmrl_whoami", { trust_vault: next.fingerprint });
+    expect(text(trusted)).toContain(synced(next.fingerprint));
+    expect((await readCredentials(credFile)).vault_pins).toEqual({ [fake.baseUrl]: next.fingerprint });
+    expect(ringRequests()).toHaveLength(offset + 1);
+  });
+  it("incorrect first trust never pins or uploads a vault", async () => {
+    await seed();
+    const tool = (await client.listTools()).tools.find(t => t.name === "fmrl_whoami")!;
+    expect(tool.inputSchema.properties).toHaveProperty("trust_vault");
+    const r = await call("fmrl_whoami", { trust_vault: next.fingerprint });
+    expect(r.isError).toBeFalsy();
+    expect(text(r)).not.toContain("Private page keys:");
+    expect(text(r)).not.toContain("First sync:");
+    expect((await readCredentials(credFile)).vault_pins).toBeUndefined();
+    expect(ringRequests()).toHaveLength(0);
+  });
+  it.each([429, 500, 401])("vault sync %s preserves whoami success without a false status, and first pin appears once", async status => {
+    await seed();
+    fake.ringStatus = status;
+    const r = await call("fmrl_whoami");
+    expect(r.isError).toBeFalsy();
+    expect(text(r)).not.toContain("Private page keys:");
+    expect(text(r)).toContain(firstPin(fx.fingerprint));
+    expect(text(await call("fmrl_whoami"))).not.toContain("First sync:");
+    expect(fake.requests.filter(q => q.path === "/api/v1/keys")).toHaveLength(1);
+    expect(ringRequests()).toHaveLength(2);
+  });
+  it("null account vault preserves primary whoami identity quota and link", async () => {
+    const key = await seed(); fake.accountVaults.set(key, null);
+    const r = await call("fmrl_whoami");
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toMatchObject({ prefix: fake.prefixOf(key), quota: { publishes: { used: 0 } }, link_url: expect.any(String) });
+    expect(r.structuredContent).not.toHaveProperty("account_vault");
+    expect(text(r)).not.toContain("Private page keys:"); expect(ringRequests()).toHaveLength(0);
+  });
+  it("malformed vault is unknown and stripped from whoami output", async () => {
+    const key = await seed();
+    fake.accountVaults.set(key, { pub: fx.pub, fingerprint: next.fingerprint });
+    const r = await call("fmrl_whoami");
+    expect(r.isError).toBeFalsy();
+    expect(text(r)).not.toContain("Private page keys:");
+    expect(text(r)).not.toContain("First sync:");
+    expect(r.structuredContent).not.toHaveProperty("account_vault");
+    expect(ringRequests()).toHaveLength(0);
+  });
+  it.each([false, true])("every successful inline and file publish syncs after success (linked=%s)", async linked => {
+    const key = await seed();
+    if (linked) fake.linked.add(key);
+    const offset = await warm();
+    const file = path.join(dir, "sync.md");
+    await writeFile(file, "# File sync");
+    const replies = [];
+    for (const priv of [false, true]) {
+      replies.push(await call("fmrl_publish", { content: "# Inline sync", private: priv }));
+      replies.push(await call("fmrl_publish_file", { path: file, private: priv }));
+    }
+    expect(replies.every(r => !r.isError)).toBe(true);
+    expect(fake.requests.slice(offset).map(q => [q.method, q.path, q.auth])).toEqual(
+      Array.from({ length: 4 }, () => [
+        ["POST", "/api/v1/publish", `Bearer ${key}`],
+        ["GET", "/api/v1/me", `Bearer ${key}`],
+        ["PUT", "/api/v1/me/rings", `Bearer ${key}`],
+      ]).flat(),
+    );
+    expect(text(replies[0])).toContain(firstPin(fx.fingerprint));
+    expect(replies.slice(1).every(r => !text(r).includes("First sync:"))).toBe(true);
+    expect(replies.every(r => !text(r).includes("Private page keys:"))).toBe(true);
+    expect(fake.publishes.get(key)).toBe(4);
+    if (linked) expect(replies.every(r => !r.structuredContent?.link_url)).toBe(true);
+    else expect(replies.every(r => RING_PAIR.test(r.structuredContent?.link_url as string))).toBe(true);
+    for (const r of replies.slice(2)) expect(r.structuredContent?.url).toContain("#p=");
+  });
+  it("two identical publishes and two whoami calls sync four times without throttle", async () => {
+    await seed();
+    const offset = await warm();
+    await call("fmrl_publish", { content: "# Same" });
+    await call("fmrl_publish", { content: "# Same" });
+    await call("fmrl_whoami");
+    await call("fmrl_whoami");
+    expect(fake.requests.slice(offset).filter(q => q.path === "/api/v1/me")).toHaveLength(4);
+    expect(ringRequests()).toHaveLength(4);
+  });
+  it("blank, oversized, denied and failed publishes never sync", async () => {
+    const key = await seed();
+    const offset = await warm();
+    const big = path.join(dir, "oversized.md");
+    await writeFile(big, "a".repeat(MAX_BYTES + 1));
+    expect((await call("fmrl_publish", { content: " " })).isError).toBe(true);
+    expect((await call("fmrl_publish", { content: "a".repeat(MAX_BYTES), private: true })).isError).toBe(true);
+    expect((await call("fmrl_publish_file", { path: big })).isError).toBe(true);
+    fake.quota = 0;
+    expect((await call("fmrl_publish", { content: "# Denied" })).isError).toBe(true);
+    fake.quota = 25;
+    expect((await call("fmrl_publish", { content: "a".repeat(MAX_BYTES + 1) })).isError).toBe(true);
+    expect(fake.requests.slice(offset).filter(q => q.path === "/api/v1/me")).toHaveLength(0);
+    expect(ringRequests()).toHaveLength(0);
+    expect(fake.publishes.get(key)).toBeUndefined();
+  });
+  it("publish replacing an invalid stored key syncs with its replacement bearer", async () => {
+    const key = await seed();
+    await warm();
+    fake.keys.delete(key);
+    const offset = fake.requests.length;
+    // The server only learns the replacement after mint; advertise the vault there.
+    const original = fake.accountVaults.get.bind(fake.accountVaults);
+    const has = fake.accountVaults.has.bind(fake.accountVaults);
+    fake.accountVaults.has = k => fake.keys.has(k) || has(k);
+    fake.accountVaults.get = k => original(k) ?? { pub: fx.pub, fingerprint: fx.fingerprint };
+    const r = await call("fmrl_publish", { content: "# Replacement" });
+    expect(r.isError).toBeFalsy();
+    const replacement = (await readCredentials(credFile)).keys[fake.baseUrl].key;
+    expect(replacement).not.toBe(key);
+    expect(ringRequests()).toHaveLength(2);
+    expect(ringRequests().every(q => q.auth === `Bearer ${replacement}`)).toBe(true);
+    expect(fake.ringBoxes.has(fake.prefixOf(replacement))).toBe(true);
+    const successfulPublish = fake.requests.slice(offset).filter(q => q.path === "/api/v1/publish").at(-1)!;
+    expect(fake.requests.slice(fake.requests.indexOf(successfulPublish) + 1).map(q => q.path)).toEqual(["/api/v1/me", "/api/v1/me/rings", "/api/v1/me/rings"]);
+    expect(fake.publishes.get(replacement)).toBe(1);
+  });
+  it("vault sync 401 never remints or republishes a successful publish", async () => {
+    const key = await seed();
+    await warm();
+    fake.ringStatus = 401;
+    const r = await call("fmrl_publish", { content: "# Once" });
+    expect(r.isError).toBeFalsy();
+    expect(fake.requests.filter(q => q.path === "/api/v1/keys")).toHaveLength(1);
+    expect(fake.requests.filter(q => q.path === "/api/v1/publish")).toHaveLength(1);
+    expect(ringRequests()).toHaveLength(1);
+    expect(fake.publishes.get(key)).toBe(1);
+  });
+  it("primary revoked whoami preserves revocation and never syncs or mints", async () => {
+    const key = await seed();
+    await warm();
+    const offset = fake.requests.length;
+    fake.revoked.add(key);
+    const r = await call("fmrl_whoami");
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("was revoked, so it will not work again");
+    expect(fake.requests.slice(offset).map(q => q.path)).toEqual(["/api/v1/me"]);
+    expect(ringRequests()).toHaveLength(0);
+  });
+  it("concurrent publish sync notices stay with their invocation and appear once", async () => {
+    await seed();
+    await warm();
+    const results = await Promise.all([
+      call("fmrl_publish", { content: "# First" }),
+      call("fmrl_publish", { content: "# Second", private: true }),
+    ]);
+    expect(results.every(r => !r.isError)).toBe(true);
+    expect(results.filter(r => text(r).includes(firstPin(fx.fingerprint)))).toHaveLength(1);
+    expect(ringRequests()).toHaveLength(2);
+    expect(text(results[0])).not.toContain("This page is private:");
+    expect(text(results[1])).toContain("This page is private:");
+  });
+  it("vault sync secrets and raw error messages never leak through MCP results or logs", async () => {
+    const key = await seed();
+    fake.linked.add(key);
+    const rings = [newRing(), newRing(), newRing()];
+    const credentials = await readCredentials(credFile);
+    await writeCredentials(credFile, { ...credentials, rings: { fmrl_OLD1: rings[0], fmrl_OLD2: rings[1], fmrl_OLD3: rings[2] } });
+    const api = new FmrlApi(fake.baseUrl);
+    const me = api.me.bind(api);
+    api.me = async k => { const { link_url: ignored, ...rest } = await me(k); return rest; };
+    const logs: string[] = [];
+    const c = await connect({ api, keys: new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile }), log: l => logs.push(l) });
+    try {
+      const results = [(await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult];
+      expect(ringRequests()).toHaveLength(1);
+      const boxes = fake.ringBatches.flat().map(b => b.box);
+      const activeRing = (await readCredentials(credFile)).keys[fake.baseUrl].ring!;
+      api.putRings = async () => { throw new ApiError(500, "secret_error", [...rings, activeRing, fx.vault_key, fx.private_pkcs8, fx.pub, ...boxes].join("|")); };
+      results.push((await c.callTool({ name: "fmrl_publish", arguments: { content: "# Public" } })) as ToolResult);
+      results.push((await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult);
+      expect(results.every(r => !r.isError)).toBe(true);
+      const output = JSON.stringify({ results, logs });
+      for (const secret of [...rings, activeRing, fx.vault_key, fx.private_pkcs8, fx.pub, ...boxes]) expect(output).not.toContain(secret);
+      expect(logs).toEqual(["fmrl-mcp: vault sync failed", "fmrl-mcp: vault sync failed"]);
+    } finally { await c.close(); }
+  });
+});
+
 describe("tools", () => {
   it("lists exactly the eleven tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
@@ -71,19 +331,19 @@ describe("tools", () => {
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
     expect(r.structuredContent).toMatchObject({ link_url: `https://fmrl.test/link/code${id}#r=${prefix}.${ring}` });
-    expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/me", "/api/v1/publish"]);
+    expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/me", "/api/v1/publish", "/api/v1/me"]);
     expect(firstPublish().body).toEqual({ content: "# Hello", title: "Hello" });
   });
   it("fmrl_publish passes an explicit format", async () => {
     await call("fmrl_publish", { content: "x", format: "html" });
-    expect(fake.requests.at(-1)?.body).toEqual({ content: "x", format: "html" });
+    expect(lastPublish()?.body).toEqual({ content: "x", format: "html" });
   });
   it("fmrl_publish_file maps the extension, refuses others, and caps the size", async () => {
     const md = path.join(dir, "note.MD");
     await writeFile(md, "# From a file");
     const ok = await call("fmrl_publish_file", { path: md });
     expect(ok.isError).toBeFalsy();
-    expect(fake.requests.at(-1)?.body).toEqual({ content: "# From a file", format: "md" });
+    expect(lastPublish()?.body).toEqual({ content: "# From a file", format: "md" });
     const pdf = path.join(dir, "x.pdf");
     await writeFile(pdf, "%PDF");
     const bad = await call("fmrl_publish_file", { path: pdf });
@@ -229,7 +489,7 @@ describe("tools", () => {
     try {
       const r = await call("fmrl_publish_file", { path: `~/${name}` });
       expect(r.isError).toBeFalsy();
-      expect(fake.requests.at(-1)?.body).toEqual({ content: "# Home file", format: "md" });
+      expect(lastPublish()?.body).toEqual({ content: "# Home file", format: "md" });
     } finally {
       await unlink(abs);
     }
@@ -278,7 +538,7 @@ describe("tools", () => {
 
     const titled = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true, title: "Custom Title" });
     expect(titled.isError).toBeFalsy();
-    const titledBody = fake.requests.at(-1)?.body as { content: string; title?: string };
+    const titledBody = lastPublish()?.body as { content: string; title?: string };
     expect(titledBody.title).toBeUndefined();
     const titledKey = /#p=([A-Za-z0-9_-]{43})$/.exec((titled.structuredContent as { url: string }).url)![1];
     const titledHtml = await openEnvelope(titledBody.content, { key: titledKey });
@@ -345,10 +605,10 @@ describe("tools", () => {
     const html = "<!DOCTYPE html><html><head><title>Board notes</title></head><body><h1>Other</h1></body></html>";
     await call("fmrl_publish", { content: html, private: true });
     const ring = (await ringInFile())!;
-    const first = fake.requests.at(-1)!.body as { sealed: string };
+    const first = lastPublish().body as { sealed: string };
     expect((await openRecord(ring, first.sealed)).title).toBe("Board notes");
     await call("fmrl_publish", { content: html, private: true, title: "Custom" });
-    const second = fake.requests.at(-1)!.body as { sealed: string };
+    const second = lastPublish().body as { sealed: string };
     expect((await openRecord(ring, second.sealed)).title).toBe("Custom");
   });
   it("a publish with no link to relay mints no ring", async () => {
@@ -385,7 +645,7 @@ describe("tools", () => {
     try {
       const r = (await client2.callTool({ name: "fmrl_publish", arguments: { content: "# Still", private: true } })) as ToolResult;
       expect(r.isError).toBeFalsy();
-      expect(fake.requests.at(-1)!.body as Record<string, unknown>).not.toHaveProperty("sealed");
+      expect(lastPublish().body as Record<string, unknown>).not.toHaveProperty("sealed");
       expect((r.structuredContent as { url: string }).url).toMatch(/#p=[A-Za-z0-9_-]{43}$/);
       expect((r.structuredContent as { link_url: string }).link_url).not.toContain("#r=");
       // A link without #r= must not claim to carry the ring.
@@ -414,7 +674,7 @@ describe("tools", () => {
     expect(t).toContain("Link your browser to see your canvases");
     expect(t).toContain("If sign-in is available there, you can optionally");
     expect(t).toContain("other devices");
-    expect(t).toContain("Signing in does not back up private-page keys");
+    expect(t).not.toContain("Signing in does not back up private-page keys");
     expect(t).not.toContain("https://fmrl.site");
     expect(t).not.toContain(keyOf(fake.requests.at(-1)!));
     expect(fake.requests.some(q => q.path.includes("publish"))).toBe(false);

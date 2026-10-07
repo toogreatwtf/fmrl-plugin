@@ -62,10 +62,17 @@ describe("/fmrl:whoami", () => {
   });
   it("keeps account guidance optional and private-key backup distinct", () => {
     expect(skillText()).toContain("If sign-in is available there");
-    expect(skillText()).toContain("Signing in does not back up private-page keys");
+    expect(skillText()).toContain("back up the named credentials file");
     expect(skillText()).toContain("No plugin line means version information is unavailable");
     expect(skillText()).toContain("Codex: use Codex's plugin settings; never give Claude CLI commands");
     expect(skillText()).toContain("including its complete `#r=` fragment");
+  });
+  it("requires explicit vault fingerprint confirmation and retains recovery advice", () => {
+    const whoamiSkill = skillText();
+    expect(whoamiSkill).toContain("trust_vault");
+    expect(whoamiSkill).toContain("explicitly");
+    expect(whoamiSkill).toContain("fingerprint");
+    expect(whoamiSkill).not.toContain("Signing in does not back up private-page keys.");
   });
   it("keeps the link rules /fmrl:share keeps", () => {
     expect(skillText()).toMatch(/Never print the ring on its own/);

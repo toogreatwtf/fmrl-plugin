@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { isRing } from "./crypto.js";
+import { isVaultFingerprint } from "./vault-crypto.js";
 
 export interface StoredKey {
   key: string;
@@ -24,6 +25,18 @@ export interface CredentialsFile {
    * the first; readers take every value, whatever its name.
    */
   rings?: Record<string, string>;
+  /** Locally established canonical origin for each historical ring slot; absent means unknown. */
+  ring_origins?: Record<string, string>;
+  /** Canonical HTTP(S) origin to the explicitly accepted account-vault fingerprint. */
+  vault_pins?: Record<string, string>;
+}
+
+/** HTTP(S) origin normalization, rejecting credentials and non-network URLs. */
+export function credentialOrigin(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password ? url.origin : undefined;
+  } catch { return undefined; }
 }
 
 const EMPTY: CredentialsFile = { version: 1, keys: {} };
@@ -82,8 +95,8 @@ export async function moveAside<T>(
  * trust — unreadable, unparseable, or not a version-1 credentials file — is
  * moved aside rather than silently replaced, since the file may be the only
  * copy of a stored key's ring; see moveAside. Unknown top-level fields
- * (everything but rings, which is re-sanitized) round-trip untouched, and a
- * malformed rings entry is dropped.
+ * (everything but rings, ring_origins and vault_pins, which are re-sanitized) round-trip
+ * untouched, and malformed additive entries are dropped.
  */
 export async function readCredentials(file: string, log?: (line: string) => void): Promise<CredentialsFile> {
   const RING_NOTE = "Your old key and key ring are in that file.";
@@ -106,10 +119,23 @@ export async function readCredentials(file: string, log?: (line: string) => void
   // keys must be a record: typeof [] is "object" too, and an array would read
   // as holding no key for any base URL, so the next write would replace it.
   if (parsed && typeof parsed === "object" && parsed.version === 1 && parsed.keys && typeof parsed.keys === "object" && !Array.isArray(parsed.keys)) {
-    const { rings, ...rest } = parsed;
+    const { rings, ring_origins, vault_pins, ...rest } = parsed;
     const out: CredentialsFile = { ...(rest as object), version: 1, keys: { ...parsed.keys } } as CredentialsFile;
     const sanitized = Object.entries(rings && typeof rings === "object" ? rings : {}).filter(([, r]) => isRing(r));
     if (sanitized.length > 0) out.rings = Object.fromEntries(sanitized);
+    const origins = Object.entries(ring_origins && typeof ring_origins === "object" && !Array.isArray(ring_origins) ? ring_origins : {})
+      .filter(([name, origin]) => Object.hasOwn(out.rings ?? {}, name) && typeof origin === "string" && credentialOrigin(origin) === origin);
+    if (origins.length > 0) out.ring_origins = Object.fromEntries(origins);
+    const pins = Object.entries(vault_pins && typeof vault_pins === "object" && !Array.isArray(vault_pins) ? vault_pins : {})
+      .filter(([origin, fingerprint]) => {
+        if (!isVaultFingerprint(fingerprint)) return false;
+        try {
+          const url = new URL(origin);
+          return (url.protocol === "https:" || url.protocol === "http:") &&
+            !url.username && !url.password && url.origin === origin;
+        } catch { return false; }
+      });
+    if (pins.length > 0) out.vault_pins = Object.fromEntries(pins);
     return out;
   }
   return moveAside(file, "not a version 1 credentials file", { ...EMPTY, keys: {} }, RING_NOTE, log);

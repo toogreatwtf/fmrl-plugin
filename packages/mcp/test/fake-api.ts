@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
+import { isVaultFingerprint } from "../src/vault-crypto.js";
+import type { AccountVault, RingBoxInput } from "../src/api.js";
 
 /** FakeEditor and FakeRevision are the fake's in-memory shape of the server's editor and revision wire types. */
 export interface FakeEditor { kind: string; key?: string; name?: string }
@@ -22,6 +24,13 @@ export interface FakeApi {
   docs: Map<string, FakeDoc>;
   requests: RequestLog[];
   publishes: Map<string, number>;
+  accountVaults: Map<string, AccountVault | null>;
+  ringClaims: Map<string, Set<string>>;
+  ringBatches: RingBoxInput[][];
+  ringBoxes: Map<string, string>;
+  // Refusal seam only: no full edit limiter or on-curve server conformance simulation.
+  ringStatus?: number;
+  ringCode?: string;
   /** linked holds the keys a browser has been linked to: publish stops carrying link_url and me reports linked_at. */
   linked: Set<string>;
   /** labels holds each key's name (from mint's label or a later PATCH /me), "" until set. */
@@ -139,6 +148,10 @@ export async function startFakeApi(): Promise<FakeApi> {
     docs: new Map(),
     requests: [],
     publishes: new Map(),
+    accountVaults: new Map(),
+    ringClaims: new Map(),
+    ringBatches: [],
+    ringBoxes: new Map(),
     linked: new Set(),
     labels: new Map(),
     quota: 25,
@@ -161,7 +174,7 @@ export async function startFakeApi(): Promise<FakeApi> {
     prefixes.set(fresh, api.prefixOf(key));
     api.keys.delete(key);
     api.keys.add(fresh);
-    for (const m of [api.labels, api.publishes] as Map<string, unknown>[]) {
+    for (const m of [api.labels, api.publishes, api.accountVaults] as Map<string, unknown>[]) {
       if (m.has(key)) { m.set(fresh, m.get(key)); m.delete(key); }
     }
     if (api.linked.delete(key)) api.linked.add(fresh);
@@ -361,12 +374,45 @@ export async function startFakeApi(): Promise<FakeApi> {
       const pinned = d.title === "PINNED";
       return json(res, 200, { id: d.id, url: `https://fmrl.test/${d.id}`, rev: d.rev, expires_at: pinned ? null : "2026-09-15T12:00:00Z", status: d.status ?? "live", watching });
     }
+    if (method === "PUT" && url.pathname === "/api/v1/me/rings") {
+      const key = auth();
+      if (!key) return unauthorized();
+      if (!api.accountVaults.has(key)) return api.linked.has(key) ?
+        fail(res, 409, "no_vault", "") : fail(res, 403, "not_claimed", "");
+      if (api.ringStatus !== undefined) return fail(res, api.ringStatus, api.ringCode ?? ({ 403: "not_claimed", 409: "vault_changed", 404: "not_found" }[api.ringStatus] ?? `ring_${api.ringStatus}`), "");
+      const fingerprint = body && typeof body === "object" && !Array.isArray(body) ?
+        (body as { fingerprint?: unknown }).fingerprint : undefined;
+      if (fingerprint !== undefined && !isVaultFingerprint(fingerprint)) return fail(res, 400, "bad_request", "");
+      if (fingerprint !== undefined && fingerprint !== api.accountVaults.get(key)?.fingerprint) return fail(res, 409, "vault_changed", "");
+      const boxes = body && typeof body === "object" && !Array.isArray(body) ?
+        (body as { boxes?: unknown }).boxes : undefined;
+      if (!Array.isArray(boxes) || boxes.length > 50) return fail(res, 400, "bad_request", "");
+      const seen = new Set<string>();
+      for (const row of boxes) {
+        if (!row || typeof row !== "object" || Array.isArray(row) ||
+            typeof row.prefix !== "string" || row.prefix.length !== 9 || !/^fmrl_[A-Za-z0-9]{4}$/.test(row.prefix) ||
+            typeof row.box !== "string" || row.box.length !== 167 || !/^[A-Za-z0-9_-]+$/.test(row.box)) {
+          return fail(res, 400, "bad_request", "");
+        }
+        const rawBox = Buffer.from(row.box, "base64url");
+        if (rawBox.length !== 125 || rawBox[0] !== 4 || rawBox.toString("base64url") !== row.box || seen.has(row.prefix)) {
+          return fail(res, 400, "bad_request", "");
+        }
+        const owned = api.ringClaims.get(key) ?? new Set([api.prefixOf(key)]);
+        if (!owned.has(row.prefix)) return fail(res, 400, "ring_ownership", "");
+        seen.add(row.prefix);
+      }
+      // Validation is atomic; a refused batch never changes last-writer rows.
+      api.ringBatches.push(boxes);
+      for (const { prefix, box } of boxes) api.ringBoxes.set(prefix, box);
+      return json(res, 200, { stored: boxes.length });
+    }
     if (method === "GET" && url.pathname === "/api/v1/me") {
       if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout
       const key = auth();
       if (!key) return unauthorized();
       const rotatedAt = api.rotatedAt.get(api.prefixOf(key));
-      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), link_url: "https://fmrl.test/link/fresh" });
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), link_url: "https://fmrl.test/link/fresh" });
     }
     if (method === "POST" && url.pathname === "/api/v1/me/rotate") {
       const key = auth();

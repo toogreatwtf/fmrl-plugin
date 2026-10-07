@@ -14,6 +14,7 @@ import { openPrivatePage } from "./opener.js";
 import { readProfile, type ProfileRead } from "./profile.js";
 import type { PageStore } from "./pages.js";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
+import { VaultSync, type VaultSyncResult } from "./vault-sync.js";
 import { pluginInstructions, pluginLine, pluginStatus, type PluginSurface } from "./plugin.js";
 
 // The version the server reports to MCP clients is the package's, read at
@@ -75,6 +76,15 @@ export function withRing(linkUrl: string, prefix: string, ring: string): string 
   return `${linkUrl}${linkUrl.includes("#") ? "&" : "#"}r=${prefix}.${ring}`;
 }
 export const RING_FILE_LINE = (file: string) => `Your key ring is in ${file}; back up that file to keep every page's key.`;
+const FIRST_PIN = (f: string) => `First sync: pinned your account's vault ${f}. If /account shows a different fingerprint, tell me.`;
+const SYNCED = (f: string) => `Private page keys: synced to your fmrl account (vault ${f}).`;
+const NOT_SYNCED = "Private page keys: not synced (this key isn't in an account, or the account hasn't turned on sync).";
+const CHANGED = (old: string, next: string) => `Your account's vault fingerprint changed from ${old} to ${next}, so I didn't send your key rings. If you reset private page sync on fmrl.site/account and it shows ${next}, ask me to trust it.`;
+
+function pinNotice(result: VaultSyncResult, notices: string[]): void {
+  if ("firstPin" in result && result.firstPin && result.fingerprint) notices.push(FIRST_PIN(result.fingerprint));
+}
+
 export const RING_ENV_LINE = "Your key ring comes from FMRL_RING; back up that value to keep every page's key.";
 const RING_UNSAVED_LINE = (file: string, why: string) => `Couldn't save a key ring to ${file} (${why}); private pages publish without their key sealed until it can be written, or FMRL_RING is set.`;
 
@@ -243,7 +253,7 @@ function meText(m: MeResponse, ringLine: string, plugin: string | undefined): st
   if (m.rotated_at) lines.push(`Last rotated ${m.rotated_at}.`);
   if (m.link_url) lines.push(`Browser: Link your browser to see your canvases: open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)} If sign-in is available there, you can optionally connect this plugin to your account to find its canvases on other devices.`);
   else lines.push("No browser link was supplied. If you have a previously linked browser, use it to view your canvases; this result cannot connect a new browser.");
-  return [...lines, `${ringLine} Signing in does not back up private-page keys.`, ...(plugin ? [plugin] : [])].join("\n");
+  return [...lines, ringLine, ...(plugin ? [plugin] : [])].join("\n");
 }
 
 /** revokedText says a key was revoked, and how this machine gets a new one: a stored key is replaced by the next tool that needs one; FMRL_API_KEY never is, and without it the file's key, if any, is used. */
@@ -350,6 +360,7 @@ export function createServer(deps: ServerDeps): McpServer {
   const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
 
   const log = deps.log;
+  const vault = new VaultSync({ api, keys, log });
 
   /** ringOrNothing is keys.ringFor for a caller that must not fail on it: a page goes out without a sealed record, and a link without a ring, rather than not at all. */
   const ringOrNothing = async (k: string): Promise<string | undefined> => {
@@ -367,16 +378,19 @@ export function createServer(deps: ServerDeps): McpServer {
    * #r= so the browser that redeems it holds the ring too. It runs inside
    * withKey, so a retry after a 401 seals under the replacement key's ring.
    */
-  const publishAs = async (k: string, body: PublishRequest, secret?: { key: string; title: string }): Promise<PublishResponse> => {
+  const publishAs = async (k: string, body: PublishRequest, notices: string[], secret?: { key: string; title: string }): Promise<PublishResponse> => {
     let ring: string | undefined;
     if (secret) {
       ring = await ringOrNothing(k);
       if (ring) body = { ...body, sealed: await sealRecord(ring, secret.key, secret.title) };
     }
-    const p = await api.publish(k, body);
-    if (!p.link_url) return p;
-    ring ??= await ringOrNothing(k);
-    return ring ? { ...p, link_url: withRing(p.link_url, await keys.prefixFor(k), ring) } : p;
+    let p = await api.publish(k, body);
+    if (p.link_url) {
+      ring ??= await ringOrNothing(k);
+      if (ring) p = { ...p, link_url: withRing(p.link_url, await keys.prefixFor(k), ring) };
+    }
+    pinNotice(await vault.sync(k), notices);
+    return p;
   };
 
   /** refOpts tells the id parser which host, besides fmrl.site, serves pages: the configured base (a preview, fmrl.test), so a house page's slug in a link there is read too. */
@@ -441,12 +455,15 @@ export function createServer(deps: ServerDeps): McpServer {
     if (content.trim() === "") {
       return fail("Nothing to publish: the content is empty.");
     }
+    const notices: string[] = [];
+    const render = (p: PublishResponse, privatePage: boolean): string =>
+      [privatePage ? privateText(p) : publishText(p), ...notices].join("\n");
     if (!priv) {
       return run<PublishResponse & Record<string, unknown>>(async (k) => {
-        const p = await publishAs(k, { content, format, title });
+        const p = await publishAs(k, { content, format, title }, notices);
         await remember(p.id, { manage: manageTokenOf(p.manage_url) });
         return p as PublishResponse & Record<string, unknown>;
-      }, publishText);
+      }, p => render(p, false));
     }
     let prepared: Awaited<ReturnType<typeof preparePrivate>>;
     try {
@@ -456,11 +473,11 @@ export function createServer(deps: ServerDeps): McpServer {
     }
     return run<PublishResponse & Record<string, unknown>>(
       async (k) => {
-        const p = await publishAs(k, prepared.body, { key: prepared.key, title: prepared.title });
+        const p = await publishAs(k, prepared.body, notices, { key: prepared.key, title: prepared.title });
         await remember(p.id, { key: prepared.key, manage: manageTokenOf(p.manage_url) });
         return withFragment(p, prepared.key) as PublishResponse & Record<string, unknown>;
       },
-      privateText,
+      p => render(p, true),
     );
   };
 
@@ -720,10 +737,11 @@ export function createServer(deps: ServerDeps): McpServer {
     {
       title: "This fmrl.site key",
       description: "The key's prefix, how many of this month's free publishes it has used, recorded browser-link history, a browser link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
-      inputSchema: {},
+      inputSchema: { trust_vault: z.string().optional() },
       outputSchema: meOutput,
     },
-    async () => {
+    async ({ trust_vault }) => {
+      const notices: string[] = [];
       let ringLine = "";
       let used = "";
       try {
@@ -738,9 +756,15 @@ export function createServer(deps: ServerDeps): McpServer {
           } catch (e) {
             ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
           }
-          return (me.link_url && ring ? { ...me, link_url: withRing(me.link_url, me.prefix, ring) } : me) as MeResponse & Record<string, unknown>;
+          const synced = await vault.sync(k, { me, trust: trust_vault });
+          if (synced.state === "synced") notices.push(SYNCED(synced.fingerprint));
+          else if (synced.state === "none") notices.push(NOT_SYNCED);
+          else if (synced.state === "changed") notices.push(CHANGED(synced.previous, synced.fingerprint));
+          pinNotice(synced, notices);
+          const { account_vault: ignoredVault, ...publicMe } = me;
+          return (publicMe.link_url && ring ? { ...publicMe, link_url: withRing(publicMe.link_url, publicMe.prefix, ring) } : publicMe) as MeResponse & Record<string, unknown>;
         }, { replaceRevoked: false });
-        return ok(meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface)), m);
+        return ok([meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface)), ...notices].join("\n"), m);
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }

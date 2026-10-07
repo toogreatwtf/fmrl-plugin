@@ -34,7 +34,11 @@ async function main(): Promise<void> {
   // the offer, which the server cannot see. Asking once too few beats
   // asking every day.
   const offerAutoUpdate = shouldOffer(autoUpdate, await alreadyOffered(state), plugin !== undefined, pass) && (await claimOffer(state));
-  const server = createServer({ api, keys, pages, log, agentName: cfg.agentName, pluginRoot, pluginSurface: surface, autoUpdate, offerAutoUpdate, autoUpdatePass: pass });
+  const server = createServer({
+    api, keys, pages, log, agentName: cfg.agentName, pluginRoot, pluginSurface: surface, autoUpdate, offerAutoUpdate, autoUpdatePass: pass,
+    // Read raw, as the CLI reads it: any value at all means no traffic the user did not ask for.
+    nonessentialTrafficOff: Boolean(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC),
+  });
   await server.connect(new StdioServerTransport());
 }
 

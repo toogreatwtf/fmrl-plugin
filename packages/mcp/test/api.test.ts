@@ -329,3 +329,27 @@ describe("FmrlApi", () => {
     });
   });
 });
+
+describe("lastCall", () => {
+  it("remembers the most recent request's method, path, status and timing, with page ids blanked", async () => {
+    expect(api.lastCall).toBeUndefined();
+    const { key } = await api.mint("x");
+    expect(api.lastCall).toMatchObject({ method: "POST", path: "/keys" });
+    expect(api.lastCall!.status).toBeLessThan(300);
+    const pub = await api.publish(key, { content: "# hi" });
+    await api.get(key, pub.id);
+    expect(api.lastCall).toMatchObject({ method: "GET", path: "/docs/…", status: 200 });
+    expect(api.lastCall!.code).toBeUndefined();
+    expect(api.lastCall!.ms).toBeGreaterThanOrEqual(0);
+    expect(api.lastCall!.at).toBeGreaterThan(Date.now() - 5_000);
+    await api.revisions(key, pub.id);
+    expect(api.lastCall).toMatchObject({ method: "GET", path: "/docs/…/revisions", status: 200 });
+    await api.get(key, "nope").catch(() => undefined);
+    expect(api.lastCall).toMatchObject({ method: "GET", path: "/docs/…", status: 404, code: "not_found" });
+  });
+  it("records no answer at all as status 0 with the failure's code", async () => {
+    const dead = new FmrlApi("http://127.0.0.1:1");
+    await dead.me("fmrl_x").catch(() => undefined);
+    expect(dead.lastCall).toMatchObject({ method: "GET", path: "/me", status: 0, code: "network" });
+  });
+});

@@ -17,17 +17,19 @@ describe("the plugin manifest", () => {
     expect(majorMinor(manifest.version)).toBe(majorMinor(pkg.version));
   });
   it("names every tool, as the READMEs' tables do", () => {
-    const tools = ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_redeem", "fmrl_rotate"];
+    const tools = ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"];
     for (const t of tools) {
       expect(manifest.description).toContain(`${t}`);
       for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme)).toContain(`| \`${t}\` |`);
     }
-    expect(read("README.md")).toContain("Any MCP client gets eleven tools:");
-    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets eleven tools:");
+    expect(read("README.md")).toContain("Any MCP client gets twelve tools:");
+    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets twelve tools:");
   });
-  it("names both slash commands", () => {
-    expect(manifest.description).toContain("/fmrl:share");
-    expect(manifest.description).toContain("/fmrl:whoami");
+  it("names all three slash commands, as the READMEs do", () => {
+    for (const cmd of ["/fmrl:share", "/fmrl:whoami", "/fmrl:status"]) {
+      expect(manifest.description).toContain(cmd);
+      for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme), readme).toContain(`\`${cmd}\``);
+    }
   });
 });
 
@@ -80,6 +82,33 @@ describe("/fmrl:whoami", () => {
   });
   it("is what a stale plugin's instructions point to after the restart", () => {
     expect(pluginInstructions({ installed: "0.3.0", server: pkg.version, stale: true }, undefined, undefined, "claude-cli")).toContain("/fmrl:whoami");
+  });
+});
+
+describe("/fmrl:status", () => {
+  let cached: string | undefined;
+  const skillText = () => (cached ??= read("plugins/fmrl/skills/status/SKILL.md"));
+  it("is a skill named status, taking an optional verbose argument, that calls fmrl_status once", () => {
+    expect(skillText()).toMatch(/^---\nname: status\ndescription: .+\nargument-hint: \[verbose\]\n---\n/);
+    expect(skillText()).toContain("`fmrl_status`");
+    expect(skillText()).toMatch(/once/);
+    expect(skillText()).toContain("`verbose: true`");
+  });
+  it("relays the result unchanged, with no other tool and no shell", () => {
+    expect(skillText()).toMatch(/unchanged/);
+    expect(skillText()).toMatch(/no other tool/i);
+    expect(skillText()).toMatch(/shell/i);
+  });
+  it("says what to do when the tool is missing, and when a second fmrl server is connected", () => {
+    expect(skillText()).toContain("/mcp");
+    expect(skillText()).toMatch(/not connected/i);
+    expect(skillText()).toMatch(/second fmrl/i);
+  });
+  it("never mints, updates, or prints a key", () => {
+    expect(skillText()).toMatch(/Never mint/i);
+    expect(skillText()).toMatch(/Never (update|run the update)/i);
+    expect(skillText()).toMatch(/Never print/i);
+    expect(skillText()).toMatch(/Never edit installed plugin caches/);
   });
 });
 

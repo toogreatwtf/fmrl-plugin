@@ -46,7 +46,7 @@ const a = await connect("a", "e2e-a", "Agent A");
 const tools = (await a.listTools()).tools.map((t) => t.name);
 console.log("tools:", tools.join(" "));
 check(tools.includes("fmrl_list"), "fmrl_list is offered");
-check(tools.length === 9, `nine tools offered (got ${tools.length})`);
+check(tools.length === 12, `twelve tools offered (got ${tools.length})`);
 
 const who = await a.callTool({ name: "fmrl_whoami", arguments: {} });
 console.log("whoami:", redact(who.content[0].text.split("\n")[0]));

@@ -509,3 +509,22 @@ describe("KeyStore vault pins", () => {
     expect(await store.pinVault("https://fmrl.site", fingerprint())).toEqual({ kind: "accepted", first: true });
   });
 });
+
+describe("peek", () => {
+  it("describes the stored key and its ring without minting either", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    expect(await store.peek()).toBeUndefined();
+    const k = await store.getKey();
+    expect(await store.peek()).toEqual({ prefix: k.slice(0, 9), source: "file", file, createdAt: expect.any(String), ring: "none" });
+    await store.ringFor(k);
+    expect((await store.peek())!.ring).toBe("file");
+    expect(fake.requests.map((r) => r.path)).toEqual(["/api/v1/keys"]);
+  });
+  it("names the environment as the source of a key or ring that comes from it, and a redeemed key has no mint date", async () => {
+    const store = new KeyStore({ api, baseUrl: fake.baseUrl, file, apiKeyFromEnv: "fmrl_" + "E".repeat(32), ringFromEnv: "R".repeat(43) });
+    expect(await store.peek()).toEqual({ prefix: "fmrl_EEEE", source: "env", file, ring: "env" });
+    expect(fake.requests).toHaveLength(0);
+    await writeCredentials(file, { version: 1, keys: { [fake.baseUrl]: { key: "fmrl_" + "D".repeat(32), prefix: "fmrl_RDMD" } } });
+    expect(await new KeyStore({ api, baseUrl: fake.baseUrl, file }).peek()).toEqual({ prefix: "fmrl_RDMD", source: "file", file, ring: "none" });
+  });
+});

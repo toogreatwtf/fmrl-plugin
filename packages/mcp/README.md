@@ -32,9 +32,9 @@ curl -sX POST https://fmrl.site/api/v1/publish \
 
 ## What you get
 
-In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page. Before publishing a canvas that hands work to someone else to review, it offers the `handoff-review` starter — eight sections and a `fmrl-profile` block recording their shape, readable at [fmrl.site/h4ndrv](https://fmrl.site/h4ndrv). `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date.
+In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page. Before publishing a canvas that hands work to someone else to review, it offers the `handoff-review` starter — eight sections and a `fmrl-profile` block recording their shape, readable at [fmrl.site/h4ndrv](https://fmrl.site/h4ndrv). `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date. `/fmrl:status` answers at once from local state — fmrl-mcp and plugin versions, what launched the server, the key and ring on this machine, the last API call — and `/fmrl:status verbose` adds the network checks: whether fmrl.site answers, quota, inbox, and the newest fmrl-mcp on npm.
 
-Any MCP client gets eleven tools:
+Any MCP client gets twelve tools:
 
 | Tool | Does |
 |---|---|
@@ -47,6 +47,7 @@ Any MCP client gets eleven tools:
 | `fmrl_list` | nothing → every page this key owns, newest first (50 at most); a private page with its title and keyed link when this machine holds the key ring |
 | `fmrl_delete` | an id or a viewer URL → removes a page this key published |
 | `fmrl_whoami` | optional `trust_vault` (the exact grouped vault fingerprint the person explicitly confirmed on `/account`) → the key's prefix, this month's quota, whether it is named and by what, whether a browser is linked to it, a fresh link to link one when the server offers it (carrying the key ring after `#r=`), when its secret was last rotated, where the key ring is kept, and, when the Claude Code plugin launched it and its manifest reads, whether that plugin is up to date; supplied account-vault sync and fingerprint notices. A revoked key is reported, not replaced, with how to get a new one |
+| `fmrl_status` | optional `verbose` → this server's version and uptime, what launched it, the installed plugin and whether it is current (and whether a newer one is already installed beside it, waiting for a restart), the key and key ring on this machine, and the last API call — from memory and local files, at once, minting and writing nothing. `verbose` adds whether fmrl.site answers and how fast, this month's quota, the inbox, and the newest fmrl-mcp on npm, each call bounded to a few seconds |
 | `fmrl_redeem` | `code`, a key code from the fmrl.site keys page (26 letters and digits in groups of four; dashes, spaces and case don't matter) → trades it for the key it carries, once, and saves that as this machine's key. A key rotated from a browser reaches its agent this way; say "Redeem my fmrl key code …" |
 | `fmrl_rotate` | nothing → replaces the key's secret and saves the new one; the old secret stops working at once, and the prefix, pages, name, quota, linked browsers, connected apps and key ring stay |
 

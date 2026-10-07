@@ -36,6 +36,9 @@ export interface WatchResponse { id: string; url: string; private: boolean; rev:
 /** InboxItem is one page with unread revisions: only revisions made by a key other than the watcher's own. */
 export interface InboxItem { id: string; url: string; private: boolean; status: string; rev: number; seen_rev: number; revisions: { rev: number; at: string; editor: Editor }[] }
 
+/** LastCall is what the client remembers of its most recent request, for fmrl_status: never a body, a key or a page id (ids in paths are blanked). status 0 is no answer at all, and code says why. */
+export interface LastCall { method: string; path: string; status: number; code?: string; ms: number; at: number }
+
 /** ApiError is any non-2xx answer: the contract's code and message, plus resets_at on a 402, retryAfterSeconds on a 429, and rev on a 409 conflict. A network failure (no response at all) is status 0, code "network". */
 export class ApiError extends Error {
   constructor(
@@ -58,6 +61,8 @@ export function isRevoked(e: unknown): boolean {
 
 /** FmrlApi is the thin HTTP client for /api/v1. It knows nothing about keys on disk. */
 export class FmrlApi {
+  /** lastCall is the most recent request this client made, however it ended; undefined until the first. */
+  lastCall?: LastCall;
   private readonly root: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
@@ -146,7 +151,23 @@ export class FmrlApi {
     return this.call<WatchResponse>("POST", "/inbox/seen", key, { id, rev });
   }
 
+  /** call is every request: it records lastCall whatever happens, then answers or throws as request does. */
   private async call<T>(method: string, path: string, key?: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+    const at = Date.now();
+    const record = (status: number, code?: string) => {
+      this.lastCall = { method, path: path.replace(/^\/docs\/[^/]+/, "/docs/…"), status, ...(code ? { code } : {}), ms: Date.now() - at, at };
+    };
+    try {
+      const r = await this.request<T>(method, path, key, body, extraHeaders);
+      record(r.status);
+      return r.value;
+    } catch (e) {
+      if (e instanceof ApiError) record(e.status, e.code);
+      throw e;
+    }
+  }
+
+  private async request<T>(method: string, path: string, key?: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<{ status: number; value: T }> {
     const headers: Record<string, string> = { Accept: "application/json", ...this.extraHeaders, ...extraHeaders };
     if (key) headers.Authorization = `Bearer ${key}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -166,10 +187,10 @@ export class FmrlApi {
       throw new ApiError(0, "network", `Couldn't reach ${this.root}: ${cause}`);
     }
     const text = await res.text();
-    if (res.status === 204) return undefined as T;
+    if (res.status === 204) return { status: 204, value: undefined as T };
     let parsed: unknown;
     try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = undefined; }
-    if (res.ok) return parsed as T;
+    if (res.ok) return { status: res.status, value: parsed as T };
     const err = (parsed as { error?: { code?: string; message?: string; resets_at?: string; rev?: number } } | undefined)?.error;
     const retryAfterHeader = res.headers.get("retry-after");
     const retryAfterSeconds = retryAfterHeader !== null && /^\d+$/.test(retryAfterHeader) ? parseInt(retryAfterHeader, 10) : undefined;

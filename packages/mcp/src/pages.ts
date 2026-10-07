@@ -87,6 +87,11 @@ export class PageStore {
     return { ...file.pages[this.baseUrl]?.[id] };
   }
 
+  /** count is how many pages this machine remembers for this base URL; it reads only. */
+  async count(): Promise<number> {
+    return Object.keys((await readPages(this.file)).pages[this.baseUrl] ?? {}).length;
+  }
+
   /** remember merges s into what is stored for id: an undefined field in s leaves the stored value for that field as it was. */
   async remember(id: string, s: PageSecrets): Promise<void> {
     await this.serialize(async () => {

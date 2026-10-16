@@ -99,8 +99,7 @@ const RING_UNSAVED_LINE = (file: string, why: string) => `Couldn't save a key ri
 function publishTextLines(p: PublishResponse, expiryLine: string): string[] {
   const lines = [
     `Published: ${p.url}`,
-    `Expires ${p.expires_at}`,
-    expiryLine,
+    ...(p.expires_at === null ? ["No scheduled expiry."] : [`Expires ${p.expires_at}`, expiryLine]),
     `Recovery link (grants management and editing; does not remove the page; share the page URL with it): ${p.manage_url}`,
   ];
   if (p.attach_url) lines.push(LINK_HINT(p.attach_url));

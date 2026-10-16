@@ -142,3 +142,18 @@ it("strict inbox rejects undeclared editor fields", async () => {
  vi.spyOn(api,"inbox").mockResolvedValue({items:[{id:wire.publish.id,url:wire.publish.url,private:false,status:"live",rev:3,seen_rev:1,revisions:[{rev:3,at:wire.revision.at,editor}]}]});
  await expect(call("fmrl_inbox")).rejects.toThrow(/additional properties/);
 });
+
+it.each([false, true])("publish expiry text handles null and dated expiry (private=%s)", async privatePage => {
+ const publish = vi.spyOn(api,"publish");
+ publish.mockResolvedValue({...wire.publish,expires_at:null});
+ const noExpiry = await call("fmrl_publish",{content:"fixture",private:privatePage});
+ const text = JSON.stringify(noExpiry.content);
+ expect(text).toContain("No scheduled expiry.");
+ expect(text).not.toContain("Expires null");
+ expect(text).not.toContain("seven days");
+ publish.mockResolvedValue(wire.publish);
+ const dated = JSON.stringify((await call("fmrl_publish",{content:"fixture",private:privatePage})).content);
+ expect(dated).toContain(`Expires ${wire.publish.expires_at}`);
+ expect(dated).toContain("seven days");
+ expect(dated).not.toContain("No scheduled expiry.");
+});

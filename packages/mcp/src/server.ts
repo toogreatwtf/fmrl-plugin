@@ -100,9 +100,14 @@ function publishTextLines(p: PublishResponse, expiryLine: string): string[] {
   const lines = [
     `Published: ${p.url}`,
     ...(p.expires_at === null ? ["No scheduled expiry."] : [`Expires ${p.expires_at}`, expiryLine]),
-    `Recovery link (grants management and editing; does not remove the page; share the page URL with it): ${p.manage_url}`,
+    p.recovery === "usable"
+      ? `Recovery link (grants management and editing; does not remove the page; share the page URL with it): ${p.manage_url}`
+      : p.recovery === undefined
+        ? `Recovery state is not reported by this server. Keep this management link with the page URL: ${p.manage_url}`
+        : `Recovery is ${p.recovery}; this link cannot grant access.`,
   ];
   if (p.attach_url) lines.push(LINK_HINT(p.attach_url));
+  else if (p.link_url) lines.push(`Link a browser to this key: open ${p.link_url} in your browser.${ringCarried(p.link_url)}`);
   return lines;
 }
 function publishText(p: PublishResponse): string {
@@ -193,7 +198,7 @@ export const PRIVATE_NOTE = "private: pass the link with #p=<key> to read it";
 
 function editorText(e: Editor): string {
   const key = e.key ? `${e.key}…` : undefined;
-  const name = e.display_name || e.label;
+  const name = e.display_name || e.label || e.name;
   if (name) return key ? `${name} (${key})` : name;
   if (key) return key;
   if (e.kind === "session") return "a linked browser";
@@ -255,12 +260,17 @@ function listText(rows: PageRow[]): string {
 export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
 function meText(m: MeResponse, ringLine: string, plugin: string | undefined): string {
   const q = m.quota.publishes;
-  const linked = m.attached_at ? `This agent attached to its identity on ${m.attached_at}.` : "This agent is not attached to an identity.";
+  const linked = m.attached_at !== undefined
+    ? m.attached_at ? `This agent attached to its identity on ${m.attached_at}.` : "This agent is not attached to an identity."
+    : m.linked_at !== undefined
+      ? m.linked_at ? `A browser linked to this key on ${m.linked_at}.` : "No browser is linked to this key."
+      : "This server does not report identity attachment status.";
   const named = m.label ? `Named ${m.label}: the revisions this key makes carry that name.` : UNNAMED_LINE;
   const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, linked];
   if (m.rotated_at) lines.push(`Last rotated ${m.rotated_at}.`);
   if (m.attach_url) lines.push(LINK_HINT(m.attach_url));
-  else lines.push("No attach link was supplied.");
+  else if (m.link_url && m.attached_at === undefined) lines.push(`Link a browser to this key: open ${m.link_url} in your browser.${ringCarried(m.link_url)}`);
+  else if (m.attached_at === null) lines.push("No attach link is available here. A previously supplied link may still be live; this tool does not replace it.");
   return [...lines, ringLine, ...(plugin ? [plugin] : [])].join("\n");
 }
 
@@ -292,7 +302,7 @@ export const INBOX_EMPTY = "Nothing new: no page you watch has a revision someon
 
 /** editorName is who made a revision, as the inbox says it: the key's name, else its prefix, else the kind of editor. */
 function editorName(e: Editor): string {
-  return e.display_name || e.label || (e.key ? `${e.key}…` : e.kind);
+  return e.display_name || e.label || e.name || (e.key ? `${e.key}…` : e.kind);
 }
 function inboxLine(it: InboxRow): string {
   const revs = it.revisions.map((r) => `rev ${r.rev} by ${editorName(r.editor)}`).join(", ");
@@ -309,15 +319,15 @@ function inboxText(items: InboxRow[]): string {
 }
 
 const publishOutput = {
-  id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string().nullable(), status: z.string(), recovery: z.enum(["usable", "spent", "revoked"]),
-  attach_url: z.string().optional(),
+  id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string().nullable(), status: z.string(), recovery: z.enum(["usable", "spent", "revoked"]).optional(),
+  attach_url: z.string().optional(), link_url: z.string().optional(),
 };
 const pageOutput = {
   id: z.string(), url: z.string(), status: z.string(), format: z.string(), size: z.number(),
   expires_at: z.string().nullable(), pinned: z.boolean(), cid: z.string().optional(),
   private: z.boolean(), key_held: z.boolean().optional(), title: z.string().optional(),
 };
-const editorOutput = z.object({ kind: z.enum(["key", "session", "human", "manage", "anonymous", "unknown"]), key: z.string().optional(), label: z.string().optional(), display_name: z.string().optional() });
+const editorOutput = z.object({ kind: z.enum(["key", "session", "human", "manage", "anonymous", "unknown"]), key: z.string().optional(), label: z.string().optional(), display_name: z.string().optional(), name: z.string().optional() });
 const readOutput = {
   ...pageOutput,
   rev: z.number(), latest_rev: z.number(),
@@ -348,10 +358,15 @@ const inboxOutput = {
   })),
 };
 const meOutput = {
-  prefix: z.string(), created_at: z.string(), label: z.string(),
+  prefix: z.string(), created_at: z.string(), label: z.string().optional(),
   quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
-  attached_at: z.string().nullable(), rotated_at: z.string().optional(), attach_url: z.string().optional(),
+  attached_at: z.string().nullable().optional(), linked_at: z.string().nullable().optional(), link_url: z.string().optional(), rotated_at: z.string().optional(), attach_url: z.string().optional(),
 };
+function project<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new Error("The server response has invalid known fields; no write was retried.");
+  return parsed.data;
+}
 const redeemOutput = { prefix: z.string(), file: z.string(), replaced: z.string().optional() };
 const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string(), replaced: z.string().optional() };
 
@@ -392,12 +407,39 @@ export function createServer(deps: ServerDeps): McpServer {
       ring = await ringOrNothing(k);
       if (ring) body = { ...body, sealed: await sealRecord(ring, secret.key, secret.title) };
     }
-    let p = await api.publish(k, body);
-    if (p.attach_url) {
-      ring ??= await ringOrNothing(k);
-      if (ring) p = { ...p, attach_url: withRing(p.attach_url, await keys.prefixFor(k), ring) };
+    let raw: PublishResponse;
+    const publishStarted = Date.now();
+    try { raw = await api.publish(k, body); }
+    catch (e) {
+      if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) {
+        throw new Error("Publish outcome is uncertain. Do not republish automatically; use fmrl_list to reconcile the page first. No write was retried.");
+      }
+      throw e;
     }
+    // Preserve a private key whenever the successful reply identifies the page,
+    // even if another response field is malformed. Never lose it to schema drift.
+    if (secret && raw && typeof raw.id === "string" && /^[0-9abcdefghjkmnpqrstvwxyz]{12}$/.test(raw.id)) {
+      await remember(raw.id, {key: secret.key});
+    }
+    const parsed = z.object(publishOutput).safeParse(raw);
+    if (!parsed.success) throw new Error("Publish returned success but its response could not be validated. Do not republish; use fmrl_list to reconcile the page first. No write was retried.");
+    let p: PublishResponse = parsed.data;
+    api.noteAttachment(k, p, publishStarted);
+    if (p.attach_url || p.link_url || api.attachmentHint(k)) ring ??= await ringOrNothing(k);
+    // Keep the fresh post-publish vault read; it also observes attachment and
+    // any courtesy minted there. An attached response clears the cached hint.
     pinNotice(await vault.sync(k), notices);
+    const attach = api.attachmentHint(k);
+    if (attach) p.attach_url = attach;
+    else delete p.attach_url;
+    if (p.attach_url || p.link_url) {
+      ring ??= await ringOrNothing(k);
+      if (ring) {
+        const prefix = await keys.prefixFor(k);
+        if (p.attach_url) p.attach_url = withRing(p.attach_url, prefix, ring);
+        if (p.link_url) p.link_url = withRing(p.link_url, prefix, ring);
+      }
+    }
     return p;
   };
 
@@ -411,9 +453,23 @@ export function createServer(deps: ServerDeps): McpServer {
       log?.(`fmrl-mcp: couldn't remember page ${id}: ${errorText(e)}`);
     }
   };
-  /** manageTokenOf validates the recovery token in a publish response without requesting it. */
-  const manageTokenOf = (manageUrl: string): string | undefined => {
-    try { return parseRecoveryToken(manageUrl); } catch { return undefined; }
+  /** Legacy response links carry #k=; new responses use /c/. Neither is fetched. */
+  const manageTokenOf = (p: PublishResponse): string | undefined => {
+    if (p.recovery === "spent" || p.recovery === "revoked") return undefined;
+    try {
+      if (p.recovery === "usable") return parseRecoveryToken(p.manage_url);
+      const url = new URL(p.manage_url);
+      if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+      if (url.username || url.password || url.pathname !== `/manage/${p.id}`) return undefined;
+      return parsePageRef(p.manage_url, refOpts).manage;
+    } catch { return undefined; }
+  };
+  const rememberRecovery = async (p: PublishResponse): Promise<void> => {
+    if (p.recovery === "spent" || p.recovery === "revoked") {
+      try { await pages.forgetManage(p.id, parseRecoveryToken(p.manage_url)); } catch { /* never erase an unrelated token */ }
+      return;
+    }
+    await remember(p.id, {manage: manageTokenOf(p)});
   };
 
   /**
@@ -469,7 +525,7 @@ export function createServer(deps: ServerDeps): McpServer {
     if (!priv) {
       return run<PublishResponse & Record<string, unknown>>(async (k) => {
         const p = await publishAs(k, { content, format, title }, notices);
-        await remember(p.id, { manage: manageTokenOf(p.manage_url) });
+        await rememberRecovery(p);
         return p as PublishResponse & Record<string, unknown>;
       }, p => render(p, false));
     }
@@ -482,7 +538,8 @@ export function createServer(deps: ServerDeps): McpServer {
     return run<PublishResponse & Record<string, unknown>>(
       async (k) => {
         const p = await publishAs(k, prepared.body, notices, { key: prepared.key, title: prepared.title });
-        await remember(p.id, { key: prepared.key, manage: manageTokenOf(p.manage_url) });
+        await remember(p.id, { key: prepared.key });
+        await rememberRecovery(p);
         return withFragment(p, prepared.key) as PublishResponse & Record<string, unknown>;
       },
       p => render(p, true),
@@ -569,7 +626,7 @@ export function createServer(deps: ServerDeps): McpServer {
         const latest = d.rev ?? 1;
         const r = await api.getRevision(k, ref.id, rev ?? latest);
         at = r.at;
-        const read = (row: PageRow): PageRead => ({ ...row, rev: r.rev, latest_rev: latest, editor: r.editor });
+        const read = (row: PageRow): PageRead => ({ ...row, rev: r.rev, latest_rev: latest, editor: project(editorOutput, r.editor) });
         // The profile is read here, from the content as it reads after opening: the server never sees a private page's.
         const withContent = (row: PageRead, content: string, content_format: "html" | "md"): PageRead => ({ ...row, content, content_format, ...readProfile(content, content_format) });
         if (!d.private) return withContent(read(pageRow(d, undefined)), r.content, r.format);
@@ -586,7 +643,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_edit",
     {
       title: "Edit a fmrl.site page",
-      description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
+      description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token); a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
@@ -705,7 +762,7 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     async () => run<{ items: InboxRow[] }>(async (k) => {
       const { items } = await api.inbox(k);
-      return { items: await Promise.all(items.map(async (it) => ({ ...it, can_open: !it.private || (await keyHeld(it.id)) }))) };
+      return project(z.object(inboxOutput), { items: await Promise.all(items.map(async (it) => ({ ...it, can_open: !it.private || (await keyHeld(it.id)) }))) });
     }, (v) => inboxText(v.items)),
   );
 
@@ -772,7 +829,19 @@ export function createServer(deps: ServerDeps): McpServer {
           else if (synced.state === "changed") notices.push(CHANGED(synced.previous, synced.fingerprint));
           pinNotice(synced, notices);
           const { account_vault: ignoredVault, ...publicMe } = me;
-          return z.object(meOutput).parse(publicMe.attach_url && ring ? { ...publicMe, attach_url: withRing(publicMe.attach_url, publicMe.prefix, ring) } : publicMe);
+          const output = project(z.object(meOutput), publicMe);
+          api.noteAttachment(k, output);
+          if (output.attached_at === null) {
+            const hint = api.attachmentHint(k);
+            if (hint) output.attach_url = hint;
+            else delete output.attach_url;
+          }
+          else if (output.attached_at) delete output.attach_url;
+          if (ring) {
+            if (output.attach_url) output.attach_url = withRing(output.attach_url, output.prefix, ring);
+            if (output.link_url) output.link_url = withRing(output.link_url, output.prefix, ring);
+          }
+          return output;
         }, { replaceRevoked: false });
         return ok([meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface)), ...notices].join("\n"), m);
       } catch (e) {

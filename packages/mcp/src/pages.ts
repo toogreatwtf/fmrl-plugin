@@ -92,6 +92,18 @@ export class PageStore {
     return Object.keys((await readPages(this.file)).pages[this.baseUrl] ?? {}).length;
   }
 
+  /** Forget only this reported unusable token, never a newer token or the private key. */
+  async forgetManage(id: string, token: string): Promise<void> {
+    await this.serialize(async () => {
+      const file = await readPages(this.file);
+      const existing = file.pages[this.baseUrl]?.[id];
+      if (existing?.manage !== token) return;
+      const { manage: ignored, ...rest } = existing;
+      file.pages = { ...file.pages, [this.baseUrl]: { ...file.pages[this.baseUrl], [id]: rest } };
+      await writeJsonFile(this.file, file);
+    });
+  }
+
   /** remember merges s into what is stored for id: an undefined field in s leaves the stored value for that field as it was. */
   async remember(id: string, s: PageSecrets): Promise<void> {
     await this.serialize(async () => {

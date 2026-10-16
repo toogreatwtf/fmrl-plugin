@@ -146,7 +146,14 @@ function watchCount(api: FakeApi, key: string): number {
   return n;
 }
 
-export async function startFakeApi(): Promise<FakeApi> {
+export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<FakeApi> {
+  const attachExpiry = new Map<string, number>();
+  const courtesy = (key: string): string | undefined => {
+    const prefix = api.prefixOf(key);
+    if (api.linked.has(key) || (oneLiveAttach && (attachExpiry.get(prefix) ?? 0) > Date.now())) return undefined;
+    attachExpiry.set(prefix, Date.now() + 3600000);
+    return `https://fmrl.test/c/${randomBytes(16).toString("base64url")}`;
+  };
   /** prefixes maps a rotated secret to its record's prefix; a minted key's prefix is its own first 9 characters. */
   const prefixes = new Map<string, string>();
   const api: FakeApi = {
@@ -261,7 +268,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (watchCount(api, key) < api.watchLimit) {
         api.docs.get(id)!.watchers = new Map([[key, 1]]);
       }
-      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/c/${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", recovery: "usable", attach_url: api.linked.has(key) ? undefined : `https://fmrl.test/attach/code${id}` });
+      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/c/${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", recovery: "usable", attach_url: oneLiveAttach ? courtesy(key) : api.linked.has(key) ? undefined : `https://fmrl.test/attach/code${id}` });
     }
     const revisionsMatch = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)\/revisions$/);
     if (method === "GET" && revisionsMatch) {
@@ -423,7 +430,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       const key = auth();
       if (!key) return unauthorized();
       const rotatedAt = api.rotatedAt.get(api.prefixOf(key));
-      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), attach_url: "https://fmrl.test/attach/fresh" });
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), attach_url: oneLiveAttach ? courtesy(key) : "https://fmrl.test/attach/fresh" });
     }
     if (method === "POST" && url.pathname === "/api/v1/me/rotate") {
       const key = auth();

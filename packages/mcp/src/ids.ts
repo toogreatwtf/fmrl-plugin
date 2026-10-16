@@ -69,6 +69,7 @@ function extractId(input: string, opts: RefOptions = {}): string | undefined {
 /** withoutFragment is input up to its first "#": what a refusal may repeat, since a fragment can carry a page key or a manage token. */
 function withoutFragment(input: string): string {
   const s = input.trim();
+  if (MANAGE_TOKEN_SHAPE.test(s)) return "[recovery token]";
   try { if (new URL(s).pathname.startsWith("/c/")) return "[recovery link]"; } catch {}
   const i = s.indexOf("#");
   return i === -1 ? s : s.slice(0, i);

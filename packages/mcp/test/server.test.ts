@@ -328,10 +328,10 @@ describe("tools", () => {
       "Expires 2026-09-15T12:00:00Z",
       "This page lasts seven days unless someone keeps it on the page itself.",
       `Recovery link (grants management and editing; does not remove the page; share the page URL with it): https://fmrl.test/c/tok${id}manage0`,
-      `Attach this agent to your identity: open https://fmrl.test/attach/code${id}#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`,
+      `Attach this agent to your identity: open https://fmrl.test/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`,
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
-    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/code${id}#r=${prefix}.${ring}` });
+    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/fresh#r=${prefix}.${ring}` });
     expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/me", "/api/v1/publish", "/api/v1/me"]);
     expect(firstPublish().body).toEqual({ content: "# Hello", title: "Hello" });
   });
@@ -690,7 +690,7 @@ describe("tools", () => {
       const r = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
       expect(text(r)).toContain("This agent attached to its identity on 2026-09-16");
       expect(text(r)).not.toContain("browser linked");
-      expect(text(r)).toContain("No attach link was supplied");
+      expect(text(r)).not.toContain("No attach link");
       expect(text(r)).not.toMatch(/https?:\/\//);
       expect(text(r)).not.toContain("you are signed in");
     } finally { await c.close(); }
@@ -964,7 +964,7 @@ describe("fmrl_edit", () => {
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_edit")!;
-    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
+    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token); a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
   });
   it("publishing remembers the page's manage token, and a private page's key", async () => {
     const pub = await call("fmrl_publish", { content: "# Open" });

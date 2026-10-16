@@ -38,7 +38,7 @@ async function agent(name: string, contract: "legacy" | "identity" = "identity")
  }});
  const keys = new KeyStore({api,baseUrl:fake.baseUrl,file:path.join(dir,`${name}-credentials.json`)});
  const pages = new PageStore(fake.baseUrl,path.join(dir,`${name}-pages.json`));
- const server = createServer({api,keys,pages});
+ const server = createServer({api,keys,pages,nonessentialTrafficOff:true});
  const [a,b]=InMemoryTransport.createLinkedPair(); await server.connect(b);
  const client=new Client({name,version:"bridge-test"});await client.connect(a);await client.listTools();clients.push(client);
  return {api,keys,pages,client,call:(name:string,args:Record<string,unknown>={})=>client.callTool({name,arguments:args})};

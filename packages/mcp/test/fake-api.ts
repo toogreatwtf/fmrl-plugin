@@ -4,7 +4,7 @@ import { isVaultFingerprint } from "../src/vault-crypto.js";
 import type { AccountVault, RingBoxInput } from "../src/api.js";
 
 /** FakeEditor and FakeRevision are the fake's in-memory shape of the server's editor and revision wire types. */
-export interface FakeEditor { kind: string; key?: string; name?: string }
+export interface FakeEditor { kind: string; key?: string; label?: string; display_name?: string }
 export interface FakeRevision { rev: number; at: string; size: number; sha256: string; title: string; source: string; format: string; content: string; editor: FakeEditor }
 
 export interface FakeDoc {
@@ -136,7 +136,7 @@ function detectFormat(content: string, encrypted: boolean, explicit?: string): s
 
 function editorFor(api: FakeApi, key: string): FakeEditor {
   const name = api.labels.get(key);
-  return { kind: "key", key: api.prefixOf(key), ...(name ? { name } : {}) };
+  return { kind: "key", key: api.prefixOf(key), ...(name ? { label: name } : {}) };
 }
 
 // watchCount is how many pages this key is currently watching, across every doc.
@@ -261,7 +261,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (watchCount(api, key) < api.watchLimit) {
         api.docs.get(id)!.watchers = new Map([[key, 1]]);
       }
-      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/c/${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", attach_url: api.linked.has(key) ? undefined : `https://fmrl.test/attach/code${id}` });
+      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/c/${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", recovery: "usable", attach_url: api.linked.has(key) ? undefined : `https://fmrl.test/attach/code${id}` });
     }
     const revisionsMatch = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)\/revisions$/);
     if (method === "GET" && revisionsMatch) {

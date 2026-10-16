@@ -824,7 +824,7 @@ describe("fmrl_get reads the page", () => {
     expect(got.isError).toBeFalsy();
     expect(got.structuredContent).toMatchObject({
       id, url: `https://fmrl.test/${id}`, private: false, rev: 1, latest_rev: 1,
-      editor: { kind: "key", key: prefix, name: "test" }, content: "# Hello\n\nworld", content_format: "md",
+      editor: { kind: "key", key: prefix, label: "test" }, content: "# Hello\n\nworld", content_format: "md",
     });
     expect(got.structuredContent).not.toHaveProperty("content_note");
     expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: `/api/v1/docs/${id}/revisions/1` });
@@ -842,7 +842,7 @@ describe("fmrl_get reads the page", () => {
     const old = await call("fmrl_get", { id, rev: 1 });
     expect(old.structuredContent).toMatchObject({ rev: 1, latest_rev: 2, content: "# One", content_format: "md" });
     const latest = await call("fmrl_get", { id });
-    expect(latest.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two", editor: { kind: "key", key: key.slice(0, 9), name: "claude-code" } });
+    expect(latest.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two", editor: { kind: "key", key: key.slice(0, 9), label: "claude-code" } });
     expect(text(latest)).toContain(`Revision 2 of 2, edited by claude-code (${key.slice(0, 9)}…) at `);
     const bad = await call("fmrl_get", { id, rev: 0 });
     expect(bad.isError).toBe(true);
@@ -1251,7 +1251,7 @@ describe("fmrl_watch and fmrl_inbox", () => {
     const items = (inbox.structuredContent as { items: Array<Record<string, unknown>> }).items;
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ id, url, private: false, status: "live", rev: 2, seen_rev: 1, can_open: true });
-    expect(items[0].revisions).toMatchObject([{ rev: 2, editor: { kind: "key", name: "Bee" } }]);
+    expect(items[0].revisions).toMatchObject([{ rev: 2, editor: { kind: "key", label: "Bee" } }]);
     expect(text(inbox)).toContain(id);
     expect(text(inbox)).toContain("live");
     expect(text(inbox)).toContain("rev 2 by Bee");

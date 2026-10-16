@@ -194,7 +194,8 @@ export const PRIVATE_NOTE = "private: pass the link with #p=<key> to read it";
 
 function editorText(e: Editor): string {
   const key = e.key ? `${e.key}…` : undefined;
-  if (e.name) return key ? `${e.name} (${key})` : e.name;
+  const name = e.display_name || e.label;
+  if (name) return key ? `${name} (${key})` : name;
   if (key) return key;
   if (e.kind === "session") return "a linked browser";
   if (e.kind === "manage") return "a manage link";
@@ -292,7 +293,7 @@ export const INBOX_EMPTY = "Nothing new: no page you watch has a revision someon
 
 /** editorName is who made a revision, as the inbox says it: the key's name, else its prefix, else the kind of editor. */
 function editorName(e: Editor): string {
-  return e.name || (e.key ? `${e.key}…` : e.kind);
+  return e.display_name || e.label || (e.key ? `${e.key}…` : e.kind);
 }
 function inboxLine(it: InboxRow): string {
   const revs = it.revisions.map((r) => `rev ${r.rev} by ${editorName(r.editor)}`).join(", ");
@@ -309,7 +310,7 @@ function inboxText(items: InboxRow[]): string {
 }
 
 const publishOutput = {
-  id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string(), status: z.string(),
+  id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string().nullable(), status: z.string(), recovery: z.enum(["usable", "spent", "revoked"]),
   attach_url: z.string().optional(),
 };
 const pageOutput = {
@@ -317,10 +318,11 @@ const pageOutput = {
   expires_at: z.string().nullable(), pinned: z.boolean(), cid: z.string().optional(),
   private: z.boolean(), key_held: z.boolean().optional(), title: z.string().optional(),
 };
+const editorOutput = z.object({ kind: z.enum(["key", "session", "human", "manage", "anonymous", "unknown"]), key: z.string().optional(), label: z.string().optional(), display_name: z.string().optional() });
 const readOutput = {
   ...pageOutput,
   rev: z.number(), latest_rev: z.number(),
-  editor: z.object({ kind: z.string(), key: z.string().optional(), name: z.string().optional() }),
+  editor: editorOutput,
   content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
   profile: z.object({
     profile: z.string(), v: z.number(),
@@ -339,7 +341,6 @@ const listOutput = { docs: z.array(z.object(pageOutput)) };
 const watchOutput = {
   id: z.string(), url: z.string(), private: z.boolean(), rev: z.number(), seen_rev: z.number(), can_open: z.boolean(),
 };
-const editorOutput = z.object({ kind: z.string(), key: z.string().optional(), name: z.string().optional() });
 const inboxOutput = {
   items: z.array(z.object({
     id: z.string(), url: z.string(), private: z.boolean(), status: z.string(), rev: z.number(), seen_rev: z.number(),

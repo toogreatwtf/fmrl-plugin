@@ -255,7 +255,7 @@ describe("FmrlApi", () => {
       expect(await (await api.me(key)).label).toBe("Aria");
       const pub = await api.publish(key, { content: "# hi", format: "md" });
       const list = await api.revisions(key, pub.id);
-      expect(list.revisions[0].editor.name).toBe("Aria");
+      expect(list.revisions[0].editor.label).toBe("Aria");
     });
     it("rejects a label over 64 runes", async () => {
       const { key } = await api.mint("x");

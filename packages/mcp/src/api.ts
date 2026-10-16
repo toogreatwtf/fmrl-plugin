@@ -2,7 +2,7 @@ export interface MintResponse { key: string; prefix: string; created_at: string;
 /** sealed is the page's key and title under the key's ring (crypto.sealRecord); the server takes it on an encrypted page only. */
 export interface PublishRequest { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean; sealed?: string }
 /** attach_url is optional on a new publish while the agent is unattached; never present on an idempotent replay. */
-export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string; attach_url?: string }
+export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string | null; status: string; recovery: "usable" | "spent" | "revoked"; attach_url?: string }
 /**
  * DocResponse is a page as GET /api/v1/docs/{id} and each GET /api/v1/docs row
  * describe it. rev and private come from servers with sealed records
@@ -24,7 +24,7 @@ export interface RedeemResponse { key: string; prefix: string }
 export interface RotateResponse { key: string; prefix: string; rotated_at: string }
 
 /** Editor describes who made a revision. "manage" never happens through the API: an edit made with a manage token still carries the caller's own key. */
-export interface Editor { kind: "key" | "session" | "manage" | "anonymous" | "unknown"; key?: string; name?: string }
+export interface Editor { kind: "key" | "session" | "human" | "manage" | "anonymous" | "unknown"; key?: string; label?: string; display_name?: string }
 /** RevisionContent is one revision's full body, as stored: Markdown, HTML, or a private page's envelope. */
 export interface RevisionContent { rev: number; at: string; size: number; sha256: string; title: string; source: string; format: "html" | "md"; content: string; editor: Editor }
 /** RevisionMeta is one row of a page's revision list, without the body. */

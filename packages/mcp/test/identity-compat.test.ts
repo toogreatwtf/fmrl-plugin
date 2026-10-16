@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -95,7 +96,7 @@ it.each(["mismatched", "rotated", "spent"])("refused %s recovery is not remember
 });
 
 it("publish replay retains its recovery but does not invent an attach hint or ring", async () => {
- vi.spyOn(api,"publish").mockResolvedValue({ id:"abcdefghjkmn", url:"https://fmrl.test/abcdefghjkmn", raw_url:"https://fmrl.test/abcdefghjkmn/raw", manage_url:`https://fmrl.test/c/${token}`, expires_at:"2026-11-01T00:00:00Z", status:"live" });
+ vi.spyOn(api,"publish").mockResolvedValue({ id:"abcdefghjkmn", url:"https://fmrl.test/abcdefghjkmn", raw_url:"https://fmrl.test/abcdefghjkmn/raw", manage_url:`https://fmrl.test/c/${token}`, expires_at:"2026-11-01T00:00:00Z", status:"live", recovery:"usable" });
  const r = await call("fmrl_publish", { content:"replay" });
  expect(r.isError).not.toBe(true);
  expect(r.structuredContent).not.toHaveProperty("attach_url");
@@ -108,4 +109,36 @@ it("whoami advertises required nullable attached_at and no legacy aliases", asyn
  expect(tool.outputSchema?.required).toContain("attached_at");
  expect(tool.outputSchema?.properties).not.toHaveProperty("linked_at");
  expect(tool.outputSchema?.properties).not.toHaveProperty("link_url");
+});
+
+const wire = JSON.parse(readFileSync(new URL("./fixtures/identity-wire.json", import.meta.url), "utf8"));
+it("strict publish accepts captured real-server recovery", async () => {
+ vi.spyOn(api,"publish").mockResolvedValue(wire.publish);
+ expect((await call("fmrl_publish", {content:"fixture"})).structuredContent).toEqual(wire.publish);
+});
+it.each([wire.revision.editor, {kind:"human",label:"snapshot label",display_name:"Current Person"}])("strict get and inbox accept identity editor %j", async editor => {
+ const id = wire.publish.id;
+ fake.docs.set(id, {id,owner:"another",format:"md",size:17,rev:3});
+ vi.spyOn(api,"getRevision").mockResolvedValue({...wire.revision,editor});
+ vi.spyOn(api,"inbox").mockResolvedValue({items:[{id,url:wire.publish.url,private:false,status:"live",rev:3,seen_rev:1,revisions:[{rev:3,at:wire.revision.at,editor}]}]});
+ const read = await call("fmrl_get", {id});
+ expect(read.structuredContent).toMatchObject({editor});
+ expect(JSON.stringify(read.content)).toContain(editor.display_name ?? editor.label);
+ const inbox = await call("fmrl_inbox");
+ expect(inbox.structuredContent).toMatchObject({items:[{revisions:[{editor}]}]});
+ expect(JSON.stringify(inbox.content)).toContain(editor.display_name ?? editor.label);
+});
+it("strict publish still rejects undeclared fields", async () => {
+ vi.spyOn(api,"publish").mockResolvedValue({...wire.publish,unexpected:"must reject"});
+ await expect(call("fmrl_publish", {content:"fixture"})).rejects.toThrow(/additional properties/);
+});
+
+it.each(["usable", "spent", "revoked"])("declares recovery state %s and nullable expiry", async recovery => {
+ vi.spyOn(api,"publish").mockResolvedValue({...wire.publish,recovery,expires_at:null});
+ expect((await call("fmrl_publish",{content:"fixture"})).structuredContent).toMatchObject({recovery,expires_at:null});
+});
+it("strict inbox rejects undeclared editor fields", async () => {
+ const editor = {...wire.revision.editor,unexpected:"must reject"};
+ vi.spyOn(api,"inbox").mockResolvedValue({items:[{id:wire.publish.id,url:wire.publish.url,private:false,status:"live",rev:3,seen_rev:1,revisions:[{rev:3,at:wire.revision.at,editor}]}]});
+ await expect(call("fmrl_inbox")).rejects.toThrow(/additional properties/);
 });

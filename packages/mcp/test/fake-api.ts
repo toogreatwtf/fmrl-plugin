@@ -13,6 +13,8 @@ export interface FakeDoc {
   rev?: number;
   revisions?: FakeRevision[];
   manageToken?: string;
+  /** Recovery is spent once into a manager role; it never confers deletion. */
+  managers?: Set<string>;
   /** watchers maps a watching key to the revision it last saw. */
   watchers?: Map<string, number>;
 }
@@ -36,7 +38,7 @@ export interface FakeApi {
   // Refusal seam only: no full edit limiter or on-curve server conformance simulation.
   ringStatus?: number;
   ringCode?: string;
-  /** linked holds the keys a browser has been linked to: publish stops carrying link_url and me reports linked_at. */
+  /** linked holds the keys a browser has been linked to: publish stops carrying attach_url and me reports attached_at. */
   linked: Set<string>;
   /** labels holds each key's name (from mint's label or a later PATCH /me), "" until set. */
   labels: Map<string, string>;
@@ -259,7 +261,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       if (watchCount(api, key) < api.watchLimit) {
         api.docs.get(id)!.watchers = new Map([[key, 1]]);
       }
-      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/manage/${id}#k=${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", link_url: api.linked.has(key) ? undefined : `https://fmrl.test/link/code${id}` });
+      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/c/${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", attach_url: api.linked.has(key) ? undefined : `https://fmrl.test/attach/code${id}` });
     }
     const revisionsMatch = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)\/revisions$/);
     if (method === "GET" && revisionsMatch) {
@@ -341,7 +343,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       // Owner key, or a matching Fmrl-Manage-Token: anything else gets the
       // same unknown-id 404 a foreign key gets on GET/DELETE, so a probe
       // can't tell "wrong token" from "not yours" from "doesn't exist".
-      const owns = !!d && (d.owner === key || (manageTokenSent !== undefined && manageTokenSent === d.manageToken));
+      const owns = !!d && (d.owner === key || d.managers?.has(key) || (manageTokenSent !== undefined && manageTokenSent === d.manageToken));
       if (!d || !owns) return fail(res, 404, "not_found", "No page with that id.");
       if (d.removed) return fail(res, 404, "not_found", "That page was already removed.");
       const ub = (body ?? {}) as { format?: string; content?: string; title?: string; encrypted?: unknown; base_rev?: unknown };
@@ -365,6 +367,10 @@ export async function startFakeApi(): Promise<FakeApi> {
         rev: nextRev, at: isoAt(nextRev - 1), size, sha256: sha256hex(ub.content), title, source: "api", format, content: ub.content,
         editor: editorFor(api, key),
       };
+      if (d.owner !== key && manageTokenSent === d.manageToken && manageTokenSent !== undefined) {
+        (d.managers ??= new Set()).add(key);
+        delete d.manageToken;
+      }
       d.revisions = d.revisions ?? [];
       d.revisions.push(revision);
       d.rev = nextRev;
@@ -417,7 +423,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       const key = auth();
       if (!key) return unauthorized();
       const rotatedAt = api.rotatedAt.get(api.prefixOf(key));
-      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), link_url: "https://fmrl.test/link/fresh" });
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), attach_url: "https://fmrl.test/attach/fresh" });
     }
     if (method === "POST" && url.pathname === "/api/v1/me/rotate") {
       const key = auth();
@@ -450,7 +456,7 @@ export async function startFakeApi(): Promise<FakeApi> {
       const label = pb.label.trim();
       if ([...label].length > 64) return fail(res, 400, "bad_request", "label must be 64 characters or fewer.");
       api.labels.set(key, label);
-      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label, quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, linked_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null });
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label, quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null });
     }
     if (method === "GET" && url.pathname === "/api/v1/inbox") {
       const key = auth();

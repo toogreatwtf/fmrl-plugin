@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDocId, parsePageRef } from "../src/ids.js";
+import { parseDocId, parsePageRef, parseRecoveryToken } from "../src/ids.js";
 
 describe("parseDocId", () => {
   it("accepts a bare id", () => {
@@ -151,4 +151,20 @@ describe("parseDocId's refusal", () => {
     const key = "Q".repeat(43);
     expect(() => parseDocId(`https://fmrl.site/about#p=${key}`)).toThrow(/^"https:\/\/fmrl\.site\/about" is not a document id/);
   });
+});
+
+
+describe("recovery capability input", () => {
+ const token = "A".repeat(22);
+ it.each([token, `https://fmrl.site/c/${token}`, `http://localhost:8080/c/${token}`])("extracts a valid token without page discovery: %s", input => {
+  expect(parseRecoveryToken(input)).toBe(token);
+ });
+ it.each(["", "A".repeat(21), "A".repeat(23), `https://fmrl.site/c/${token}/extra`, `https://fmrl.site/c/${token}?x=1`, `https://fmrl.site/c/${token}#p=secret`, `ftp://fmrl.site/c/${token}`, `https://user:password@fmrl.site/c/${token}`, `https://fmrl.site/manage/abcdefghjkmn#k=${token}`])("refuses malformed recovery without echoing it: %s", input => {
+  expect(() => parseRecoveryToken(input)).toThrow("Supply a 22-character recovery token");
+ });
+ it("does not mistake a malformed recovery path for a page or disclose it", () => {
+  const link = "https://fmrl.site/c/abcdefghjkmn";
+  expect(() => parsePageRef(link)).toThrow("[recovery link]");
+  expect(() => parseDocId(link)).toThrow("[recovery link]");
+ });
 });

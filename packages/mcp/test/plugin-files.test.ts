@@ -63,7 +63,7 @@ describe("/fmrl:whoami", () => {
     expect(skillText()).toMatch(/auto-update does not run/i);
   });
   it("keeps account guidance optional and private-key backup distinct", () => {
-    expect(skillText()).toContain("If sign-in is available there");
+    expect(skillText()).toContain("Relay the supplied attach link unchanged");
     expect(skillText()).toContain("back up the named credentials file");
     expect(skillText()).toContain("No plugin line means version information is unavailable");
     expect(skillText()).toContain("Codex: use Codex's plugin settings; never give Claude CLI commands");

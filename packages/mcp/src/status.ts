@@ -140,7 +140,7 @@ function apiLine(s: StatusSnapshot, a: ApiCheck): string {
       return `${site}: reachable, ${a.ms} ms, but it refused key ${s.key ? `${s.key.prefix}…` : "this key"} (${a.code}); nothing was replaced. fmrl_whoami says how to get a new one.`;
     case "ok": {
       const q = a.me.quota.publishes;
-      const linked = a.me.linked_at ? `A browser linked on ${a.me.linked_at}.` : "No browser link recorded.";
+      const linked = a.me.attached_at ? `Agent attached on ${a.me.attached_at}.` : "Agent not attached.";
       const inbox = a.inbox === undefined ? "" : a.inbox === 0 ? " Inbox: empty." : ` Inbox: ${plural(a.inbox, "page")} with unread revisions.`;
       return `${site}: reachable, ${a.ms} ms. Quota: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}. ${linked}${inbox}`;
     }

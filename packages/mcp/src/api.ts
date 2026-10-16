@@ -1,8 +1,8 @@
 export interface MintResponse { key: string; prefix: string; created_at: string; quota: { publishes: number; period: string } }
 /** sealed is the page's key and title under the key's ring (crypto.sealRecord); the server takes it on an encrypted page only. */
 export interface PublishRequest { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean; sealed?: string }
-/** link_url rides on a publish only until a browser has been linked to the key; a server that predates linking never sends it. */
-export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string; link_url?: string }
+/** attach_url is optional on a new publish while the agent is unattached; never present on an idempotent replay. */
+export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string; attach_url?: string }
 /**
  * DocResponse is a page as GET /api/v1/docs/{id} and each GET /api/v1/docs row
  * describe it. rev and private come from servers with sealed records
@@ -16,8 +16,8 @@ export interface DocsResponse { docs: DocResponse[] }
 export interface AccountVault { pub: string; fingerprint: string }
 export interface RingBoxInput { prefix: string; box: string }
 
-/** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. rotated_at is when the key's secret was last replaced, absent until it first is. */
-export interface MeResponse { prefix: string; created_at: string; label: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; rotated_at?: string; link_url?: string; account_vault?: AccountVault | null }
+/** attached_at is when the agent attached to its person, or null. attach_url is optional on GET /me and absent on PATCH. */
+export interface MeResponse { prefix: string; created_at: string; label: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at: string | null; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
 /** RedeemResponse is POST /api/v1/keys/redeem: the key a key code carries, given once. */
 export interface RedeemResponse { key: string; prefix: string }
 /** RotateResponse is POST /api/v1/me/rotate: the calling key's new secret, given once, under the same prefix. */

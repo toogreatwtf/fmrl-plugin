@@ -50,6 +50,7 @@ function extractId(input: string, opts: RefOptions = {}): string | undefined {
     url = undefined;
   }
   if (!url) return undefined;
+  if (url.pathname.startsWith("/c/")) return undefined;
   const segs = url.pathname.split("/").filter((seg) => seg !== "");
   for (const seg of segs) {
     if (ID.test(seg)) return seg;
@@ -68,6 +69,7 @@ function extractId(input: string, opts: RefOptions = {}): string | undefined {
 /** withoutFragment is input up to its first "#": what a refusal may repeat, since a fragment can carry a page key or a manage token. */
 function withoutFragment(input: string): string {
   const s = input.trim();
+  try { if (new URL(s).pathname.startsWith("/c/")) return "[recovery link]"; } catch {}
   const i = s.indexOf("#");
   return i === -1 ? s : s.slice(0, i);
 }
@@ -104,7 +106,7 @@ export function parsePageRef(input: string, opts: RefOptions = {}): PageRef {
 
   const id = extractId(main, opts);
   if (id === undefined) {
-    throw new Error(`${JSON.stringify(main)} is not a page id or a fmrl.site URL.`);
+    throw new Error(`${JSON.stringify(withoutFragment(main))} is not a page id or a fmrl.site URL. Supply the page URL in id and its recovery link separately in manage_token for fmrl_edit.`);
   }
 
   const ref: PageRef = { id };
@@ -119,4 +121,16 @@ export function parsePageRef(input: string, opts: RefOptions = {}): PageRef {
     }
   }
   return ref;
+}
+
+/** Parse a recovery capability locally; never request or redeem its URL. */
+export function parseRecoveryToken(input: string): string {
+  const value = input.trim();
+  if (MANAGE_TOKEN_SHAPE.test(value)) return value;
+  try {
+    const url = new URL(value);
+    const match = /^\/c\/([A-Za-z0-9_-]{22})$/.exec(url.pathname);
+    if ((url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password && !url.search && !url.hash && match) return match[1];
+  } catch {}
+  throw new Error("Supply a 22-character recovery token or an http(s) /c/<token> link in manage_token, separately from the page id or URL.");
 }

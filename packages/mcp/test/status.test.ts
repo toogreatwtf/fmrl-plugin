@@ -73,18 +73,18 @@ describe("statusText", () => {
     expect(lines({ ...base, lastCall: undefined })[3]).toBe("No API call yet this session.");
   });
   describe("verbose", () => {
-    const me = { prefix: "fmrl_K7QX", created_at: "x", label: "claude-code", quota: { publishes: { used: 3, limit: 25, resets_at: "2026-11-01T00:00:00Z" } }, linked_at: "2026-09-22T01:00:00Z" };
+    const me = { prefix: "fmrl_K7QX", created_at: "x", label: "claude-code", quota: { publishes: { used: 3, limit: 25, resets_at: "2026-11-01T00:00:00Z" } }, attached_at: "2026-09-22T01:00:00Z" };
     it("reports reachability, quota, link state and the inbox, then npm", () => {
       const s: StatusSnapshot = { ...base, network: { api: { kind: "ok", ms: 180, me, inbox: 2 }, npm: { kind: "latest", version: "0.14.0" } } };
       expect(lines(s).slice(4)).toEqual([
-        "fmrl.site: reachable, 180 ms. Quota: 3 of 25 publishes used this month, resets 2026-11-01T00:00:00Z. A browser linked on 2026-09-22T01:00:00Z. Inbox: 2 pages with unread revisions.",
+        "fmrl.site: reachable, 180 ms. Quota: 3 of 25 publishes used this month, resets 2026-11-01T00:00:00Z. Agent attached on 2026-09-22T01:00:00Z. Inbox: 2 pages with unread revisions.",
         "npm: fmrl-mcp 0.14.0 is the latest.",
       ]);
     });
     it("a newer fmrl-mcp on npm means restart", () => {
-      const s: StatusSnapshot = { ...base, network: { api: { kind: "ok", ms: 180, me: { ...me, linked_at: null }, inbox: 0 }, npm: { kind: "latest", version: "0.15.0" } } };
+      const s: StatusSnapshot = { ...base, network: { api: { kind: "ok", ms: 180, me: { ...me, attached_at: null }, inbox: 0 }, npm: { kind: "latest", version: "0.15.0" } } };
       expect(lines(s).slice(4)).toEqual([
-        "fmrl.site: reachable, 180 ms. Quota: 3 of 25 publishes used this month, resets 2026-11-01T00:00:00Z. No browser link recorded. Inbox: empty.",
+        "fmrl.site: reachable, 180 ms. Quota: 3 of 25 publishes used this month, resets 2026-11-01T00:00:00Z. Agent not attached. Inbox: empty.",
         "npm: fmrl-mcp 0.15.0 is the latest; this session runs 0.14.0, so restart Claude Code to pick it up.",
       ]);
     });

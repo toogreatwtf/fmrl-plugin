@@ -10,13 +10,15 @@ Use this when the user asks to share, send, hand off, publish, or get a link for
 ## Steps
 
 1. If the user asks for a page they shared earlier, call `fmrl_list` and hand back its link instead of publishing again; a private page comes back with its key after `#p=` when this machine holds it. Otherwise, decide what to publish using the fmrl MCP tools (`fmrl_publish_file`, `fmrl_publish`). If the user named a file on disk with one of these extensions — `.html`, `.htm`, `.md`, `.markdown`, `.mdx`, `.txt` — call `fmrl_publish_file` with its path. Otherwise (content you composed, or a file with another extension) render it as Markdown or HTML and call `fmrl_publish` with `content`; pass `format` only when you know it, and `title` when the content has no obvious heading. If the user asked for the page to be private, confidential, encrypted, or "only for" someone, pass `private: true`. The private link carries its key after `#p=`, so say so when you hand it over; someone who has the link without the key can paste the key into the page instead. If the user asks for a passphrase, say that fmrl uses one key per page, which the link carries, and offer to share the link. Never publish a private page without the user asking for privacy — it has no title or preview and cannot be recovered without the link.
-2. Reply with the link and the expiry from the tool result, in one or two lines. Mention once that the page lasts seven days unless someone keeps it from the page itself; for a private page, say instead that it lasts seven days and cannot be kept. If the tool result carries a line starting *See your pages on fmrl.site*, relay it once in this session and not again, with its link unchanged — it is how the person's own browser comes to hold these pages, and the part after `#r=` is what lets that browser open the private ones.
-3. Mention the manage link once — it removes the page — and say to keep it private.
+2. Reply with the link and the expiry from the tool result, in one or two lines. Mention once that the page lasts seven days unless someone keeps it from the page itself; for a private page, say instead that it lasts seven days and cannot be kept. If the tool result carries a line starting *Attach this agent to your identity*, relay it once in this session and not again, with its link unchanged — it attaches this agent to the person’s identity, and the part after `#r=` is what lets that browser open the private ones.
+3. Mention the manage link once — it grants management and editing, not deletion — and say to keep it private.
 4. Do not publish twice. If a publish fails, report the tool's message; a 402 means this key's free publishes for the month are used, and the message says when it resets.
 
 ## Reading a page you were handed
 
-Call `fmrl_get` with the whole link — the part after `#` included — to read a page someone handed you. Editing a page with `fmrl_edit` watches it, so revisions other editors make show up in `fmrl_inbox`; `fmrl_watch` is for a page you read and do not edit.
+Call `fmrl_get` with the whole page link — the part after `#` included — to read a page someone handed you. Editing a page with `fmrl_edit` watches it, so revisions other editors make show up in `fmrl_inbox`; `fmrl_watch` is for a page you read and do not edit.
+
+For an edit, pass the page ID or URL as `id` and the recovery token or `/c/<token>` link separately as `manage_token`. Ask the sender for both: a recovery link contains no page ID. Never open or redeem it to discover the page. A manager may edit but cannot delete.
 
 ## Starting a handoff canvas
 

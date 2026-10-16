@@ -32,16 +32,16 @@ curl -sX POST https://fmrl.site/api/v1/publish \
 
 ## What you get
 
-In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page. Before publishing a canvas that hands work to someone else to review, it offers the `handoff-review` starter — eight sections and a `fmrl-profile` block recording their shape, readable at [fmrl.site/h4ndrv](https://fmrl.site/h4ndrv). `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date. `/fmrl:status` answers at once from local state — fmrl-mcp and plugin versions, what launched the server, the key and ring on this machine, the last API call — and `/fmrl:status verbose` adds the network checks: whether fmrl.site answers, quota, inbox, and the newest fmrl-mcp on npm.
+In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a recovery link that grants management and editing, never deletion. Before publishing a canvas that hands work to someone else to review, it offers the `handoff-review` starter — eight sections and a `fmrl-profile` block recording their shape, readable at [fmrl.site/h4ndrv](https://fmrl.site/h4ndrv). `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date. `/fmrl:status` answers at once from local state — fmrl-mcp and plugin versions, what launched the server, the key and ring on this machine, the last API call — and `/fmrl:status verbose` adds the network checks: whether fmrl.site answers, quota, inbox, and the newest fmrl-mcp on npm.
 
 Any MCP client gets twelve tools:
 
 | Tool | Does |
 |---|---|
-| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`) → the page's URL, expiry and manage link, plus a one-time browser link, carrying the key ring after `#r=`, until a browser is linked to the key |
+| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`) → the page's URL, expiry and manage link, plus an optional attach link carrying the key ring after `#r=` while the agent is unattached |
 | `fmrl_publish_file` | `path` to a `.html`, `.htm`, `.md`, `.markdown`, `.mdx` or `.txt` file (2 MiB at most), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`) → the same as `fmrl_publish` |
-| `fmrl_get` | an id or any fmrl.site link (may carry a page key after `#p=` and a manage token after `#k=`), optional `rev` (the latest when left out) → status, format, size, expiry, whether it was kept, plus that revision's content and who made it; a private page opens with the key in the link or one already held here. Reading a revision of a page you watch marks it seen. A page carrying a `fmrl-profile` block also returns its parsed profile and which heading holds each section |
-| `fmrl_edit` | id or link, `content`, optional `format`, `title`, `base_rev` (the revision you read from; the edit fails if someone saved a newer one) → the new revision's number and link, and whether the page is now watched (an edit watches it, so replies show up in `fmrl_inbox`). Works on pages this key owns and on any page whose manage link you were given; a private page stays under its same key |
+| `fmrl_get` | an id or any fmrl.site link (may carry a page key after `#p=`), optional `rev` (the latest when left out) → status, format, size, expiry, whether it was kept, plus that revision's content and who made it; a private page opens with the key in the link or one already held here. Reading a revision of a page you watch marks it seen. A page carrying a `fmrl-profile` block also returns its parsed profile and which heading holds each section |
+| `fmrl_edit` | page id or URL, separate optional `manage_token` (token or `/c/` link), `content`, optional `format`, `title`, `base_rev` (the revision you read from; the edit fails if someone saved a newer one) → the new revision's number and link, and whether the page is now watched (an edit watches it, so replies show up in `fmrl_inbox`). Works on pages this key owns and on any page whose manage link you were given; a private page stays under its same key |
 | `fmrl_watch` | id or link → watches the page so revisions other editors make show up in `fmrl_inbox`; a private page's key is remembered here once it opens the page. For a page you read and do not edit: pages you publish or edit are watched already |
 | `fmrl_inbox` | nothing → pages you watch that someone else has revised since you last read them, newest first; read each with `fmrl_get`, which marks it seen |
 | `fmrl_list` | nothing → every page this key owns, newest first (50 at most); a private page with its title and keyed link when this machine holds the key ring |
@@ -87,3 +87,9 @@ Releasing is a version bump. `plugins/fmrl/.mcp.json` runs `npx -y fmrl-mcp` unp
 ## License
 
 MIT, Too Great LLC.
+
+### Identity-server compatibility release hold
+
+This compatibility change is prepared for the new identity server. Do not merge a version bump or release it until that server serves production and the cutover write hold is lifted. A new package version merged to main publishes automatically.
+
+For editing someone else's page, supply its page ID or URL as `id` and its recovery token or `/c/<token>` link separately as `manage_token`. A recovery link does not identify the page: ask its sender for the page URL too. The plugin never opens or spends a recovery link to discover the page. Recovery grants management and editing, never deletion. Private page keys remain in the page URL's `#p=` fragment and on this machine.

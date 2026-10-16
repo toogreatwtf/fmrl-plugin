@@ -7,7 +7,7 @@ import { z } from "zod";
 import { ApiError, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
-import { parseDocId, parsePageRef } from "./ids.js";
+import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
@@ -77,7 +77,7 @@ function errorText(e: unknown): string {
 // the link goes out without #r= and the browser it links can't open private pages.
 const ringCarried = (url: string) => (/[#&]r=/.test(url) ? " It also carries the ring that lets that browser open your private pages." : "");
 
-export const LINK_HINT = (url: string) => `See your pages on fmrl.site: open ${url} once in your browser (it works for an hour, and once).${ringCarried(url)}`;
+export const LINK_HINT = (url: string) => `Attach this agent to your identity: open ${url} in your browser.${ringCarried(url)}`;
 
 /** withRing appends a key's ring to a browser link as #r=<prefix>.<ring>. The link page stores it for the key its form names, by the prefix the server gives the key (a rotated secret's own first characters are not it); the server never sees a fragment. */
 export function withRing(linkUrl: string, prefix: string, ring: string): string {
@@ -101,9 +101,9 @@ function publishTextLines(p: PublishResponse, expiryLine: string): string[] {
     `Published: ${p.url}`,
     `Expires ${p.expires_at}`,
     expiryLine,
-    `Manage link (removes the page; give it only to someone who should be able to): ${p.manage_url}`,
+    `Recovery link (grants management and editing; does not remove the page; share the page URL with it): ${p.manage_url}`,
   ];
-  if (p.link_url) lines.push(LINK_HINT(p.link_url));
+  if (p.attach_url) lines.push(LINK_HINT(p.attach_url));
   return lines;
 }
 function publishText(p: PublishResponse): string {
@@ -219,7 +219,7 @@ function readText(r: PageRead, at: string): string {
 }
 
 export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
-export const MANAGE_HINT = (origin: string, id: string) => `You can edit this page with its manage link (${origin}/manage/${id}#k=…); pass it as id once and it is remembered.`;
+export const MANAGE_HINT = (origin: string, id: string) => `To edit, supply ${origin}/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`;
 export const CONFLICT = (rev: number) => `Revision ${rev} is the latest; read it with fmrl_get and edit from there.`;
 
 /** EditConflict is a 409 on fmrl_edit: someone saved revision latest after the base_rev the caller read. */
@@ -255,12 +255,12 @@ function listText(rows: PageRow[]): string {
 export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
 function meText(m: MeResponse, ringLine: string, plugin: string | undefined): string {
   const q = m.quota.publishes;
-  const linked = m.linked_at ? `A browser linked on ${m.linked_at}. Current browser and account status are unknown.` : "No browser link has been recorded. Current browser and account status are unknown.";
+  const linked = m.attached_at ? `This agent attached to its identity on ${m.attached_at}.` : "This agent is not attached to an identity.";
   const named = m.label ? `Named ${m.label}: the revisions this key makes carry that name.` : UNNAMED_LINE;
   const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, linked];
   if (m.rotated_at) lines.push(`Last rotated ${m.rotated_at}.`);
-  if (m.link_url) lines.push(`Browser: Link your browser to see your canvases: open ${m.link_url} (works for an hour, and once).${ringCarried(m.link_url)} If sign-in is available there, you can optionally connect this plugin to your account to find its canvases on other devices.`);
-  else lines.push("No browser link was supplied. If you have a previously linked browser, use it to view your canvases; this result cannot connect a new browser.");
+  if (m.attach_url) lines.push(LINK_HINT(m.attach_url));
+  else lines.push("No attach link was supplied.");
   return [...lines, ringLine, ...(plugin ? [plugin] : [])].join("\n");
 }
 
@@ -310,7 +310,7 @@ function inboxText(items: InboxRow[]): string {
 
 const publishOutput = {
   id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string(), status: z.string(),
-  link_url: z.string().optional(),
+  attach_url: z.string().optional(),
 };
 const pageOutput = {
   id: z.string(), url: z.string(), status: z.string(), format: z.string(), size: z.number(),
@@ -348,9 +348,9 @@ const inboxOutput = {
   })),
 };
 const meOutput = {
-  prefix: z.string(), created_at: z.string(), label: z.string().optional(),
+  prefix: z.string(), created_at: z.string(), label: z.string(),
   quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
-  linked_at: z.string().nullable().optional(), rotated_at: z.string().optional(), link_url: z.string().optional(),
+  attached_at: z.string().nullable(), rotated_at: z.string().optional(), attach_url: z.string().optional(),
 };
 const redeemOutput = { prefix: z.string(), file: z.string(), replaced: z.string().optional() };
 const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string(), replaced: z.string().optional() };
@@ -382,7 +382,7 @@ export function createServer(deps: ServerDeps): McpServer {
 
   /**
    * publishAs publishes body as key k. A private page (secret set) carries
-   * its key and title sealed under k's ring; a link_url in the answer gets
+   * its key and title sealed under k's ring; an attach_url in the answer gets
    * #r= so the browser that redeems it holds the ring too. It runs inside
    * withKey, so a retry after a 401 seals under the replacement key's ring.
    */
@@ -393,9 +393,9 @@ export function createServer(deps: ServerDeps): McpServer {
       if (ring) body = { ...body, sealed: await sealRecord(ring, secret.key, secret.title) };
     }
     let p = await api.publish(k, body);
-    if (p.link_url) {
+    if (p.attach_url) {
       ring ??= await ringOrNothing(k);
-      if (ring) p = { ...p, link_url: withRing(p.link_url, await keys.prefixFor(k), ring) };
+      if (ring) p = { ...p, attach_url: withRing(p.attach_url, await keys.prefixFor(k), ring) };
     }
     pinNotice(await vault.sync(k), notices);
     return p;
@@ -411,9 +411,9 @@ export function createServer(deps: ServerDeps): McpServer {
       log?.(`fmrl-mcp: couldn't remember page ${id}: ${errorText(e)}`);
     }
   };
-  /** manageTokenOf is the #k= token of a publish's manage_url. */
+  /** manageTokenOf validates the recovery token in a publish response without requesting it. */
   const manageTokenOf = (manageUrl: string): string | undefined => {
-    try { return parsePageRef(manageUrl, refOpts).manage; } catch { return undefined; }
+    try { return parseRecoveryToken(manageUrl); } catch { return undefined; }
   };
 
   /**
@@ -555,7 +555,7 @@ export function createServer(deps: ServerDeps): McpServer {
       title: "Read a fmrl.site page",
       description: "Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.",
       inputSchema: {
-        id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=)."),
+        id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
       },
       outputSchema: readOutput,
@@ -588,7 +588,8 @@ export function createServer(deps: ServerDeps): McpServer {
       title: "Edit a fmrl.site page",
       description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
       inputSchema: {
-        id: z.string().min(1).describe("A page id or any fmrl.site link for it; a link may carry the page's key (#p=) and a manage token (#k=), which are remembered here once they work."),
+        id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
+        manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
         content: z.string().min(1).describe("The page's new HTML or Markdown (2 MiB at most)."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it. A private page is always sent as HTML, rendered here from Markdown."),
         title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
@@ -596,9 +597,10 @@ export function createServer(deps: ServerDeps): McpServer {
       },
       outputSchema: editOutput,
     },
-    async ({ id, content, format, title, base_rev }) => {
+    async ({ id, content, format, title, base_rev, manage_token }) => {
       let ref: ReturnType<typeof parsePageRef>;
       try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
+      try { if (manage_token !== undefined) ref.manage = parseRecoveryToken(manage_token); } catch (e) { return fail(errorText(e)); }
       if (content.trim() === "") return fail("Nothing to save: the content is empty.");
       try {
         const v = await withKey(async (k): Promise<EditResult> => {
@@ -711,7 +713,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_list",
     {
       title: "List this key's fmrl.site pages",
-      description: "List the pages this key owns, newest first (50 at most): published through it, or shared from a browser linked to it. A private page comes back with its title and its link with the key after #p= when this machine holds the key ring. Use it when the user asks for a page they shared earlier.",
+      description: "List the pages this key owns, newest first (50 at most): published through it, or otherwise owned by this agent. A private page comes back with its title and its link with the key after #p= when this machine holds the key ring. Use it when the user asks for a page they shared earlier.",
       inputSchema: {},
       outputSchema: listOutput,
     },
@@ -744,7 +746,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_whoami",
     {
       title: "This fmrl.site key",
-      description: "The key's prefix, how many of this month's free publishes it has used, recorded browser-link history, a browser link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
+      description: "The key's prefix, how many of this month's free publishes it has used, agent attachment time, an attach link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
       inputSchema: { trust_vault: z.string().optional() },
       outputSchema: meOutput,
     },
@@ -770,7 +772,7 @@ export function createServer(deps: ServerDeps): McpServer {
           else if (synced.state === "changed") notices.push(CHANGED(synced.previous, synced.fingerprint));
           pinNotice(synced, notices);
           const { account_vault: ignoredVault, ...publicMe } = me;
-          return (publicMe.link_url && ring ? { ...publicMe, link_url: withRing(publicMe.link_url, publicMe.prefix, ring) } : publicMe) as MeResponse & Record<string, unknown>;
+          return z.object(meOutput).parse(publicMe.attach_url && ring ? { ...publicMe, attach_url: withRing(publicMe.attach_url, publicMe.prefix, ring) } : publicMe);
         }, { replaceRevoked: false });
         return ok([meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface)), ...notices].join("\n"), m);
       } catch (e) {

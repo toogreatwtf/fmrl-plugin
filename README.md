@@ -90,7 +90,7 @@ MIT, Too Great LLC.
 
 ### Identity-server compatibility release hold
 
-This compatibility change is prepared for the new identity server. Do not merge a version bump or release it until that server serves production and the cutover write hold is lifted. A new package version merged to main publishes automatically.
+The approved sequence is to ship the compatibility bridge before the identity-server cutover. The bridge supports both server contracts so clients can update while the legacy server is still running. Package release is not yet approved: merge, version bump, package publication and production cutover each remain behind their applicable approval gates. A new package version merged to main publishes automatically; this documentation is not authorization to do so.
 
 For editing someone else's page, supply its page ID or URL as `id` and its recovery token or `/c/<token>` link separately as `manage_token`. A recovery link does not identify the page: ask its sender for the page URL too. The plugin never opens or spends a recovery link to discover the page. Recovery grants management and editing, never deletion. Private page keys remain in the page URL's `#p=` fragment and on this machine.
 
@@ -118,8 +118,12 @@ uncertain outcome, must not be automatically republished. Use `fmrl_list` and th
 saved page information to reconcile first. Publish idempotency remains absent:
 this client sends no `Idempotency-Key`.
 
-The existing merge, package-release and cutover approval gates remain in force.
-Supporting both contracts does not authorize shipping ahead of the server.
-Publishing a new package does not update an already running MCP process or its
-cached schemas: restart/reconnect and verify the running `fmrl_status` version.
-An old process can still reject a new-server response after a write succeeds.
+Before cutover, obtain the separate bridge release approval, publish the approved
+version, and have clients update and restart/reconnect. Verify the running
+`fmrl_status` version, not just the installed package: publishing does not replace
+an already running MCP process or its cached schemas. Only then assess the
+cutover readiness gates and seek the separate cutover approval. This order does
+not prove that every client has updated. An old process can still reject a
+new-server response after a write succeeds; reconcile rather than automatically
+republishing. Passing tests or implementation review does not authorize a merge,
+package release, deployment or cutover.

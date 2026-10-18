@@ -72,7 +72,7 @@ describe("FmrlApi", () => {
     expect(fake.requests[0]).toMatchObject({ method: "POST", path: "/api/v1/keys", body: { label: "fmrl-mcp" } });
     const pub = await api.publish(minted.key, { content: "# hi", format: "md", title: "Hi" });
     expect(pub.url).toBe(`https://fmrl.test/${pub.id}`);
-    expect(pub.manage_url).toContain("#k=");
+    expect(pub.manage_url).toContain("/c/");
     expect(fake.requests[1]).toMatchObject({ auth: `Bearer ${minted.key}`, body: { content: "# hi", format: "md", title: "Hi" } });
     const got = await api.get(minted.key, pub.id);
     expect(got).toMatchObject({ id: pub.id, status: "live", format: "md", pinned: false });
@@ -220,7 +220,7 @@ describe("FmrlApi", () => {
       const pub = await api.publish(key, { content: "# hi", format: "md" });
       await api.update(key, pub.id, { content: "# bye", format: "md" });
       expect(fake.requests.at(-1)?.manageToken).toBeUndefined();
-      const manageToken = pub.manage_url.split("#k=")[1];
+      const manageToken = pub.manage_url.split("/c/")[1];
       const stranger = await api.mint("y");
       await api.update(stranger.key, pub.id, { content: "# again", format: "md" }, manageToken);
       expect(fake.requests.at(-1)?.manageToken).toBe(manageToken);
@@ -230,10 +230,12 @@ describe("FmrlApi", () => {
       const pub = await api.publish(key, { content: "# hi", format: "md" });
       const stranger = await api.mint("y");
       await expect(api.update(stranger.key, pub.id, { content: "# nope", format: "md" })).rejects.toMatchObject({ status: 404, code: "not_found" });
-      const manageToken = pub.manage_url.split("#k=")[1];
+      const manageToken = pub.manage_url.split("/c/")[1];
       const updated = await api.update(stranger.key, pub.id, { content: "# yes", format: "md" }, manageToken);
       expect(updated.rev).toBe(2);
-      await expect(api.update(stranger.key, pub.id, { content: "# wrong token" }, "wrong")).rejects.toMatchObject({ status: 404, code: "not_found" });
+      expect((await api.update(stranger.key, pub.id, { content: "# manager persists" })).rev).toBe(3);
+      const outsider = await api.mint("outsider");
+      await expect(api.update(outsider.key, pub.id, { content: "# spent" }, manageToken)).rejects.toMatchObject({ status: 404, code: "not_found" });
     });
     it("409s a stale base_rev and carries the current rev in the ApiError", async () => {
       const { key } = await api.mint("x");
@@ -253,7 +255,7 @@ describe("FmrlApi", () => {
       expect(await (await api.me(key)).label).toBe("Aria");
       const pub = await api.publish(key, { content: "# hi", format: "md" });
       const list = await api.revisions(key, pub.id);
-      expect(list.revisions[0].editor.name).toBe("Aria");
+      expect(list.revisions[0].editor.label).toBe("Aria");
     });
     it("rejects a label over 64 runes", async () => {
       const { key } = await api.mint("x");
@@ -267,7 +269,7 @@ describe("FmrlApi", () => {
       const editor = await api.mint("editor");
       const pub = await api.publish(owner.key, { content: "# hi", format: "md" });
       // auto-watched by the owner at publish; a stranger's edit should show up in the owner's inbox
-      const manageToken = pub.manage_url.split("#k=")[1];
+      const manageToken = pub.manage_url.split("/c/")[1];
       await api.update(editor.key, pub.id, { content: "# edited by another" }, manageToken);
       const inbox = await api.inbox(owner.key);
       expect(inbox.items).toHaveLength(1);
@@ -284,7 +286,7 @@ describe("FmrlApi", () => {
       const owner = await api.mint("owner");
       const editor = await api.mint("editor");
       const pub = await api.publish(owner.key, { content: "# hi", format: "md" });
-      const manageToken = pub.manage_url.split("#k=")[1];
+      const manageToken = pub.manage_url.split("/c/")[1];
       await api.update(editor.key, pub.id, { content: "# edited by another" }, manageToken);
       expect((await api.inbox(owner.key)).items).toHaveLength(1);
       await api.getRevision(owner.key, pub.id, 2);
@@ -294,7 +296,7 @@ describe("FmrlApi", () => {
       const owner = await api.mint("owner");
       const editor = await api.mint("editor");
       const pub = await api.publish(owner.key, { content: "# hi", format: "md" });
-      const manageToken = pub.manage_url.split("#k=")[1];
+      const manageToken = pub.manage_url.split("/c/")[1];
       await api.update(editor.key, pub.id, { content: "# edit one" }, manageToken);
       await api.update(editor.key, pub.id, { content: "# edit two" }, manageToken);
       const before = await api.inbox(owner.key);

@@ -32,21 +32,21 @@ curl -sX POST https://fmrl.site/api/v1/publish \
 
 ## What you get
 
-In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a manage link that removes the page. Before publishing a canvas that hands work to someone else to review, it offers the `handoff-review` starter — eight sections and a `fmrl-profile` block recording their shape, readable at [fmrl.site/h4ndrv](https://fmrl.site/h4ndrv). `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date. `/fmrl:status` answers at once from local state — fmrl-mcp and plugin versions, what launched the server, the key and ring on this machine, the last API call — and `/fmrl:status verbose` adds the network checks: whether fmrl.site answers, quota, inbox, and the newest fmrl-mcp on npm.
+In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a recovery link that grants management and editing, never deletion. Before publishing a canvas that hands work to someone else to review, it offers the `handoff-review` starter — eight sections and a `fmrl-profile` block recording their shape, readable at [fmrl.site/h4ndrv](https://fmrl.site/h4ndrv). `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date. `/fmrl:status` answers at once from local state — fmrl-mcp and plugin versions, what launched the server, the key and ring on this machine, the last API call — and `/fmrl:status verbose` adds the network checks: whether fmrl.site answers, quota, inbox, and the newest fmrl-mcp on npm.
 
 Any MCP client gets twelve tools:
 
 | Tool | Does |
 |---|---|
-| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`) → the page's URL, expiry and manage link, plus a one-time browser link, carrying the key ring after `#r=`, until a browser is linked to the key |
+| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`) → the page's URL, expiry and manage link, plus an optional attach link carrying the key ring after `#r=` while the agent is unattached |
 | `fmrl_publish_file` | `path` to a `.html`, `.htm`, `.md`, `.markdown`, `.mdx` or `.txt` file (2 MiB at most), optional `title`, optional `private` (encrypts the page here before upload; the link carries the key after `#p=`) → the same as `fmrl_publish` |
-| `fmrl_get` | an id or any fmrl.site link (may carry a page key after `#p=` and a manage token after `#k=`), optional `rev` (the latest when left out) → status, format, size, expiry, whether it was kept, plus that revision's content and who made it; a private page opens with the key in the link or one already held here. Reading a revision of a page you watch marks it seen. A page carrying a `fmrl-profile` block also returns its parsed profile and which heading holds each section |
-| `fmrl_edit` | id or link, `content`, optional `format`, `title`, `base_rev` (the revision you read from; the edit fails if someone saved a newer one) → the new revision's number and link, and whether the page is now watched (an edit watches it, so replies show up in `fmrl_inbox`). Works on pages this key owns and on any page whose manage link you were given; a private page stays under its same key |
+| `fmrl_get` | an id or any fmrl.site link (may carry a page key after `#p=`), optional `rev` (the latest when left out) → status, format, size, expiry, whether it was kept, plus that revision's content and who made it; a private page opens with the key in the link or one already held here. Reading a revision of a page you watch marks it seen. A page carrying a `fmrl-profile` block also returns its parsed profile and which heading holds each section |
+| `fmrl_edit` | page id or URL, separate optional `manage_token` (token or `/c/` link), `content`, optional `format`, `title`, `base_rev` (the revision you read from; the edit fails if someone saved a newer one) → the new revision's number and link, and whether the page is now watched (an edit watches it, so replies show up in `fmrl_inbox`). Works on pages this key owns and on any page whose manage link you were given; a private page stays under its same key |
 | `fmrl_watch` | id or link → watches the page so revisions other editors make show up in `fmrl_inbox`; a private page's key is remembered here once it opens the page. For a page you read and do not edit: pages you publish or edit are watched already |
 | `fmrl_inbox` | nothing → pages you watch that someone else has revised since you last read them, newest first; read each with `fmrl_get`, which marks it seen |
 | `fmrl_list` | nothing → every page this key owns, newest first (50 at most); a private page with its title and keyed link when this machine holds the key ring |
 | `fmrl_delete` | an id or a viewer URL → removes a page this key published |
-| `fmrl_whoami` | optional `trust_vault` (the exact grouped vault fingerprint the person explicitly confirmed on `/account`) → the key's prefix, this month's quota, whether it is named and by what, whether a browser is linked to it, a fresh link to link one when the server offers it (carrying the key ring after `#r=`), when its secret was last rotated, where the key ring is kept, and, when the Claude Code plugin launched it and its manifest reads, whether that plugin is up to date; supplied account-vault sync and fingerprint notices. A revoked key is reported, not replaced, with how to get a new one |
+| `fmrl_whoami` | optional `trust_vault` (the exact grouped vault fingerprint the person explicitly confirmed on `/account`) → the key's prefix, this month's quota, whether it is named and by what, whether this agent is attached to an identity and an attach link supplied by the server or retained in this process while unattached; on legacy servers, browser-link status and a browser link when supplied (either kind of link carries the key ring after `#r=` when available), when its secret was last rotated, where the key ring is kept, and, when the Claude Code plugin launched it and its manifest reads, whether that plugin is up to date; supplied account-vault sync and fingerprint notices. A revoked key is reported, not replaced, with how to get a new one |
 | `fmrl_status` | optional `verbose` → this server's version and uptime, what launched it, the installed plugin and whether it is current (and whether a newer one is already installed beside it, waiting for a restart), the key and key ring on this machine, and the last API call — from memory and local files, at once, minting and writing nothing. `verbose` adds whether fmrl.site answers and how fast, this month's quota, the inbox, and the newest fmrl-mcp on npm, each call bounded to a few seconds |
 | `fmrl_redeem` | `code`, a key code from the fmrl.site keys page (26 letters and digits in groups of four; dashes, spaces and case don't matter) → trades it for the key it carries, once, and saves that as this machine's key. A key rotated from a browser reaches its agent this way; say "Redeem my fmrl key code …" |
 | `fmrl_rotate` | nothing → replaces the key's secret and saves the new one; the old secret stops working at once, and the prefix, pages, name, quota, linked browsers, connected apps and key ring stay |
@@ -76,3 +76,43 @@ Ring uploads include the validated, pinned fingerprint used to seal every box. A
 ## License
 
 MIT, Too Great LLC.
+
+### Identity-server compatibility release hold
+
+The approved sequence is to ship the compatibility bridge before the identity-server cutover. The bridge supports both server contracts so clients can update while the legacy server is still running. Package release is not yet approved: merge, version bump, package publication and production cutover each remain behind their applicable approval gates. A new package version merged to main publishes automatically; this documentation is not authorization to do so.
+
+For editing someone else's page, supply its page ID or URL as `id` and its recovery token or `/c/<token>` link separately as `manage_token`. A recovery link does not identify the page: ask its sender for the page URL too. The plugin never opens or spends a recovery link to discover the page. Recovery grants management and editing, never deletion. Private page keys remain in the page URL's `#p=` fragment and on this machine.
+
+
+### Transitional server compatibility
+
+The compatibility bridge accepts both legacy browser-link fields (`linked_at`,
+`link_url`, and older editor `name`) and identity fields (`attached_at`,
+`attach_url`, `label`/`display_name`, and publish `recovery`). Linking a browser is
+not reported as attaching an identity. A missing recovery state is unknown;
+spent or revoked links are not advertised as usable or saved for later edits.
+Legacy management links keep their existing local token handling. The bridge
+never opens a recovery link to find a page or replaces an attach link automatically.
+
+Courtesy attach links seen during setup, status probes, or vault checks stay in
+process memory per API origin and credential for at most one hour. Publish and
+whoami can show that previously supplied link with the local ring fragment. A
+reported attachment clears it. Restarting loses this cache; another process or a
+replacement link can also make a cached link unusable. No capability is persisted
+or minted to repair that situation.
+
+HTTP responses are projected onto closed MCP schemas; declared fields still
+validate. A successful publish with an invalid response, or a timeout with an
+uncertain outcome, must not be automatically republished. Use `fmrl_list` and the
+saved page information to reconcile first. Publish idempotency remains absent:
+this client sends no `Idempotency-Key`.
+
+Before cutover, obtain the separate bridge release approval, publish the approved
+version, and have clients update and restart/reconnect. Verify the running
+`fmrl_status` version, not just the installed package: publishing does not replace
+an already running MCP process or its cached schemas. Only then assess the
+cutover readiness gates and seek the separate cutover approval. This order does
+not prove that every client has updated. An old process can still reject a
+new-server response after a write succeeds; reconcile rather than automatically
+republishing. Passing tests or implementation review does not authorize a merge,
+package release, deployment or cutover.

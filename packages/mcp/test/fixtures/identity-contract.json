@@ -1,0 +1,107 @@
+{
+  "server_commit": "d4d191f203396d3923450f531c6fb44be54c27da",
+  "contract": "identity",
+  "provenance": "Captured from isolated STORE=memory server and synthetic agents. Rotation secret omitted. No production data.",
+  "me": {
+    "prefix": "fmrl_L4Te",
+    "label": "fmrl-mcp",
+    "display_name": "",
+    "created_at": "2026-10-16T23:42:39.999874Z",
+    "quota": {
+      "publishes": {
+        "used": 0,
+        "limit": 100,
+        "resets_at": "2026-11-01T00:00:00Z"
+      }
+    },
+    "attached_at": null,
+    "principal": {
+      "id": "68f56e27e82f52e3096403e46d798d43adbb5c4edb8260d9b00971fe6766082e",
+      "kind": "agent",
+      "attached_to": "",
+      "scope": ""
+    },
+    "attach_url": "http://127.0.0.1:18217/c/hNvhMadKl7BcHr8t_2XI1w"
+  },
+  "patch_me": {
+    "prefix": "fmrl_L4Te",
+    "label": "owner",
+    "display_name": "",
+    "created_at": "2026-10-16T23:42:39.999874Z",
+    "quota": {
+      "publishes": {
+        "used": 0,
+        "limit": 100,
+        "resets_at": "2026-11-01T00:00:00Z"
+      }
+    },
+    "attached_at": null,
+    "principal": {
+      "id": "68f56e27e82f52e3096403e46d798d43adbb5c4edb8260d9b00971fe6766082e",
+      "kind": "agent",
+      "attached_to": "",
+      "scope": ""
+    }
+  },
+  "publish": {
+    "id": "f07vbj02vkvv",
+    "url": "http://127.0.0.1:18217/f07vbj02vkvv",
+    "raw_url": "http://127.0.0.1:18217/f07vbj02vkvv/raw",
+    "manage_url": "http://127.0.0.1:18217/c/k5J4PwOv9CQEIGZMFKsk7w",
+    "expires_at": "2026-10-23T23:42:40.011112Z",
+    "status": "live",
+    "recovery": "usable"
+  },
+  "inbox": {
+    "items": [
+      {
+        "id": "f07vbj02vkvv",
+        "url": "http://127.0.0.1:18217/f07vbj02vkvv",
+        "private": false,
+        "status": "live",
+        "rev": 2,
+        "seen_rev": 1,
+        "revisions": [
+          {
+            "rev": 2,
+            "at": "2026-10-16T23:42:40.026983Z",
+            "editor": {
+              "kind": "key",
+              "key": "fmrl_u0A3",
+              "label": "manager"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "revision": {
+    "rev": 2,
+    "at": "2026-10-16T23:42:40.026983Z",
+    "size": 8,
+    "sha256": "8b946e6b602dcb0627d9ed6abe4fddcbd0cc0fcd5cee33add581c9d7f59f5d2e",
+    "title": "Edited",
+    "source": "api",
+    "format": "md",
+    "content": "# Edited",
+    "editor": {
+      "kind": "key",
+      "key": "fmrl_u0A3",
+      "label": "manager"
+    }
+  },
+  "rotate": {
+    "prefix": "fmrl_L4Te",
+    "rotated_at": "2026-10-16T23:42:40.058451Z"
+  },
+  "publish_with_attach": {
+    "id": "kt2s57s6f8ce",
+    "url": "http://127.0.0.1:18217/kt2s57s6f8ce",
+    "raw_url": "http://127.0.0.1:18217/kt2s57s6f8ce/raw",
+    "manage_url": "http://127.0.0.1:18217/c/0PsaMfz2TgpclLY6G_g-0g",
+    "expires_at": "2026-10-23T23:42:40.061414Z",
+    "status": "live",
+    "recovery": "usable",
+    "attach_url": "http://127.0.0.1:18217/c/lWQZbSzNzdYO2Tec9nHERA"
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "server_commit": "ba92431980003cdd5d93e00ab5c5d595dd3a59a7",
+  "contract": "legacy",
+  "provenance": "Captured from isolated STORE=memory server and synthetic agents. Rotation secret omitted. No production data.",
+  "me": {
+    "prefix": "fmrl_mpR2",
+    "label": "fmrl-mcp",
+    "display_name": "",
+    "created_at": "2026-10-16T23:41:36.309451Z",
+    "quota": {
+      "publishes": {
+        "used": 0,
+        "limit": 100,
+        "resets_at": "2026-11-01T00:00:00Z"
+      }
+    },
+    "linked_at": null,
+    "link_url": "http://127.0.0.1:18218/link/2BN0DaKxven8FbGnFhu3XA"
+  },
+  "patch_me": {
+    "prefix": "fmrl_mpR2",
+    "label": "owner",
+    "display_name": "",
+    "created_at": "2026-10-16T23:41:36.309451Z",
+    "quota": {
+      "publishes": {
+        "used": 0,
+        "limit": 100,
+        "resets_at": "2026-11-01T00:00:00Z"
+      }
+    },
+    "linked_at": null
+  },
+  "publish": {
+    "id": "dn2qqq6sxf21",
+    "url": "http://127.0.0.1:18218/dn2qqq6sxf21",
+    "raw_url": "http://127.0.0.1:18218/dn2qqq6sxf21/raw",
+    "manage_url": "http://127.0.0.1:18218/manage/dn2qqq6sxf21#k=Wv62eVfC66G7JpBOfsb2wg",
+    "expires_at": "2026-10-23T23:41:36.318775Z",
+    "status": "live",
+    "link_url": "http://127.0.0.1:18218/link/Dx3Cjo00Or6cfA8cLz57Aw"
+  },
+  "inbox": {
+    "items": [
+      {
+        "id": "dn2qqq6sxf21",
+        "url": "http://127.0.0.1:18218/dn2qqq6sxf21",
+        "private": false,
+        "status": "live",
+        "rev": 2,
+        "seen_rev": 1,
+        "revisions": [
+          {
+            "rev": 2,
+            "at": "2026-10-16T23:41:36.329279Z",
+            "editor": {
+              "kind": "key",
+              "key": "fmrl_NLem",
+              "label": "manager"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "revision": {
+    "rev": 2,
+    "at": "2026-10-16T23:41:36.329279Z",
+    "size": 8,
+    "sha256": "8b946e6b602dcb0627d9ed6abe4fddcbd0cc0fcd5cee33add581c9d7f59f5d2e",
+    "title": "Edited",
+    "source": "api",
+    "format": "md",
+    "content": "# Edited",
+    "editor": {
+      "kind": "key",
+      "key": "fmrl_NLem",
+      "label": "manager"
+    }
+  },
+  "rotate": {
+    "prefix": "fmrl_mpR2",
+    "rotated_at": "2026-10-16T23:41:36.34598Z"
+  }
+}

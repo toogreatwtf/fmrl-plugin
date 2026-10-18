@@ -1,0 +1,28 @@
+{
+  "server_commit": "048d330b5b8bbd9567fd46b3aad437e91f83ce7a",
+  "provenance": "Captured from isolated STORE=memory server with synthetic agents. Human/display_name variants separately follow editorResponse contract.",
+  "publish": {
+    "id": "30xqw8k6rqkw",
+    "url": "http://127.0.0.1:18217/30xqw8k6rqkw",
+    "raw_url": "http://127.0.0.1:18217/30xqw8k6rqkw/raw",
+    "manage_url": "http://127.0.0.1:18217/c/ue8cnXHoypvKzh3ifwbUGw",
+    "expires_at": "2026-10-23T18:17:43.362261Z",
+    "status": "live",
+    "recovery": "usable"
+  },
+  "revision": {
+    "rev": 3,
+    "at": "2026-10-16T18:17:43.371935Z",
+    "size": 17,
+    "sha256": "6dd77c7777f05ab8b8de7df7cf551644b702346c080b7b1b32aab699227d33ed",
+    "title": "Durable manager",
+    "source": "api",
+    "format": "md",
+    "content": "# Durable manager",
+    "editor": {
+      "kind": "key",
+      "key": "fmrl_ajKF",
+      "label": "manager"
+    }
+  }
+}

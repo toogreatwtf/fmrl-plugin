@@ -1,8 +1,9 @@
 export interface MintResponse { key: string; prefix: string; created_at: string; quota: { publishes: number; period: string } }
 /** sealed is the page's key and title under the key's ring (crypto.sealRecord); the server takes it on an encrypted page only. */
 export interface PublishRequest { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean; sealed?: string }
-/** link_url rides on a publish only until a browser has been linked to the key; a server that predates linking never sends it. */
-export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string; status: string; link_url?: string }
+/** recovery is absent on legacy servers; absence never means usable.
+ * attach_url is optional on a new publish while the agent is unattached; never present on an idempotent replay. */
+export interface PublishResponse { id: string; url: string; raw_url: string; manage_url: string; expires_at: string | null; status: string; recovery?: "usable" | "spent" | "revoked"; attach_url?: string; link_url?: string }
 /**
  * DocResponse is a page as GET /api/v1/docs/{id} and each GET /api/v1/docs row
  * describe it. rev and private come from servers with sealed records
@@ -16,15 +17,16 @@ export interface DocsResponse { docs: DocResponse[] }
 export interface AccountVault { pub: string; fingerprint: string }
 export interface RingBoxInput { prefix: string; box: string }
 
-/** linked_at is when a browser first redeemed a link for this key; link_url is a fresh link every call. Both are absent from a server that predates linking. rotated_at is when the key's secret was last replaced, absent until it first is. */
-export interface MeResponse { prefix: string; created_at: string; label: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; linked_at?: string | null; rotated_at?: string; link_url?: string; account_vault?: AccountVault | null }
+/** Transitional fields stay distinct: linked_at/link_url describe the legacy browser flow.
+ * attached_at is when the agent attached to its person, or null. attach_url is optional on GET /me and absent on PATCH. */
+export interface MeResponse { prefix: string; created_at: string; label?: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at?: string | null; linked_at?: string | null; link_url?: string; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
 /** RedeemResponse is POST /api/v1/keys/redeem: the key a key code carries, given once. */
 export interface RedeemResponse { key: string; prefix: string }
 /** RotateResponse is POST /api/v1/me/rotate: the calling key's new secret, given once, under the same prefix. */
 export interface RotateResponse { key: string; prefix: string; rotated_at: string }
 
 /** Editor describes who made a revision. "manage" never happens through the API: an edit made with a manage token still carries the caller's own key. */
-export interface Editor { kind: "key" | "session" | "manage" | "anonymous" | "unknown"; key?: string; name?: string }
+export interface Editor { kind: "key" | "session" | "human" | "manage" | "anonymous" | "unknown"; key?: string; label?: string; display_name?: string; name?: string }
 /** RevisionContent is one revision's full body, as stored: Markdown, HTML, or a private page's envelope. */
 export interface RevisionContent { rev: number; at: string; size: number; sha256: string; title: string; source: string; format: "html" | "md"; content: string; editor: Editor }
 /** RevisionMeta is one row of a page's revision list, without the body. */
@@ -66,6 +68,29 @@ export interface CallOptions { timeoutMs?: number; record?: boolean }
 export class FmrlApi {
   /** lastCall is the most recent request this client made, however it ended; undefined until the first. */
   lastCall?: LastCall;
+  // Courtesy links are one-shot disclosures, not refreshable by GET /me. Keep
+  // them only in this process, scoped to this API origin and credential. Never
+  // persist them, replace them remotely, or renew their one-hour lifetime on reads.
+  private readonly attachHints = new Map<string, { url: string; expires: number }>();
+  noteAttachment(key: string, response: { attached_at?: unknown; attach_url?: unknown }, receivedAt = Date.now()): void {
+    if (typeof response.attached_at === "string" && response.attached_at) {
+      this.attachHints.delete(key);
+      return;
+    }
+    if (response.attached_at !== undefined && response.attached_at !== null) return;
+    if (typeof response.attach_url !== "string") return;
+    let url: URL;
+    try { url = new URL(response.attach_url); } catch { return; }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) return;
+    if (this.attachHints.get(key)?.url === response.attach_url) return;
+    this.attachHints.set(key, {url: response.attach_url, expires: receivedAt + 3600000});
+  }
+  attachmentHint(key: string): string | undefined {
+    const hint = this.attachHints.get(key);
+    if (!hint) return undefined;
+    if (hint.expires <= Date.now()) { this.attachHints.delete(key); return undefined; }
+    return hint.url;
+  }
   private readonly root: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
@@ -103,7 +128,11 @@ export class FmrlApi {
     await this.call<void>("DELETE", `/docs/${encodeURIComponent(id)}`, key);
   }
   me(key: string, opts?: CallOptions): Promise<MeResponse> {
-    return this.call<MeResponse>("GET", "/me", key, undefined, undefined, opts);
+    const started = Date.now();
+    return this.call<MeResponse>("GET", "/me", key, undefined, undefined, opts).then(me => {
+      if (me && typeof me === "object") this.noteAttachment(key, me, started);
+      return me;
+    });
   }
   putRings(key: string, boxes: RingBoxInput[], fingerprint?: string): Promise<{ stored: number }> {
     return this.call<{ stored: number }>("PUT", "/me/rings", key, { boxes, ...(fingerprint === undefined ? {} : { fingerprint }) });

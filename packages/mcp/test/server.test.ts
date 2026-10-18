@@ -160,7 +160,7 @@ describe("account vault sync integration", () => {
     const key = await seed(); fake.accountVaults.set(key, null);
     const r = await call("fmrl_whoami");
     expect(r.isError).toBeFalsy();
-    expect(r.structuredContent).toMatchObject({ prefix: fake.prefixOf(key), quota: { publishes: { used: 0 } }, link_url: expect.any(String) });
+    expect(r.structuredContent).toMatchObject({ prefix: fake.prefixOf(key), quota: { publishes: { used: 0 } }, attach_url: expect.any(String) });
     expect(r.structuredContent).not.toHaveProperty("account_vault");
     expect(text(r)).not.toContain("Private page keys:"); expect(ringRequests()).toHaveLength(0);
   });
@@ -197,8 +197,8 @@ describe("account vault sync integration", () => {
     expect(replies.slice(1).every(r => !text(r).includes("First sync:"))).toBe(true);
     expect(replies.every(r => !text(r).includes("Private page keys:"))).toBe(true);
     expect(fake.publishes.get(key)).toBe(4);
-    if (linked) expect(replies.every(r => !r.structuredContent?.link_url)).toBe(true);
-    else expect(replies.every(r => RING_PAIR.test(r.structuredContent?.link_url as string))).toBe(true);
+    if (linked) expect(replies.every(r => !r.structuredContent?.attach_url)).toBe(true);
+    else expect(replies.every(r => RING_PAIR.test(r.structuredContent?.attach_url as string))).toBe(true);
     for (const r of replies.slice(2)) expect(r.structuredContent?.url).toContain("#p=");
   });
   it("two identical publishes and two whoami calls sync four times without throttle", async () => {
@@ -291,7 +291,7 @@ describe("account vault sync integration", () => {
     await writeCredentials(credFile, { ...credentials, rings: { fmrl_OLD1: rings[0], fmrl_OLD2: rings[1], fmrl_OLD3: rings[2] } });
     const api = new FmrlApi(fake.baseUrl);
     const me = api.me.bind(api);
-    api.me = async k => { const { link_url: ignored, ...rest } = await me(k); return rest; };
+    api.me = async k => { const { attach_url: ignored, ...rest } = await me(k); return rest; };
     const logs: string[] = [];
     const c = await connect({ api, keys: new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile }), log: l => logs.push(l) });
     try {
@@ -327,11 +327,11 @@ describe("tools", () => {
       `Published: https://fmrl.test/${id}`,
       "Expires 2026-09-15T12:00:00Z",
       "This page lasts seven days unless someone keeps it on the page itself.",
-      `Manage link (removes the page; give it only to someone who should be able to): https://fmrl.test/manage/${id}#k=tok${id}manage0`,
-      `See your pages on fmrl.site: open https://fmrl.test/link/code${id}#r=${prefix}.${ring} once in your browser (it works for an hour, and once). It also carries the ring that lets that browser open your private pages.`,
+      `Recovery link (grants management and editing; does not remove the page; share the page URL with it): https://fmrl.test/c/tok${id}manage0`,
+      `Attach this agent to your identity: open https://fmrl.test/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`,
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
-    expect(r.structuredContent).toMatchObject({ link_url: `https://fmrl.test/link/code${id}#r=${prefix}.${ring}` });
+    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/fresh#r=${prefix}.${ring}` });
     expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/me", "/api/v1/publish", "/api/v1/me"]);
     expect(firstPublish().body).toEqual({ content: "# Hello", title: "Hello" });
   });
@@ -425,19 +425,19 @@ describe("tools", () => {
     const first = await call("fmrl_publish", { content: "# a" });
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const r = await call("fmrl_publish", { content: "# b" });
-    expect(text(first)).toContain("See your pages on fmrl.site");
+    expect(text(first)).toContain("Attach this agent to your identity");
     expect(text(r)).not.toContain("See your pages");
-    expect(r.structuredContent).not.toHaveProperty("link_url");
+    expect(r.structuredContent).not.toHaveProperty("attach_url");
   });
   it("fmrl_whoami says whether a browser is linked and always offers a link", async () => {
     const r = await call("fmrl_whoami");
-    expect(text(r)).toContain("No browser link has been recorded.");
-    expect(text(r)).toContain("open https://fmrl.test/link/fresh#r=");
-    expect(r.structuredContent).toMatchObject({ linked_at: null, link_url: expect.stringMatching(/^https:\/\/fmrl\.test\/link\/fresh#r=/) });
+    expect(text(r)).toContain("This agent is not attached to an identity.");
+    expect(text(r)).toContain("open https://fmrl.test/attach/fresh#r=");
+    expect(r.structuredContent).toMatchObject({ attached_at: null, attach_url: expect.stringMatching(/^https:\/\/fmrl\.test\/attach\/fresh#r=/) });
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const again = await call("fmrl_whoami");
-    expect(text(again)).toContain("A browser linked on 2026-09-16T12:00:00Z.");
-    expect(again.structuredContent).toMatchObject({ linked_at: "2026-09-16T12:00:00Z" });
+    expect(text(again)).toContain("This agent attached to its identity on 2026-09-16T12:00:00Z.");
+    expect(again.structuredContent).toMatchObject({ attached_at: "2026-09-16T12:00:00Z" });
   });
   it("a 402 is a tool error with the reset time and is not retried", async () => {
     fake.quota = 0;
@@ -596,7 +596,7 @@ describe("tools", () => {
     const pageKey = /#p=([A-Za-z0-9_-]{43})$/.exec((r.structuredContent as { url: string }).url)![1];
     const ring = (await ringInFile())!;
     expect(await openRecord(ring, body.sealed!)).toEqual({ key: pageKey, title: "Quiet" });
-    const pair = RING_PAIR.exec((r.structuredContent as { link_url: string }).link_url)!;
+    const pair = RING_PAIR.exec((r.structuredContent as { attach_url: string }).attach_url)!;
     expect(pair[1]).toBe(keyOf(firstPublish()).slice(0, 9));
     expect(pair[2]).toBe(ring);
     // The ring shows in the reply only inside the link.
@@ -618,7 +618,7 @@ describe("tools", () => {
     fake.keys.add(key);
     fake.linked.add(key);
     const r = await call("fmrl_publish", { content: "# a" });
-    expect(r.structuredContent).not.toHaveProperty("link_url");
+    expect(r.structuredContent).not.toHaveProperty("attach_url");
     expect(await ringInFile()).toBeUndefined();
   });
   it("a retry after a 401 seals under the replacement key's ring", async () => {
@@ -632,7 +632,7 @@ describe("tools", () => {
     const last = fake.requests.filter((q) => q.path === "/api/v1/publish").at(-1)!;
     const pageKey = /#p=([A-Za-z0-9_-]{43})$/.exec((r.structuredContent as { url: string }).url)![1];
     expect(await openRecord(ring, (last.body as { sealed: string }).sealed)).toEqual({ key: pageKey, title: "Again" });
-    expect(RING_PAIR.exec((r.structuredContent as { link_url: string }).link_url)![2]).toBe(ring);
+    expect(RING_PAIR.exec((r.structuredContent as { attach_url: string }).attach_url)![2]).toBe(ring);
   });
   it("a ring that cannot be saved never costs the publish", async () => {
     const blocker = path.join(dir, "not-a-dir");
@@ -648,14 +648,14 @@ describe("tools", () => {
       expect(r.isError).toBeFalsy();
       expect(lastPublish().body as Record<string, unknown>).not.toHaveProperty("sealed");
       expect((r.structuredContent as { url: string }).url).toMatch(/#p=[A-Za-z0-9_-]{43}$/);
-      expect((r.structuredContent as { link_url: string }).link_url).not.toContain("#r=");
+      expect((r.structuredContent as { attach_url: string }).attach_url).not.toContain("#r=");
       // A link without #r= must not claim to carry the ring.
-      expect(text(r)).toContain("See your pages on fmrl.site: open ");
+      expect(text(r)).toContain("Attach this agent to your identity: open ");
       expect(text(r)).not.toContain("It also carries the ring");
       expect(logs.join("\n")).toMatch(/couldn't save a key ring/);
       const who = (await client2.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
       expect(text(who)).toContain(`Couldn't save a key ring to ${path.join(blocker, "credentials.json")} (`);
-      expect(text(who)).toContain("Browser: Link your browser to see your canvases: open ");
+      expect(text(who)).toContain("Attach this agent to your identity: open ");
       expect(text(who)).not.toContain("It also carries the ring");
     } finally {
       await client2.close();
@@ -670,11 +670,11 @@ describe("tools", () => {
   it("whoami provides one intact custom-origin handoff with optional account and backup meaning", async () => {
     const r = await call("fmrl_whoami");
     const t = text(r);
-    const link = r.structuredContent!.link_url as string;
+    const link = r.structuredContent!.attach_url as string;
     expect(t.split(link)).toHaveLength(2);
-    expect(t).toContain("Link your browser to see your canvases");
-    expect(t).toContain("If sign-in is available there, you can optionally");
-    expect(t).toContain("other devices");
+    expect(t).toContain("Attach this agent to your identity");
+    expect(t).toContain("in your browser");
+    expect(t).toContain("This agent is not attached");
     expect(t).not.toContain("Signing in does not back up private-page keys");
     expect(t).not.toContain("https://fmrl.site");
     expect(t).not.toContain(keyOf(fake.requests.at(-1)!));
@@ -683,14 +683,14 @@ describe("tools", () => {
   it("historical linking and a missing link do not invent current account state or a destination", async () => {
     const api = new FmrlApi(fake.baseUrl);
     const original = api.me.bind(api);
-    vi.spyOn(api, "me").mockImplementation(async k => ({ ...await original(k), linked_at: "2026-09-16", link_url: undefined }));
+    vi.spyOn(api, "me").mockImplementation(async k => ({ ...await original(k), attached_at: "2026-09-16", attach_url: undefined }));
     const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
     const c = await connect({ api, keys });
     try {
       const r = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
-      expect(text(r)).toContain("A browser linked on 2026-09-16");
-      expect(text(r)).toContain("Current browser and account status are unknown");
-      expect(text(r)).toContain("No browser link was supplied");
+      expect(text(r)).toContain("This agent attached to its identity on 2026-09-16");
+      expect(text(r)).not.toContain("browser linked");
+      expect(text(r)).not.toContain("No attach link");
       expect(text(r)).not.toMatch(/https?:\/\//);
       expect(text(r)).not.toContain("you are signed in");
     } finally { await c.close(); }
@@ -701,8 +701,8 @@ describe("tools", () => {
     const ring = (await ringInFile())!;
     const prefix = keyOf(fake.requests.at(-1)!).slice(0, 9);
     expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(r.structuredContent).toMatchObject({ link_url: `https://fmrl.test/link/fresh#r=${prefix}.${ring}` });
-    expect(text(r)).toContain(`open https://fmrl.test/link/fresh#r=${prefix}.${ring} (works for an hour, and once). It also carries the ring that lets that browser open your private pages.`);
+    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/fresh#r=${prefix}.${ring}` });
+    expect(text(r)).toContain(`open https://fmrl.test/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`);
     expect(text(r)).toContain(RING_FILE_LINE(credFile));
     expect(RING_FILE_LINE(credFile)).toBe(`Your key ring is in ${credFile}; back up that file to keep every page's key.`);
     expect(text(r).split(ring)).toHaveLength(2);
@@ -714,7 +714,7 @@ describe("tools", () => {
     const client2 = await connect({ api: api2, keys: keys2 });
     try {
       const r = (await client2.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
-      expect(RING_PAIR.exec((r.structuredContent as { link_url: string }).link_url)![2]).toBe(envRing);
+      expect(RING_PAIR.exec((r.structuredContent as { attach_url: string }).attach_url)![2]).toBe(envRing);
       expect(text(r)).toContain(RING_ENV_LINE);
       expect(text(r)).not.toContain("Your key ring is in");
     } finally {
@@ -824,7 +824,7 @@ describe("fmrl_get reads the page", () => {
     expect(got.isError).toBeFalsy();
     expect(got.structuredContent).toMatchObject({
       id, url: `https://fmrl.test/${id}`, private: false, rev: 1, latest_rev: 1,
-      editor: { kind: "key", key: prefix, name: "test" }, content: "# Hello\n\nworld", content_format: "md",
+      editor: { kind: "key", key: prefix, label: "test" }, content: "# Hello\n\nworld", content_format: "md",
     });
     expect(got.structuredContent).not.toHaveProperty("content_note");
     expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: `/api/v1/docs/${id}/revisions/1` });
@@ -842,7 +842,7 @@ describe("fmrl_get reads the page", () => {
     const old = await call("fmrl_get", { id, rev: 1 });
     expect(old.structuredContent).toMatchObject({ rev: 1, latest_rev: 2, content: "# One", content_format: "md" });
     const latest = await call("fmrl_get", { id });
-    expect(latest.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two", editor: { kind: "key", key: key.slice(0, 9), name: "claude-code" } });
+    expect(latest.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two", editor: { kind: "key", key: key.slice(0, 9), label: "claude-code" } });
     expect(text(latest)).toContain(`Revision 2 of 2, edited by claude-code (${key.slice(0, 9)}…) at `);
     const bad = await call("fmrl_get", { id, rev: 0 });
     expect(bad.isError).toBe(true);
@@ -960,11 +960,11 @@ describe("fmrl_edit", () => {
     const c = await connect({ api: api2, keys: keys2, pages: pages2 });
     return { call: async (name: string, args: Record<string, unknown> = {}) => (await c.callTool({ name, arguments: args })) as ToolResult, pages: pages2 };
   };
-  const manageTok = (manageUrl: string) => manageUrl.slice(manageUrl.indexOf("#k=") + 3);
+  const manageTok = (manageUrl: string) => new URL(manageUrl).pathname.split("/").at(-1)!;
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_edit")!;
-    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose manage link you were given; a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
+    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token); a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
   });
   it("publishing remembers the page's manage token, and a private page's key", async () => {
     const pub = await call("fmrl_publish", { content: "# Open" });
@@ -989,7 +989,7 @@ describe("fmrl_edit", () => {
     const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
-    const r = await b.call("fmrl_edit", { id: manage_url, content: "# Edited by B", base_rev: 1 });
+    const r = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# Edited by B", base_rev: 1 });
     expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2, watching: true });
     expect(text(r)).toBe(`Saved revision 2 of https://fmrl.test/${id}. You are watching it: revisions other editors make show up in fmrl_inbox.`);
     expect(((await b.call("fmrl_inbox")).structuredContent as { items: unknown[] }).items).toEqual([]);
@@ -1004,7 +1004,7 @@ describe("fmrl_edit", () => {
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
     fake.watchLimit = 0;
-    const r = await b.call("fmrl_edit", { id: manage_url, content: "# Edited by B", base_rev: 1 });
+    const r = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# Edited by B", base_rev: 1 });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2, watching: false });
     expect(text(r)).toBe(`Saved revision 2 of https://fmrl.test/${id}. Not watched: the page could not be added to this key's watches, usually because the key watches the most pages it may, so replies will not show up in fmrl_inbox. Call fmrl_watch to try again; it says whether the key is at its limit.`);
@@ -1016,13 +1016,13 @@ describe("fmrl_edit", () => {
 
     const bare = await b.call("fmrl_edit", { id, content: "# Nope" });
     expect(bare.isError).toBe(true);
-    expect(text(bare)).toBe(`You can edit this page with its manage link (https://fmrl.test/manage/${id}#k=…); pass it as id once and it is remembered.`);
+    expect(text(bare)).toBe(`To edit, supply https://fmrl.test/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`);
 
-    const forged = await b.call("fmrl_edit", { id: `https://fmrl.test/manage/${id}#k=${"f".repeat(22)}`, content: "# Forged" });
+    const forged = await b.call("fmrl_edit", { id, manage_token: "f".repeat(22), content: "# Forged" });
     expect(forged.isError).toBe(true);
     expect(await b.pages.get(id)).toEqual({});
 
-    const once = await b.call("fmrl_edit", { id: manage_url, content: "# Edited by B", base_rev: 1 });
+    const once = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# Edited by B", base_rev: 1 });
     expect(once.isError).toBeFalsy();
     expect(once.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}`, rev: 2, watching: true });
     expect(puts().at(-1)?.manageToken).toBe(manageTok(manage_url));
@@ -1039,7 +1039,7 @@ describe("fmrl_edit", () => {
     const key = url.split("#p=")[1];
     const b = await second();
 
-    const r = await b.call("fmrl_edit", { id: `https://fmrl.test/manage/${id}#p=${key}&k=${manageTok(manage_url)}`, content: "# Plan v2\n\nsecond", format: "md", title: "Plan v2", base_rev: 1 });
+    const r = await b.call("fmrl_edit", { id: `https://fmrl.test/${id}#p=${key}`, manage_token: manage_url, content: "# Plan v2\n\nsecond", format: "md", title: "Plan v2", base_rev: 1 });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({ id, url: `https://fmrl.test/${id}#p=${key}`, rev: 2, watching: true });
     const put = puts().at(-1)!;
@@ -1074,7 +1074,7 @@ describe("fmrl_edit", () => {
     const priv = await call("fmrl_publish", { content: "# Sealed", private: true });
     const { id, manage_url } = priv.structuredContent as { id: string; manage_url: string };
     const b = await second();
-    const r = await b.call("fmrl_edit", { id: manage_url, content: "# Mine now" });
+    const r = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# Mine now" });
     expect(r.isError).toBe(true);
     expect(text(r)).toBe(PRIVATE_NEEDS_KEY);
     expect(puts()).toHaveLength(0);
@@ -1113,7 +1113,7 @@ describe("fmrl_edit", () => {
     const { id, url, manage_url } = priv.structuredContent as { id: string; url: string; manage_url: string };
     const key = url.split("#p=")[1];
     const b = await agent({ file: "b2", agentName: "Bee" });
-    const bEdit = await b.call("fmrl_edit", { id: `${manage_url}&p=${key}`, content: "# Plan\n\nv2 by B", base_rev: 1 });
+    const bEdit = await b.call("fmrl_edit", { id: `https://fmrl.test/${id}#p=${key}`, manage_token: manage_url, content: "# Plan\n\nv2 by B", base_rev: 1 });
     expect(bEdit.isError).toBeFalsy();
 
     const conflict = await call("fmrl_edit", { id: url, content: "# Plan\n\nv2 by owner", base_rev: 1 });
@@ -1137,7 +1137,7 @@ describe("fmrl_edit", () => {
     const pub = await call("fmrl_publish", { content: "# Mine", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     await writeFile(pagesFile, JSON.stringify({ version: 1, pages: {} }));
-    const r = await call("fmrl_edit", { id: manage_url, content: "# Mine, again", base_rev: 1 });
+    const r = await call("fmrl_edit", { id, manage_token: manage_url, content: "# Mine, again", base_rev: 1 });
     expect(r.isError).toBeFalsy();
     expect(puts().at(-1)?.manageToken).toBeUndefined();
     expect(await pagesAt().get(id)).toEqual({});
@@ -1158,7 +1158,7 @@ describe("fmrl_edit", () => {
     const b = await second();
     await b.pages.remember(id, { manage: manageTok(manage_url) });
     const forged = "f".repeat(22);
-    const r = await b.call("fmrl_edit", { id: `https://fmrl.test/manage/${id}#k=${forged}`, content: "# By B", base_rev: 1 });
+    const r = await b.call("fmrl_edit", { id, manage_token: forged, content: "# By B", base_rev: 1 });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toMatchObject({ rev: 2 });
     expect(puts().map((q) => q.manageToken)).toEqual([forged, manageTok(manage_url)]);
@@ -1168,9 +1168,9 @@ describe("fmrl_edit", () => {
     const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
     const { id } = pub.structuredContent as { id: string };
     const b = await second();
-    const r = await b.call("fmrl_edit", { id: `https://fmrl.test/manage/${id}#k=${"f".repeat(22)}`, content: "# By B" });
+    const r = await b.call("fmrl_edit", { id, manage_token: "f".repeat(22), content: "# By B" });
     expect(r.isError).toBe(true);
-    expect(text(r)).toBe(`You can edit this page with its manage link (https://fmrl.test/manage/${id}#k=…); pass it as id once and it is remembered.`);
+    expect(text(r)).toBe(`To edit, supply https://fmrl.test/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`);
     expect(puts()).toHaveLength(1);
     expect(await b.pages.get(id)).toEqual({});
   });
@@ -1179,7 +1179,7 @@ describe("fmrl_edit", () => {
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
     await b.pages.remember(id, { manage: "s".repeat(22) });
-    const r = await b.call("fmrl_edit", { id: manage_url, content: "# By B" });
+    const r = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# By B" });
     expect(r.isError).toBeFalsy();
     expect(puts().map((q) => q.manageToken)).toEqual([manageTok(manage_url)]);
     expect(await b.pages.get(id)).toEqual({ manage: manageTok(manage_url) });
@@ -1243,7 +1243,7 @@ describe("fmrl_watch and fmrl_inbox", () => {
     const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
     const { id, url, manage_url } = pub.structuredContent as { id: string; url: string; manage_url: string };
     const b = await agent({ file: "b", agentName: "Bee" });
-    const edit = await b.call("fmrl_edit", { id: manage_url, content: "# Shared, by B", base_rev: 1 });
+    const edit = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# Shared, by B", base_rev: 1 });
     expect(edit.isError).toBeFalsy();
 
     const inbox = await call("fmrl_inbox");
@@ -1251,7 +1251,7 @@ describe("fmrl_watch and fmrl_inbox", () => {
     const items = (inbox.structuredContent as { items: Array<Record<string, unknown>> }).items;
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ id, url, private: false, status: "live", rev: 2, seen_rev: 1, can_open: true });
-    expect(items[0].revisions).toMatchObject([{ rev: 2, editor: { kind: "key", name: "Bee" } }]);
+    expect(items[0].revisions).toMatchObject([{ rev: 2, editor: { kind: "key", label: "Bee" } }]);
     expect(text(inbox)).toContain(id);
     expect(text(inbox)).toContain("live");
     expect(text(inbox)).toContain("rev 2 by Bee");
@@ -1265,7 +1265,7 @@ describe("fmrl_watch and fmrl_inbox", () => {
     const priv = await call("fmrl_publish", { content: "# Plan", private: true });
     const { id, url, manage_url } = priv.structuredContent as { id: string; url: string; manage_url: string };
     const b = await agent({ file: "b" });
-    await b.call("fmrl_edit", { id: `${manage_url}&p=${url.split("#p=")[1]}`, content: "# Plan v2", base_rev: 1 });
+    await b.call("fmrl_edit", { id: url, manage_token: manage_url, content: "# Plan v2", base_rev: 1 });
     const edited = await b.call("fmrl_watch", { id: url });
     expect(edited.structuredContent).toMatchObject({ can_open: true });
     const mine = await call("fmrl_inbox");
@@ -1476,7 +1476,7 @@ describe("key codes, rotation and revocation", () => {
     expect(fake.prefixOf(file.keys[fake.baseUrl].key)).toBe(other.prefix);
     expect(file.rings).toEqual({ fmrl_OLD1: ringA, [other.prefix]: ringB });
     const who = await call("fmrl_whoami");
-    expect(RING_PAIR.exec((who.structuredContent as { link_url: string }).link_url)!.slice(1)).toEqual([other.prefix, ringB]);
+    expect(RING_PAIR.exec((who.structuredContent as { attach_url: string }).attach_url)!.slice(1)).toEqual([other.prefix, ringB]);
   });
   it("fmrl_redeem refuses something that isn't a key code without sending it", async () => {
     const r = await call("fmrl_redeem", { code: "K7QX-M2PA-9D4R-TW6B-H3NC-EY" });
@@ -1561,9 +1561,9 @@ describe("key codes, rotation and revocation", () => {
     const got = await call("fmrl_get", { id });
     expect(got.structuredContent).toMatchObject({ id, key_held: true, title: "Quiet" });
     const who = await call("fmrl_whoami");
-    expect(RING_PAIR.exec((who.structuredContent as { link_url: string }).link_url)!.slice(1)).toEqual([before.prefix, before.ring]);
+    expect(RING_PAIR.exec((who.structuredContent as { attach_url: string }).attach_url)!.slice(1)).toEqual([before.prefix, before.ring]);
     const more = await call("fmrl_publish", { content: "# More", private: true });
-    expect(RING_PAIR.exec((more.structuredContent as { link_url: string }).link_url)!.slice(1)).toEqual([before.prefix, before.ring]);
+    expect(RING_PAIR.exec((more.structuredContent as { attach_url: string }).attach_url)!.slice(1)).toEqual([before.prefix, before.ring]);
     expect((await readCredentials(credFile)).rings).toBeUndefined();
     expect(mints()).toBe(1);
   });
@@ -1714,7 +1714,7 @@ describe("fmrl_status", () => {
         const n = fake.requests.length;
         const t = await status(c, { verbose: true });
         expect(fake.requests.slice(n).map((q) => `${q.method} ${q.path}`)).toEqual(["GET /api/v1/me", "GET /api/v1/inbox"]);
-        expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. No browser link recorded\. Inbox: empty\.$/m);
+        expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. Agent not attached\. Inbox: empty\.$/m);
         expect(t).toContain(`npm: fmrl-mcp 9.9.9 is the latest; this session runs ${VERSION}, so restart the client that started it to pick it up.`);
         expect(asked).toBe(1);
         // The probes are not the user's calls: the last call is still the read.

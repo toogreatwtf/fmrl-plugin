@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
+import { toHTML } from "../src/markdown.js";
 import { pluginInstructions } from "../src/plugin.js";
 import { readProfile } from "../src/profile.js";
 
@@ -115,6 +117,36 @@ describe("/fmrl:status", () => {
 describe("/fmrl:share and the handoff-review starter", () => {
   const starter = () => read("plugins/fmrl/skills/share/handoff-review.md");
   const share = () => read("plugins/fmrl/skills/share/SKILL.md");
+  it("distributes the share skill from the marketplace plugin source", () => {
+    const marketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
+    const plugin = marketplace.plugins.find((p: { name: string }) => p.name === "fmrl");
+    expect(read(path.join(plugin.source, "skills/share/SKILL.md"))).toBe(share());
+  });
+  it("keeps the documented link examples usable as inline HTML in Markdown", () => {
+    const examples = [...share().matchAll(/```html\n([\s\S]*?)```/g)];
+    expect(examples.length).toBeGreaterThan(0);
+    const nodes: DefaultTreeAdapterMap["element"][] = [];
+    const visit = (node: DefaultTreeAdapterMap["node"]) => {
+      if ("tagName" in node) nodes.push(node);
+      if ("childNodes" in node) node.childNodes.forEach(visit);
+    };
+    visit(parseFragment(toHTML(examples.map((m) => m[1]).join("\n"))));
+    const attr = (node: DefaultTreeAdapterMap["element"], name: string) =>
+      node.attrs.find((a) => a.name === name)?.value;
+    const links = nodes.filter((node) => node.tagName === "a");
+    expect(links).toHaveLength(3);
+    for (const link of links) {
+      const href = attr(link, "href")!;
+      if (href.startsWith("#")) {
+        expect(attr(link, "target")).toBe("_self");
+        expect(nodes.some((node) => attr(node, "id") === href.slice(1))).toBe(true);
+      } else {
+        expect(new URL(href).protocol).toBe("https:");
+        expect(attr(link, "target")).toBe("_blank");
+        expect(attr(link, "rel")?.split(/\s+/)).toEqual(expect.arrayContaining(["noopener", "noreferrer"]));
+      }
+    }
+  });
   it("ships the starter, whose profile names the eight sections in order and finds a heading for each", () => {
     const r = readProfile(starter(), "md");
     expect(r.profile_error).toBeUndefined();

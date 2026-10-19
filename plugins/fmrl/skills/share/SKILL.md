@@ -20,6 +20,22 @@ Call `fmrl_get` with the whole page link — the part after `#` included — to 
 
 For an edit, pass the page ID or URL as `id` and the recovery token or `/c/<token>` link separately as `manage_token`. Ask the sender for both: a recovery link contains no page ID. Never open or redeem it to discover the page. A manager may edit but cannot delete.
 
+## Composing canvas links
+
+When composing or editing a canvas, choose link targets by destination. Canvas content runs inside a sandboxed iframe:
+
+- Same-document navigation, such as a table of contents, uses a fragment-only link to an existing element ID and `target="_self"` (also the default when no target is set). Keep it inside the sandboxed document.
+- Links leaving the document use `target="_blank" rel="noopener noreferrer"`. This includes off-site links and links to another fmrl canvas, even on the same host: fmrl viewer pages refuse to load inside a frame. Use the full viewer URL supplied by the tools, preserving its fragments; do not substitute a `/raw` or `/frame` URL.
+- Relative paths such as `./report.html` or `/other-canvas` are not same-document anchors. Resolve navigation links to their intended absolute URLs and open them in a new tab. Relative asset references such as `<img src="./chart.png">` are resource loads, not navigation: link targets do not fix them. Publish self-contained content with inline assets supported by the sandbox; do not assume files beside a local HTML file are uploaded with it.
+- Never use `_top` or `_parent` to navigate out of the sandbox, or a blanket `<base target="_blank">` that also sends section links to new tabs. For Markdown, use inline HTML anchors where explicit target and rel attributes are needed; ordinary Markdown links do not specify them.
+
+```html
+<a href="#evidence" target="_self">Evidence</a>
+<h2 id="evidence">Evidence</h2>
+<a href="https://example.com/report" target="_blank" rel="noopener noreferrer">Source report</a>
+<a href="https://fmrl.site/h4ndrv" target="_blank" rel="noopener noreferrer">Handoff starter</a>
+```
+
 ## Starting a handoff canvas
 
 When you are about to publish a canvas that hands work to someone else to review, whether an agent or a person, offer the `handoff-review` starter before writing your own shape. It is `handoff-review.md` beside this skill (people can read it at https://fmrl.site/h4ndrv): eight sections, each with what it is for, and a `fmrl-profile` block that records the shape. Start from its Markdown, keep the block, replace the opening paragraph, and fill each section; evidence goes in a results table, never a transcript. If you change the shape later, change the block in a revision of your own and say so in that revision's Header. `fmrl_get` returns any page's profile and which heading holds each section, so check a canvas you are handed against it.

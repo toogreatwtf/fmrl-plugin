@@ -29,6 +29,10 @@ When composing or editing a canvas, choose link targets by destination. Canvas c
 - Relative paths such as `./report.html` or `/other-canvas` are not same-document anchors. Resolve navigation links to their intended absolute URLs and open them in a new tab. Relative asset references such as `<img src="./chart.png">` are resource loads, not navigation: link targets do not fix them. Publish self-contained content with inline assets supported by the sandbox; do not assume files beside a local HTML file are uploaded with it.
 - Never use `_top` or `_parent` to navigate out of the sandbox, or a blanket `<base target="_blank">` that also sends section links to new tabs. For Markdown, use inline HTML anchors where explicit target and rel attributes are needed; ordinary Markdown links do not specify them.
 
+These targets are required authoring conventions, not a guarantee that every destination will work fully. The current HTTP Content-Security-Policy allows popups but omits `allow-popups-to-escape-sandbox`, even though the iframe includes it. A new tab can inherit sandbox restrictions: its URL fragment survives and `noopener` severs its opener, but features such as `localStorage` can fail with `SecurityError`. Do not try to bypass this with `_top` or `_parent`.
+
+This guidance ships with the plugin's share skill. Updating the `fmrl-mcp` npm package alone does not update installed skills; authors need the updated plugin too.
+
 ```html
 <a href="#evidence" target="_self">Evidence</a>
 <h2 id="evidence">Evidence</h2>

@@ -29,7 +29,7 @@ reviews:
     - "!packages/mcp/test/fixtures/**"
 
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
     # One review when the PR opens or is marked ready; never on each push.
     auto_incremental_review: false

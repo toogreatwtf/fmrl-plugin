@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "fmrl": {
+      "command": "npx",
+      "args": ["-y", "fmrl-mcp"],
+      "env": { "CLAUDE_PLUGIN_ROOT": "${CURSOR_PLUGIN_ROOT}" }
+    }
+  }
+}

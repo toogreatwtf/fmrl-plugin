@@ -13,6 +13,8 @@ Claude Code:
 
 Keep it current: auto-update is your switch — no marketplace can set it for you. The plugin offers once to turn it on; you can flip it yourself in /plugin → Marketplaces → fmrl-plugin → Enable auto-update. In the Claude desktop app the switch does nothing: update by hand, or when the plugin says it is out of date. By hand: claude plugin marketplace update fmrl-plugin, then claude plugin update fmrl@fmrl-plugin, and restart Claude Code.
 
+Cursor: open Customize, add a plugin From GitHub Repository with `toogreatwtf/fmrl-plugin`, and install fmrl. It brings the share, whoami and status skills and the same twelve tools. npx starts the latest fmrl-mcp each time Cursor starts it; the skills stay at the version Cursor installed until you update the plugin there.
+
 Any MCP client (Claude Desktop, Cursor, Codex, Windsurf, and the rest):
 
 ```json

@@ -1,0 +1,14 @@
+{
+  "name": "fmrl-plugin",
+  "owner": { "name": "Too Great LLC" },
+  "metadata": {
+    "description": "fmrl for Cursor: share anything your AI made as a page on fmrl.site."
+  },
+  "plugins": [
+    {
+      "name": "fmrl",
+      "source": "./plugins/fmrl",
+      "description": "Share anything your AI made: publish a page to fmrl.site and get a link."
+    }
+  ]
+}

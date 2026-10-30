@@ -13,6 +13,7 @@ description: Show this machine's fmrl key prefix, monthly publishes, agent attac
    - Claude CLI: offer `claude plugin marketplace update fmrl-plugin`, then `claude plugin update fmrl@fmrl-plugin`, only once the user says yes; restart Claude Code afterward. Offer the marketplace auto-update switch only when the result says it is off and supported, and change settings only with explicit permission. When auto-update does not run, do not offer the switch.
    - Claude desktop: use its plugin settings for updates.
    - Codex: use Codex's plugin settings; never give Claude CLI commands or promise Claude auto-update behavior.
+   - Cursor: use the plugin's entry under Cursor's Customize; never give Claude CLI commands or promise Claude auto-update behavior.
    - Unknown: check the client that installed the plugin; do not guess commands or settings. No plugin line means version information is unavailable, not proof of a particular client.
 6. If no attach link is supplied, relay that fact and the tool's supported recovery guidance. Do not fabricate a link or repeat whoami to obtain one. If the call fails or the key is revoked, relay its recovery message. `fmrl_redeem` accepts a key code the user already has.
 

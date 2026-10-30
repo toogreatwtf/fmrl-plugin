@@ -29,10 +29,6 @@ reviews:
     - "!packages/mcp/test/fixtures/**"
 
   auto_review:
-    # Paused 2026-10-30 for a two-week trial of Baz (baz.ai). Automatic
-    # reviews stop; `@coderabbitai full review` still works on demand. To
-    # resume, set this back to true. CodeRabbit reads this file from the
-    # PR's own branch, so branches cut before the pause still carry `true`.
     enabled: false
     drafts: false
     # One review when the PR opens or is marked ready; never on each push.

@@ -65,11 +65,19 @@ describe("/fmrl:whoami", () => {
     expect(skillText()).toMatch(/auto-update does not run/i);
   });
   it("keeps account guidance optional and private-key backup distinct", () => {
-    expect(skillText()).toContain("Relay the supplied attach link unchanged");
+    expect(skillText()).toContain("When one is, relay it unchanged");
     expect(skillText()).toContain("back up the named credentials file");
     expect(skillText()).toContain("No plugin line means version information is unavailable");
     expect(skillText()).toContain("Codex: use Codex's plugin settings; never give Claude CLI commands");
     expect(skillText()).toContain("including its complete `#r=` fragment");
+  });
+  it("does not report a missing attach link once the agent is attached", () => {
+    // fmrl_whoami drops attach_url once attached_at has a date, so an
+    // attached agent never gets a link; the skill must not read that as a
+    // failed attach step.
+    expect(skillText()).toContain("An attach link is supplied only while this agent is not attached.");
+    expect(skillText()).toContain("say nothing about a missing attach link");
+    expect(skillText()).toContain("If the agent is not attached and no attach link is supplied");
   });
   it("requires explicit vault fingerprint confirmation and retains recovery advice", () => {
     const whoamiSkill = skillText();
@@ -220,7 +228,7 @@ describe("the Cursor plugin", () => {
     }
   });
   it("is in both READMEs' install steps, and in the skills' client guidance", () => {
-    for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme), readme).toContain("From GitHub Repository with `toogreatwtf/fmrl-plugin`");
+    for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme), readme).toContain("Import Marketplace, paste `https://github.com/toogreatwtf/fmrl-plugin`");
     expect(read("plugins/fmrl/skills/whoami/SKILL.md")).toContain("Cursor: use the plugin's entry under Cursor's Customize; never give Claude CLI commands");
     expect(read("plugins/fmrl/skills/status/SKILL.md")).toContain("In Cursor, Customize shows whether the fmrl server is on");
   });

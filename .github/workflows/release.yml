@@ -21,15 +21,21 @@
 # happens.
 #
 # Because every installed plugin runs what this job publishes, a publish
-# needs three things, so one leaked GitHub login with write access is not
-# enough to ship code to users:
+# needs three things:
 #   - the commit is on main (the job refuses any other ref, including a
 #     workflow_dispatch pointed at a branch);
 #   - the `npm-release` environment's required reviewer approves the run
 #     (repository Settings → Environments → npm-release: required
-#     reviewers, and deployment branches limited to main);
+#     reviewers, deployment branches limited to main, and "Prevent
+#     self-review" on);
 #   - npm's trusted publisher names that environment, so an OIDC token from
 #     any other job or branch is refused at npm.
+# So a leaked login with write access that is not a required reviewer
+# cannot ship code to users. What it does not stop: a leaked reviewer login
+# can approve a run someone else started, and approve its own too unless
+# "Prevent self-review" is on with a second reviewer to do the approving;
+# and a leaked admin login can change these settings. Those need 2FA and
+# a second reviewer, not workflow YAML.
 # Actions are pinned to commit SHAs and npm to an exact version, because
 # this job holds the one credential that reaches every user's machine.
 name: release

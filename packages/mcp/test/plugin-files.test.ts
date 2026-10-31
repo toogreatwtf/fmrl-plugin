@@ -1,9 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 import { toHTML } from "../src/markdown.js";
-import { pluginInstructions } from "../src/plugin.js";
+import { pluginInstructions, pluginStatus } from "../src/plugin.js";
 import { readProfile } from "../src/profile.js";
 
 // The plugin's own files, read from the repo: the manifest, its skills, and
@@ -161,5 +161,67 @@ describe("/fmrl:share and the handoff-review starter", () => {
     expect(share()).toContain("handoff-review.md");
     expect(share()).toContain("https://fmrl.site/h4ndrv");
     expect(share()).toMatch(/fmrl-profile/);
+  });
+});
+
+// Cursor installs the same plugin folder from .cursor-plugin/marketplace.json:
+// its own manifest and mcp.json, and the skills/ Claude Code reads. These
+// hold the rules Cursor's plugin template validates (cursor/plugin-template,
+// scripts/validate-template.mjs) and keep the two installs in step.
+describe("the Cursor plugin", () => {
+  const kebab = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
+  const marketplace = () => JSON.parse(read(".cursor-plugin/marketplace.json")) as {
+    name: string; owner: { name: string }; plugins: { name: string; source: string }[];
+  };
+  const entry = () => marketplace().plugins.find((p) => p.name === "fmrl")!;
+  const cursorManifest = () => JSON.parse(read("plugins/fmrl/.cursor-plugin/plugin.json")) as { name: string; version: string; description: string };
+  const servers = (p: string) => (JSON.parse(read(p)) as { mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }> }).mcpServers;
+
+  it("has a marketplace Cursor can import, naming the plugin folder Claude Code installs", () => {
+    const m = marketplace();
+    expect(m.name).toMatch(kebab);
+    expect(m.owner.name.length).toBeGreaterThan(0);
+    expect(new Set(m.plugins.map((p) => p.name)).size).toBe(m.plugins.length);
+    const source = entry().source;
+    expect(path.isAbsolute(source)).toBe(false);
+    expect(path.posix.normalize(source).startsWith("..")).toBe(false);
+    const claude = JSON.parse(read(".claude-plugin/marketplace.json")).plugins.find((p: { name: string }) => p.name === "fmrl");
+    expect(path.resolve(repo, source)).toBe(path.resolve(repo, claude.source));
+    expect(existsSync(path.join(repo, source, ".cursor-plugin/plugin.json"))).toBe(true);
+  });
+  it("has a manifest with the entry's name and the Claude manifest's exact version", () => {
+    expect(cursorManifest().name).toBe(entry().name);
+    expect(cursorManifest().name).toMatch(kebab);
+    expect(cursorManifest().version).toBe(manifest.version);
+  });
+  it("names every tool, as the Claude manifest does", () => {
+    for (const t of ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"]) {
+      expect(cursorManifest().description).toContain(t);
+    }
+  });
+  it("starts the same server as .mcp.json, pointing it at the installed plugin", () => {
+    const cursor = servers("plugins/fmrl/mcp.json").fmrl;
+    const claude = servers("plugins/fmrl/.mcp.json").fmrl;
+    expect(cursor.command).toBe(claude.command);
+    expect(cursor.args).toEqual(claude.args);
+    // Cursor expands CURSOR_PLUGIN_ROOT in env values; fmrl-mcp reads the
+    // plugin's version from CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json.
+    expect(cursor.env).toEqual({ CLAUDE_PLUGIN_ROOT: "${CURSOR_PLUGIN_ROOT}" });
+    expect(pluginStatus(path.join(repo, "plugins/fmrl"), pkg.version)).toEqual({ installed: manifest.version, server: pkg.version, stale: false });
+  });
+  it("has skills Cursor accepts: a name matching the folder, and a description", () => {
+    const skills = readdirSync(path.join(repo, "plugins/fmrl/skills"));
+    expect(skills.sort()).toEqual(["share", "status", "whoami"]);
+    for (const name of skills) {
+      const front = /^---\nname: (.+)\ndescription: (.+)\n/.exec(read(`plugins/fmrl/skills/${name}/SKILL.md`));
+      expect(front?.[1], name).toBe(name);
+      expect(front?.[1]).toMatch(/^[a-z0-9-]+$/);
+      expect(front?.[2].length, name).toBeGreaterThan(0);
+    }
+  });
+  it("is in both READMEs' install steps, and in the skills' client guidance", () => {
+    for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme), readme).toContain("From GitHub Repository with `toogreatwtf/fmrl-plugin`");
+    expect(read("plugins/fmrl/skills/whoami/SKILL.md")).toContain("Cursor: use the plugin's entry under Cursor's Customize; never give Claude CLI commands");
+    expect(read("plugins/fmrl/skills/status/SKILL.md")).toContain("In Cursor, Customize shows whether the fmrl server is on");
   });
 });

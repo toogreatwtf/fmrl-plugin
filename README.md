@@ -13,6 +13,8 @@ Claude Code:
 
 Keep it current: auto-update is your switch — no marketplace can set it for you. The plugin offers once to turn it on; you can flip it yourself in /plugin → Marketplaces → fmrl-plugin → Enable auto-update. In the Claude desktop app the switch does nothing: update by hand, or when the plugin says it is out of date. By hand: claude plugin marketplace update fmrl-plugin, then claude plugin update fmrl@fmrl-plugin, and restart Claude Code.
 
+Cursor: open Customize, add a plugin From GitHub Repository with `toogreatwtf/fmrl-plugin`, and install fmrl. It brings the share, whoami and status skills and the same twelve tools. npx starts the latest fmrl-mcp each time Cursor starts it; the skills stay at the version Cursor installed until you update the plugin there.
+
 Any MCP client (Claude Desktop, Cursor, Codex, Windsurf, and the rest):
 
 ```json
@@ -82,7 +84,7 @@ claude --plugin-dir ./plugins/fmrl    # from the repo root; npm link in packages
 
 Pull requests open as drafts and are marked ready when `npm test` in `packages/mcp` is green; the `test` workflow (`.github/workflows/test.yml`) runs the same suite and build on every PR and on `main`, on Node 20 and 22. An automated code review is triggered when a PR is marked ready (drafts are skipped) and again after new commits, and `Baz review` in a comment asks for one.
 
-Releasing is a version bump. `plugins/fmrl/.mcp.json` runs `npx -y fmrl-mcp` unpinned, so the npm publish is the deploy: every installed plugin runs the new server the next time it starts. The `release` workflow (`.github/workflows/release.yml`) runs on every merge to `main` that touches `packages/mcp`; when `packages/mcp/package.json` names a version npm does not have yet, it publishes it through npm Trusted Publishing (GitHub OIDC, no token in secrets, a provenance attestation back to the commit), and when the version is already on npm it does nothing. So a release PR is the change plus `npm version <x.y.z> --no-git-tag-version` in `packages/mcp` and the same version in `plugins/fmrl/.claude-plugin/plugin.json` — the manifest tracks the server on major.minor, and the test suite checks that they agree.
+Releasing is a version bump. `plugins/fmrl/.mcp.json` runs `npx -y fmrl-mcp` unpinned, so the npm publish is the deploy: every installed plugin runs the new server the next time it starts. The `release` workflow (`.github/workflows/release.yml`) runs on every merge to `main` that touches `packages/mcp`; when `packages/mcp/package.json` names a version npm does not have yet, it publishes it through npm Trusted Publishing (GitHub OIDC, no token in secrets, a provenance attestation back to the commit), and when the version is already on npm it does nothing. So a release PR is the change plus `npm version <x.y.z> --no-git-tag-version` in `packages/mcp` and the same version in `plugins/fmrl/.claude-plugin/plugin.json` and `plugins/fmrl/.cursor-plugin/plugin.json` — the Claude manifest tracks the server on major.minor, the Cursor manifest matches the Claude one exactly, and the test suite checks that they agree.
 
 ## License
 

@@ -12,12 +12,32 @@
 # provenance attestation back to this commit. No npm token lives in secrets;
 # `id-token: write` is what lets the job mint the OIDC token. Trusted
 # publishing needs npm 11.5.1+, which Node 22's bundled npm is not, hence
-# the `npm install -g npm@latest` step.
+# the pinned `npm install -g npm@11.21.1` step.
 #
 # One-time setup, on npmjs.com, package fmrl-mcp → Settings → Trusted
 # publisher → GitHub Actions: organization `toogreatwtf`, repository
-# `fmrl-plugin`, workflow filename `release.yml`, no environment. Until that
-# is done the publish step fails with 404/E401 and nothing else happens.
+# `fmrl-plugin`, workflow filename `release.yml`, environment `npm-release`.
+# Until that is done the publish step fails with 404/E401 and nothing else
+# happens.
+#
+# Because every installed plugin runs what this job publishes, a publish
+# needs three things:
+#   - the commit is on main (the job refuses any other ref, including a
+#     workflow_dispatch pointed at a branch);
+#   - the `npm-release` environment's required reviewer approves the run
+#     (repository Settings → Environments → npm-release: required
+#     reviewers, deployment branches limited to main, and "Prevent
+#     self-review" on);
+#   - npm's trusted publisher names that environment, so an OIDC token from
+#     any other job or branch is refused at npm.
+# So a leaked login with write access that is not a required reviewer
+# cannot ship code to users. What it does not stop: a leaked reviewer login
+# can approve a run someone else started, and approve its own too unless
+# "Prevent self-review" is on with a second reviewer to do the approving;
+# and a leaked admin login can change these settings. Those need 2FA and
+# a second reviewer, not workflow YAML.
+# Actions are pinned to commit SHAs and npm to an exact version, because
+# this job holds the one credential that reaches every user's machine.
 name: release
 
 on:
@@ -41,20 +61,22 @@ concurrency:
 jobs:
   publish:
     name: publish fmrl-mcp if the version is new
+    if: github.ref == 'refs/heads/main'
+    environment: npm-release
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: packages/mcp
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: packages/mcp/package-lock.json
       - name: npm 11.5.1+ for trusted publishing
-        run: npm install -g npm@latest && npm --version
+        run: npm install -g npm@11.21.1 && npm --version
       - name: is this version already on npm?
         id: gate
         run: |

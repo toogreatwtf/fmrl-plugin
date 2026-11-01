@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 import { toHTML } from "../src/markdown.js";
-import { pluginInstructions, pluginStatus } from "../src/plugin.js";
+import { pinnedServer, pluginInstructions, pluginStatus } from "../src/plugin.js";
 import { readProfile } from "../src/profile.js";
 
 // The plugin's own files, read from the repo: the manifest, its skills, and
@@ -13,10 +13,13 @@ const read = (p: string) => readFileSync(path.join(repo, p), "utf8");
 const manifest = JSON.parse(read("plugins/fmrl/.claude-plugin/plugin.json")) as { version: string; description: string };
 const pkg = JSON.parse(read("packages/mcp/package.json")) as { version: string };
 const majorMinor = (v: string) => v.split(".").slice(0, 2).join(".");
+// The exact fmrl-mcp the plugin starts. A release publishes a version to
+// npm first; a later PR moves this pin to it (README, Development).
+const pin = pinnedServer(path.join(repo, "plugins/fmrl"))!;
 
 describe("the plugin manifest", () => {
-  it("is in step with fmrl-mcp on major.minor, so the stale check never nags a fresh install", () => {
-    expect(majorMinor(manifest.version)).toBe(majorMinor(pkg.version));
+  it("is in step with the fmrl-mcp it pins on major.minor, so the stale check never nags a fresh install", () => {
+    expect(majorMinor(manifest.version)).toBe(majorMinor(pin));
   });
   it("names every tool, as the READMEs' tables do", () => {
     const tools = ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"];
@@ -32,6 +35,34 @@ describe("the plugin manifest", () => {
       expect(manifest.description).toContain(cmd);
       for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme), readme).toContain(`\`${cmd}\``);
     }
+  });
+});
+
+// Claude's plugin directory blocks a launcher that runs whatever npm has
+// newest ("pin every package that a launcher runs to an exact version"),
+// and wants a README in the plugin folder that says what the plugin runs,
+// sends and stores.
+describe("what the directory checks in the plugin folder", () => {
+  const servers = (p: string) => (JSON.parse(read(p)) as { mcpServers: Record<string, { command: string; args: string[] }> }).mcpServers;
+  it("starts fmrl-mcp at one exact version, never a range or the latest", () => {
+    expect(pin).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(servers("plugins/fmrl/.mcp.json").fmrl).toEqual({ command: "npx", args: ["-y", `fmrl-mcp@${pin}`] });
+    expect(Object.keys(servers("plugins/fmrl/.mcp.json"))).toEqual(["fmrl"]);
+  });
+  it("never pins a server newer than the one in this repo", () => {
+    const [a, b] = [pin, pkg.version].map((v) => v.split(".").map(Number));
+    expect(a[0] - b[0] || a[1] - b[1] || a[2] - b[2]).toBeLessThanOrEqual(0);
+  });
+  it("has a README of at least 40 words naming what it runs, sends and stores", () => {
+    const text = read("plugins/fmrl/README.md");
+    expect(text.split(/\s+/).filter(Boolean).length).toBeGreaterThanOrEqual(40);
+    for (const heading of ["## What it runs", "## What it sends", "## What it stores"]) expect(text).toContain(heading);
+    for (const fact of ["fmrl-mcp", "npx", "fmrl.site", "npm registry", "~/.config/fmrl/credentials.json", "pages.json", "https://fmrl.site/privacy"]) expect(text).toContain(fact);
+  });
+  it("names every tool and skill in its README, as the manifest does", () => {
+    const text = read("plugins/fmrl/README.md");
+    for (const t of ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"]) expect(text).toContain(`\`${t}\``);
+    for (const cmd of ["/fmrl:share", "/fmrl:whoami", "/fmrl:status"]) expect(text).toContain(`\`${cmd}\``);
   });
 });
 
@@ -215,7 +246,7 @@ describe("the Cursor plugin", () => {
     // Cursor expands CURSOR_PLUGIN_ROOT in env values; fmrl-mcp reads the
     // plugin's version from CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json.
     expect(cursor.env).toEqual({ CLAUDE_PLUGIN_ROOT: "${CURSOR_PLUGIN_ROOT}" });
-    expect(pluginStatus(path.join(repo, "plugins/fmrl"), pkg.version)).toEqual({ installed: manifest.version, server: pkg.version, stale: false });
+    expect(pluginStatus(path.join(repo, "plugins/fmrl"), pin)).toEqual({ installed: manifest.version, server: pin, stale: false });
   });
   it("has skills Cursor accepts: a name matching the folder, and a description", () => {
     const skills = readdirSync(path.join(repo, "plugins/fmrl/skills"));

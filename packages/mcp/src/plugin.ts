@@ -26,7 +26,9 @@ function otherSurfaceLine(s: PluginStatus, surface: PluginSurface): string {
  * PluginStatus is how the installed plugin that launched this server
  * compares with the server itself. Claude Code leaves auto-update off for
  * third-party marketplaces, so a plugin stays at the version it was
- * installed at while npx keeps the server current.
+ * installed at. A plugin from before 0.17.2 runs whatever npm has newest, so
+ * it falls behind its own server; from 0.17.2 on the plugin pins the server
+ * (pinnedServer), so the two move together.
  */
 export interface PluginStatus {
   installed: string;
@@ -76,6 +78,28 @@ export function pluginStatus(root: string | undefined, server: string): PluginSt
   if (!have || !want) return undefined;
   const stale = have[0] < want[0] || (have[0] === want[0] && have[1] < want[1]);
   return { installed, server, stale };
+}
+
+/**
+ * pinnedServer is the exact fmrl-mcp version the plugin at root starts:
+ * the `fmrl-mcp@<version>` argument in root/.mcp.json. A plugin from before
+ * 0.17.2, an unpinned or ranged argument, or a file that is missing or odd
+ * answers undefined: that plugin runs whatever npm has newest.
+ */
+export function pinnedServer(root: string | undefined): string | undefined {
+  if (!root) return undefined;
+  let args: unknown;
+  try {
+    args = (JSON.parse(readFileSync(path.join(root, ".mcp.json"), "utf8")) as { mcpServers?: { fmrl?: { args?: unknown } } } | null)?.mcpServers?.fmrl?.args;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(args)) return undefined;
+  for (const a of args) {
+    const m = typeof a === "string" ? /^fmrl-mcp@(.+)$/.exec(a) : null;
+    if (m && semverParts(m[1])) return m[1];
+  }
+  return undefined;
 }
 
 const MARKETPLACE_UPDATE = "claude plugin marketplace update fmrl-plugin";

@@ -32,6 +32,8 @@ export interface StatusSnapshot {
   /** installed and newerCached: the manifest version this session started on, and a newer one found beside it (newestCachedPlugin). */
   installed?: string;
   newerCached?: string;
+  /** pinned is the exact fmrl-mcp version the launching plugin names (plugin.pinnedServer); undefined when nothing pins it. */
+  pinned?: string;
   baseUrl: string;
   key?: KeyFacts;
   pages: number;
@@ -156,6 +158,7 @@ function npmLine(s: StatusSnapshot, n: NpmCheck): string {
   if (n.kind === "failed") return `npm: not reached (${n.why}).`;
   const latest = semverParts(n.version), running = semverParts(s.server);
   const cmp = latest && running ? compareVersions(latest, running) : 0;
+  if (cmp > 0 && s.pinned) return `npm: fmrl-mcp ${n.version} is the latest; this session runs ${s.server}, the version the fmrl plugin pins, so a newer one arrives with a plugin update.`;
   if (cmp > 0) return `npm: fmrl-mcp ${n.version} is the latest; this session runs ${s.server}, so ${restart(s.surface)} to pick it up.`;
   if (cmp < 0) return `npm: fmrl-mcp ${n.version} is the latest published; this session runs ${s.server}.`;
   return `npm: fmrl-mcp ${n.version} is the latest.`;

@@ -1,10 +1,12 @@
-# The npm publish is the deploy: plugins/fmrl/.mcp.json runs `npx -y fmrl-mcp`
-# unpinned, so whatever is `latest` on npm is what every installed plugin runs
-# the next time it starts. Until this workflow the publish was a laptop step
-# (`npm login`, `npm publish`), so a fix merged to main stayed unshipped until
-# someone remembered. Now a merge to main whose packages/mcp/package.json
-# names a version npm does not yet have is the release; a merge that leaves
-# the version alone publishes nothing.
+# The npm publish is half the deploy: anyone who runs `npx -y fmrl-mcp` from
+# their own MCP config, and any plugin from before 0.17.2, starts whatever is
+# `latest` on npm. Plugins from 0.17.2 on pin an exact version in
+# plugins/fmrl/.mcp.json, so they run a new server only once a later PR moves
+# that pin, which must come after this publish. Until this workflow the
+# publish was a laptop step (`npm login`, `npm publish`), so a fix merged to
+# main stayed unshipped until someone remembered. Now a merge to main whose
+# packages/mcp/package.json names a version npm does not yet have is the
+# release; a merge that leaves the version alone publishes nothing.
 #
 # Auth is npm Trusted Publishing: the job presents a GitHub OIDC token, npm
 # checks it against the trusted publisher configured on the package
@@ -20,7 +22,7 @@
 # Until that is done the publish step fails with 404/E401 and nothing else
 # happens.
 #
-# Because every installed plugin runs what this job publishes, a publish
+# Because what this job publishes reaches users' machines, a publish
 # needs three things:
 #   - the commit is on main (the job refuses any other ref, including a
 #     workflow_dispatch pointed at a branch);

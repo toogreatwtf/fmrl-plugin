@@ -15,7 +15,7 @@ import { readProfile, type ProfileRead } from "./profile.js";
 import type { PageStore } from "./pages.js";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { VaultSync, type VaultSyncResult } from "./vault-sync.js";
-import { pluginInstructions, pluginLine, pluginStatus, type PluginSurface } from "./plugin.js";
+import { pinnedServer, pluginInstructions, pluginLine, pluginStatus, type PluginSurface } from "./plugin.js";
 import { latestOnNpm as latestOnNpmDefault } from "./registry.js";
 import { newestCachedPlugin, statusText, type ApiCheck, type NpmCheck, type StatusSnapshot } from "./status.js";
 
@@ -901,6 +901,7 @@ export function createServer(deps: ServerDeps): McpServer {
       pluginLine: pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface),
       installed: plugin?.installed,
       newerCached: deps.pluginRoot && plugin ? await newestCachedPlugin(deps.pluginRoot, plugin.installed) : undefined,
+      pinned: pinnedServer(deps.pluginRoot),
       baseUrl: api.viewerBase,
       key: await keys.peek(),
       pages: await pages.count(),

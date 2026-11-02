@@ -88,6 +88,11 @@ describe("statusText", () => {
         "npm: fmrl-mcp 0.15.0 is the latest; this session runs 0.14.0, so restart Claude Code to pick it up.",
       ]);
     });
+    it("a newer fmrl-mcp on npm, under a plugin that pins the server, arrives with a plugin update, not a restart", () => {
+      const s: StatusSnapshot = { ...base, pinned: "0.14.0", network: { api: { kind: "ok", ms: 180, me, inbox: 0 }, npm: { kind: "latest", version: "0.15.0" } } };
+      expect(lines(s)[5]).toBe("npm: fmrl-mcp 0.15.0 is the latest; this session runs 0.14.0, the version the fmrl plugin pins, so a newer one arrives with a plugin update.");
+      expect(lines({ ...s, network: { ...s.network!, npm: { kind: "latest", version: "0.14.0" } } })[5]).toBe("npm: fmrl-mcp 0.14.0 is the latest.");
+    });
     it("probes without a key, and reports a refused key without replacing it", () => {
       expect(lines({ ...base, key: undefined, network: { api: { kind: "no_key", ms: 90 }, npm: { kind: "skipped", why: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set" } } }).slice(4)).toEqual([
         "fmrl.site: reachable, 90 ms (answered 401 without a key, as expected).",

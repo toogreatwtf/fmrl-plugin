@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { pluginInstructions as instructions, pluginLine as line, pluginStatus, pluginSurface } from "../src/plugin.js";
+import { pinnedServer, pluginInstructions as instructions, pluginLine as line, pluginStatus, pluginSurface } from "../src/plugin.js";
 
 const pluginInstructions: typeof instructions = (s, a, p, surface = "claude-cli") => instructions(s, a, p, surface);
 const pluginLine: typeof line = (s, a, p, surface = "claude-cli") => line(s, a, p, surface);
@@ -14,6 +14,28 @@ async function fakeRoot(manifest: unknown): Promise<string> {
   await writeFile(path.join(root, ".claude-plugin", "plugin.json"), typeof manifest === "string" ? manifest : JSON.stringify(manifest));
   return root;
 }
+
+describe("pinnedServer", () => {
+  const withMcp = async (mcp: unknown) => {
+    const root = await mkdtemp(path.join(tmpdir(), "fmrl-plugin-"));
+    await writeFile(path.join(root, ".mcp.json"), typeof mcp === "string" ? mcp : JSON.stringify(mcp));
+    return root;
+  };
+  const npx = (...args: string[]) => ({ mcpServers: { fmrl: { command: "npx", args } } });
+  it("is the exact version a plugin's .mcp.json starts", async () => {
+    expect(pinnedServer(await withMcp(npx("-y", "fmrl-mcp@0.17.0")))).toBe("0.17.0");
+  });
+  it("an unpinned, ranged or tagged launcher, as before 0.17.2, pins nothing", async () => {
+    for (const a of ["fmrl-mcp", "fmrl-mcp@^0.17.0", "fmrl-mcp@latest", "fmrl-mcp@0.17"]) expect(pinnedServer(await withMcp(npx("-y", a))), a).toBeUndefined();
+  });
+  it("no root, no .mcp.json, or an odd one pins nothing", async () => {
+    expect(pinnedServer(undefined)).toBeUndefined();
+    expect(pinnedServer(await mkdtemp(path.join(tmpdir(), "fmrl-plugin-")))).toBeUndefined();
+    expect(pinnedServer(await withMcp("{ not json"))).toBeUndefined();
+    expect(pinnedServer(await withMcp({ mcpServers: { other: { args: ["fmrl-mcp@0.17.0"] } } }))).toBeUndefined();
+    expect(pinnedServer(await withMcp({ mcpServers: { fmrl: { args: "fmrl-mcp@0.17.0" } } }))).toBeUndefined();
+  });
+});
 
 describe("pluginStatus", () => {
   it("a 0.3.x plugin under a 0.5.1 server is stale", async () => {

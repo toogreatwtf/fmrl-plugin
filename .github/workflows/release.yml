@@ -60,12 +60,6 @@ on:
 permissions:
   contents: read
 
-# One release at a time, and never cancel one in flight: a cancelled
-# publish is the one state that is hard to reason about.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
   check:
     name: is fmrl-mcp's version new?
@@ -116,6 +110,13 @@ jobs:
     if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
     environment: npm-release
     runs-on: ubuntu-latest
+    # One publish at a time, and never cancel one in flight: a cancelled
+    # publish is the one state that is hard to reason about. The lock is on
+    # this job, not the workflow, so a check never queues behind a publish
+    # that is waiting for approval.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write

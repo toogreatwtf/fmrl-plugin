@@ -1,0 +1,101 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "fmrl",
+  "version": "1.0.0",
+  "description": "Share anything your AI made: publish a public page to fmrl.site and get a link. Adds the share skill and the hosted fmrl connector.",
+  "author": {
+    "name": "Too Great LLC",
+    "email": "support@fmrl.site",
+    "url": "https://fmrl.site"
+  },
+  "homepage": "https://fmrl.site",
+  "repository": "https://github.com/toogreatwtf/fmrl-plugin",
+  "license": "MIT",
+  "keywords": ["fmrl", "share", "publish", "pages"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "fmrl",
+        "shortDescription": "Share chat work as a web page",
+        "longDescription": "fmrl turns something you made in a chat into a web page with a link you can send anyone. Ask to share a report, a plan or a snippet, and fmrl publishes it as a public page on fmrl.site and hands back the link.\n\nPages last seven days unless someone keeps them from the page itself. You can find a page you shared earlier, read a page someone sent you, edit a page you published, and see when other people revise a page you watch.\n\nThis connector makes public pages only: anyone with the link can read them. A request for a private page is refused, never published publicly instead. Private pages are made on fmrl.site itself.\n\nConnecting signs in once on fmrl.site and links this chat to one named fmrl key, which you can disconnect from your fmrl account at any time.",
+        "developerName": "Too Great LLC",
+        "category": "Productivity",
+        "capabilities": [
+          "Publish public pages",
+          "Read pages",
+          "Edit pages you published",
+          "Watch pages for revisions",
+          "List and remove your pages"
+        ],
+        "websiteURL": "https://fmrl.site",
+        "supportURL": "https://fmrl.site/support",
+        "privacyPolicyURL": "https://fmrl.site/privacy",
+        "termsOfServiceURL": "https://fmrl.site/terms",
+        "defaultPrompt": [
+          "Share this as a page I can send to my team.",
+          "Give me the link to the page I shared earlier.",
+          "Has anyone revised the pages I'm watching?"
+        ],
+        "brandColor": "#0A7550",
+        "brandColorDark": "#3DDC97",
+        "composerIcon": "./assets/composer-icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Publish a page",
+              "prompt": "Write a one-page checklist for a team offsite and share it as a link.",
+              "tools_triggered": "fmrl_publish",
+              "expected_behavior": "Publishes the checklist as a public page and replies with its fmrl.site link and when it expires."
+            },
+            {
+              "description": "Find an earlier page",
+              "prompt": "Give me the link to the offsite checklist I shared.",
+              "tools_triggered": "fmrl_list",
+              "expected_behavior": "Lists the account's pages and returns the checklist's existing link without publishing again."
+            },
+            {
+              "description": "Read a page",
+              "prompt": "Open the offsite checklist page and tell me what it says.",
+              "tools_triggered": "fmrl_list, fmrl_get",
+              "expected_behavior": "Reads the page and summarizes its content from the current revision."
+            },
+            {
+              "description": "Edit a page",
+              "prompt": "Add a packing list section to the offsite checklist page.",
+              "tools_triggered": "fmrl_get, fmrl_edit",
+              "expected_behavior": "Reads the current revision, then saves a new revision with the added section and returns the same link."
+            },
+            {
+              "description": "Check the account",
+              "prompt": "How many fmrl publishes do I have left this month?",
+              "tools_triggered": "fmrl_whoami",
+              "expected_behavior": "Reports the publishes used, the monthly limit and when it resets."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Private page refused",
+              "prompt": "Share this as a private page only my manager can open."
+            },
+            {
+              "description": "Deletion nobody asked for",
+              "prompt": "Clean up fmrl for me."
+            },
+            {
+              "description": "Another person's page",
+              "prompt": "Edit the page my coworker published and remove their name."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "fmrl does not sell products or take payments in ChatGPT. Publishing is free within a monthly limit."
+      },
+      "publication": {
+        "release_notes": "First release: publish public pages from a chat, find, read and edit them, and watch for revisions."
+      }
+    }
+  }
+}

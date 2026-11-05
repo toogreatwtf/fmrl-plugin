@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { mkdtemp, open as fsOpen, realpath, stat as fsStat, unlink } from "node:fs/promises";
+import { open as fsOpen, realpath, stat as fsStat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ApiError, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
+import { fileName, filesDir, inFolder, openFilesDir, writeIn } from "./files.js";
 import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
@@ -49,6 +50,8 @@ export interface ServerDeps {
   nonessentialTrafficOff?: boolean;
   /** probeTimeoutMs bounds each of fmrl_status's verbose calls to fmrl.site; 3 s unless a test says otherwise. */
   probeTimeoutMs?: number;
+  /** filesDir is the fmrl folder for to_file and content_file (files.filesDir); tests give their own. */
+  filesDir?: string;
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -160,27 +163,6 @@ function absolutePath(p: string, what: string): string {
   return path.resolve(q);
 }
 
-/**
- * writeContentFile writes a page's content for fmrl_get's to_file. The caller never picks the place: each call
- * makes its own new folder in the system temp directory (mkdtemp, mode 0700) and writes one new file there
- * (O_CREAT|O_EXCL, mode 0600), so page content can't land in a config, instruction or startup file, and a
- * private page's content is as private on disk as on the page.
- */
-async function writeContentFile(id: string, format: "html" | "md", content: string): Promise<{ path: string; bytes: number }> {
-  const dir = await mkdtemp(path.join(await realpath(os.tmpdir()), "fmrl-page-"));
-  const file = path.join(dir, `${id.replace(/[^A-Za-z0-9_-]/g, "") || "page"}.${format}`);
-  const fh = await fsOpen(file, "wx", 0o600);
-  try {
-    await fh.writeFile(content);
-  } catch (e) {
-    await fh.close().catch(() => undefined);
-    await unlink(file).catch(() => undefined);
-    throw e;
-  }
-  await fh.close();
-  return { path: file, bytes: Buffer.byteLength(content) };
-}
-
 function privateText(p: PublishResponse): string {
   return [...publishTextLines(p, SEVEN_DAYS_PRIVATE), PRIVATE_LINE].join("\n");
 }
@@ -264,6 +246,7 @@ function readText(r: PageRead, at: string): string {
 }
 
 export const EDIT_ONE_SOURCE = "Give the new content as content or as content_file, one of the two. Nothing was saved.";
+export const OUTSIDE_FOLDER = (tool: string, folder: string, p: string) => `${tool} reads only files in the fmrl folder, ${folder}, where fmrl_get's to_file writes; ${p} is not one of them. Nothing was read.`;
 export const CONTENT_WRITTEN = (file: string, bytes: number, format: string) => `Content (${format}, ${bytes} bytes) written to ${file}, not shown here. Edit that file and save it with fmrl_edit's content_file.`;
 export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
 export const MANAGE_HINT = (origin: string, id: string) => `To edit, supply ${origin}/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`;
@@ -446,12 +429,16 @@ export function createServer(deps: ServerDeps): McpServer {
   /**
    * readTextFile reads a page's content from a file: 2 MiB at most, UTF-8, its format from the extension. The
    * path must be absolute; a symlink is followed and judged by its target, which must itself be a page file.
-   * The file is opened without blocking and checked to be a regular file on the open handle, so a FIFO or a
-   * device can't hang the call and nothing can be swapped in between the check and the read. tool names the
-   * caller in the refusal of an unknown extension.
+   * With folder (the fmrl folder's real path), a bare file name is read from that folder and the file, once
+   * resolved, must be inside it and have no other hard link, so nothing elsewhere on the machine can be read
+   * through it. The file is opened without blocking and checked to be a regular file on the open handle, so a
+   * FIFO or a device can't hang the call and nothing can be swapped in between the check and the read. tool
+   * names the caller in the refusal of an unknown extension.
    */
-  const readTextFile = async (p: string, tool: string): Promise<{ content: string; format: "html" | "md"; resolved: string }> => {
-    const resolved = await realpath(absolutePath(p, tool));
+  const readTextFile = async (p: string, tool: string, folder?: string): Promise<{ content: string; format: "html" | "md"; resolved: string }> => {
+    const bare = folder !== undefined && !path.isAbsolute(p) && !/^~(?:$|[/\\])/.test(p);
+    const resolved = await realpath(bare ? path.resolve(folder, p) : absolutePath(p, tool));
+    if (folder !== undefined && !inFolder(folder, resolved)) throw new Error(OUTSIDE_FOLDER(tool, folder, p));
     let format: "html" | "md";
     try {
       format = formatForPath(resolved);
@@ -465,7 +452,9 @@ export function createServer(deps: ServerDeps): McpServer {
     let bytesRead: number;
     const handle = await open(resolved, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
     try {
-      if (!(await handle.stat()).isFile()) throw new Error(`${resolved} is not a regular file. Nothing was read.`);
+      const st = await handle.stat();
+      if (!st.isFile()) throw new Error(`${resolved} is not a regular file. Nothing was read.`);
+      if (folder !== undefined && st.nlink > 1) throw new Error(OUTSIDE_FOLDER(tool, folder, p));
       ({ bytesRead } = await handle.read(buf, 0, MAX_BYTES + 1, 0));
     } finally {
       await handle.close();
@@ -485,6 +474,8 @@ export function createServer(deps: ServerDeps): McpServer {
   const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
 
   const log = deps.log;
+  /** folder is the fmrl folder's real path, made on first use; a bad FMRL_FILES_DIR is reported then, not at startup. */
+  const folder = async (): Promise<string> => openFilesDir(deps.filesDir ?? filesDir());
   const vault = new VaultSync({ api, keys, log });
 
   /** whoamiPlugin is the installed plugin's state for fmrl_whoami, as facts and as the line the text carries; undefined with no readable manifest. */
@@ -714,7 +705,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
-        to_file: z.boolean().optional().describe("true: write the content, as it reads after opening, to a new file in a private folder of the system temp directory instead of returning it, and answer with that file's path. For a large page, or one you will edit and save back with fmrl_edit's content_file. The file is readable only by this user."),
+        to_file: z.boolean().optional().describe("true: write the content, as it reads after opening, to <id>.md or <id>.html in the fmrl folder (~/fmrl unless FMRL_FILES_DIR says otherwise) instead of returning it, and answer with that file's path. It replaces an earlier copy of the same page. For a large page, or one you will edit and save back with fmrl_edit's content_file. The file is readable only by this user."),
       },
       outputSchema: readOutput,
     },
@@ -741,9 +732,11 @@ export function createServer(deps: ServerDeps): McpServer {
         }
         if (!to_file || v.content === undefined) return v;
         // The content goes to disk, not through the model: the answer keeps everything else, the profile included.
-        const written = await writeContentFile(ref.id, v.content_format ?? "html", v.content);
+        const format = v.content_format ?? "html";
+        const file = await writeIn(await folder(), fileName(ref.id, format), v.content);
+        const written = { path: file, bytes: Buffer.byteLength(v.content) };
         const { content: ignoredContent, ...rest } = v;
-        return { ...rest, content_file: written, content_note: CONTENT_WRITTEN(written.path, written.bytes, v.content_format ?? "html") };
+        return { ...rest, content_file: written, content_note: CONTENT_WRITTEN(written.path, written.bytes, format) };
       }, (v) => readText(v, at));
     },
   );
@@ -757,7 +750,7 @@ export function createServer(deps: ServerDeps): McpServer {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
         content: z.string().min(1).optional().describe("The page's new HTML or Markdown (2 MiB at most). Give this or content_file, not both."),
-        content_file: z.string().min(1).optional().describe("Read the new content from this file instead (absolute; a leading ~ is expanded; .html, .htm, .md, .markdown, .mdx or .txt, 2 MiB at most), so a large page never passes through the model: read it with fmrl_get's to_file, edit the file, save it from there."),
+        content_file: z.string().min(1).optional().describe("Read the new content from this file instead, so a large page never passes through the model: read it with fmrl_get's to_file, edit the file, save it from there. Only a file in the fmrl folder (~/fmrl unless FMRL_FILES_DIR says otherwise) is read: its file name, or its full path. .html, .htm, .md, .markdown, .mdx or .txt, 2 MiB at most."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it, or, with content_file, to take it from the extension. A private page is always sent as HTML, rendered here from Markdown."),
         title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
         base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),
@@ -773,7 +766,7 @@ export function createServer(deps: ServerDeps): McpServer {
       let format = givenFormat;
       if (content_file !== undefined) {
         try {
-          const file = await readTextFile(content_file, "fmrl_edit's content_file");
+          const file = await readTextFile(content_file, "fmrl_edit's content_file", await folder());
           content = file.content;
           format = givenFormat ?? file.format;
         } catch (e) {

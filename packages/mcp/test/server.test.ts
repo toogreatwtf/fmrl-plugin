@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, type Stats } from "node:fs";
 import { createECDH } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, realpath, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, readFile, realpath, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -13,7 +13,7 @@ import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/cryp
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
 import { PageStore } from "../src/pages.js";
-import { CONTENT_WRITTEN, createServer, EDIT_ONE_SOURCE, LIST_EMPTY, NOT_HELD_LINE, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
+import { CONTENT_WRITTEN, createServer, EDIT_ONE_SOURCE, LIST_EMPTY, NOT_HELD_LINE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
 import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
@@ -44,6 +44,8 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "fmrl-"));
   credFile = path.join(dir, "credentials.json");
   pagesFile = path.join(dir, "pages.json");
+  // Every server in this file keeps to_file and content_file in the test's own folder, never ~/fmrl.
+  process.env.FMRL_FILES_DIR = path.join(dir, "files");
   const api = new FmrlApi(fake.baseUrl);
   const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
   const server = createServer({ api, keys, pages: pagesAt() });
@@ -976,7 +978,7 @@ describe("fmrl_edit", () => {
     const p = priv.structuredContent as { id: string; url: string; manage_url: string };
     expect(await pagesAt().get(p.id)).toEqual({ key: p.url.split("#p=")[1], manage: manageTok(p.manage_url) });
   });
-  it("fmrl_get's to_file writes the content to disk and fmrl_edit's content_file saves it back, never through the model (#33)", async () => {
+  it("fmrl_get's to_file writes the content into the fmrl folder and fmrl_edit's content_file saves it back, never through the model (#33)", async () => {
     const big = "# Canvas\n\n<!-- section:a -->\nold\n<!-- /section:a -->\n\n" + "filler line\n".repeat(2000);
     const pub = await call("fmrl_publish", { content: big, format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
@@ -986,16 +988,17 @@ describe("fmrl_edit", () => {
     const g = got.structuredContent as Record<string, unknown> & { content_file: { path: string; bytes: number } };
     expect(g).not.toHaveProperty("content");
     const out = g.content_file.path;
-    // The server picks the place: a new private folder in the temp directory, named for the page.
-    expect(path.dirname(path.dirname(out))).toBe(await realpath(tmpdir()));
-    expect(path.basename(path.dirname(out))).toMatch(/^fmrl-page-/);
-    expect(path.basename(out)).toBe(`${id}.md`);
-    expect((await statFile(path.dirname(out))).mode & 0o777).toBe(0o700);
+    // The server picks the place: the fmrl folder, made private on first use, under the page's id.
+    const folder = await realpath(path.join(dir, "files"));
+    expect(out).toBe(path.join(folder, `${id}.md`));
+    expect((await statFile(folder)).mode & 0o777).toBe(0o700);
     expect(g).toMatchObject({ rev: 1, content_format: "md", content_file: { bytes: Buffer.byteLength(big) } });
     expect(g.content_note).toBe(CONTENT_WRITTEN(out, Buffer.byteLength(big), "md"));
     expect(text(got)).not.toContain("filler line");
     expect(await readFile(out, "utf8")).toBe(big);
     expect((await statFile(out)).mode & 0o777).toBe(0o600);
+    // Nothing is left behind but the page's file.
+    expect(await readdir(folder)).toEqual([`${id}.md`]);
 
     const edited = big.replace("old", "new");
     await writeFile(out, edited);
@@ -1006,57 +1009,81 @@ describe("fmrl_edit", () => {
     expect(puts().at(-1)).toMatchObject({ body: { content: edited, format: "md", base_rev: 1 } });
     expect((await call("fmrl_get", { id })).structuredContent).toMatchObject({ rev: 2, content: edited });
 
-    // A second read gets a new file of its own; the first is never touched.
+    // The bare file name reads from the folder too, and a second read replaces the copy in place.
+    const byName = await call("fmrl_edit", { id, content_file: `${id}.md`, base_rev: 2 });
+    expect(byName.isError).toBeFalsy();
+    await writeFile(out, "stale");
     const again = (await call("fmrl_get", { id, to_file: true })).structuredContent as { content_file: { path: string } };
-    expect(again.content_file.path).not.toBe(out);
+    expect(again.content_file.path).toBe(out);
     expect(await readFile(out, "utf8")).toBe(edited);
   });
-  it("fmrl_get's to_file takes no path, so a caller can't aim the write", async () => {
+  it("fmrl_get's to_file takes no path, so a caller can't aim the write, and a link planted under the page's name is replaced, not followed", async () => {
     const pub = await call("fmrl_publish", { content: "ssh-ed25519 AAAA attacker", format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
     const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
     const target = path.join(work, "authorized_keys");
+    await writeFile(target, "mine");
+    await mkdir(path.join(dir, "files"), { recursive: true });
+    await symlink(target, path.join(dir, "files", `${id}.md`));
     const r = await call("fmrl_get", { id, out: target, path: target, to_file: true });
     expect(r.isError).toBeFalsy();
-    expect(await readdir(work)).toEqual([]);
+    expect(await readFile(target, "utf8")).toBe("mine");
     expect((r.structuredContent as { content_file: { path: string } }).content_file.path).not.toContain(work);
   });
-  it("fmrl_edit takes content or content_file, exactly one, and refuses a file it cannot read as a page", async () => {
+  it("fmrl_edit takes content or content_file, exactly one, and reads only a page file inside the fmrl folder", async () => {
     const pub = await call("fmrl_publish", { content: "# One", format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
-    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
-    const md = path.join(work, "page.md");
+    const folder = path.join(dir, "files");
+    await mkdir(folder, { recursive: true });
+    const realFolder = await realpath(folder);
+    const md = path.join(folder, "page.md");
     await writeFile(md, "# Two");
     for (const args of [{ id }, { id, content: "# Two", content_file: md }]) {
       const r = await call("fmrl_edit", args);
       expect(r.isError).toBe(true);
       expect(text(r)).toBe(EDIT_ONE_SOURCE);
     }
-    const bin = path.join(work, "page.png");
+    const bin = path.join(folder, "page.png");
     await writeFile(bin, "x");
     const wrong = await call("fmrl_edit", { id, content_file: bin });
     expect(wrong.isError).toBe(true);
     expect(text(wrong)).toContain("fmrl_edit's content_file reads .html");
 
-    // A .md name on a link to a file that isn't a page is judged by where it points.
+    // A page file anywhere else on the machine is refused, by full path, by ~, or by climbing out of the folder.
+    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
+    const notes = path.join(work, "notes.md");
+    await writeFile(notes, "# My private notes");
+    for (const p of [notes, path.join(folder, "..", "..", path.basename(work), "notes.md"), "../notes.md", "~/notes.md"]) {
+      const r = await call("fmrl_edit", { id, content_file: p });
+      expect(r.isError, p).toBe(true);
+    }
+    const outside = await call("fmrl_edit", { id, content_file: notes });
+    expect(text(outside)).toBe(OUTSIDE_FOLDER("fmrl_edit's content_file", realFolder, notes));
+
+    // A link inside the folder is judged by where it points: out of the folder is refused, whatever its name.
+    await symlink(notes, path.join(folder, "readme.md"));
+    const linked = await call("fmrl_edit", { id, content_file: "readme.md" });
+    expect(linked.isError).toBe(true);
+    expect(text(linked)).toContain("reads only files in the fmrl folder");
     const key = path.join(work, "id_ed25519");
     await writeFile(key, "-----BEGIN OPENSSH PRIVATE KEY-----");
-    await symlink(key, path.join(work, "readme.md"));
-    const linked = await call("fmrl_edit", { id, content_file: path.join(work, "readme.md") });
-    expect(linked.isError).toBe(true);
-    expect(text(linked)).toContain("id_ed25519 is not one");
+    await symlink(key, path.join(folder, "key.md"));
+    expect((await call("fmrl_edit", { id, content_file: "key.md" })).isError).toBe(true);
 
-    // A relative path is refused rather than read against the server's own folder.
-    const relative = await call("fmrl_edit", { id, content_file: "page.md" });
-    expect(relative.isError).toBe(true);
-    expect(text(relative)).toContain("must be an absolute path");
+    // So is a hard link into the folder: the same file as one outside it.
+    if (process.platform !== "win32") {
+      await link(notes, path.join(folder, "hard.md"));
+      const hard = await call("fmrl_edit", { id, content_file: "hard.md" });
+      expect(hard.isError).toBe(true);
+      expect(text(hard)).toContain("reads only files in the fmrl folder");
+    }
 
     // A folder named like a page, and a FIFO, are refused at once, not read or waited on.
-    await mkdir(path.join(work, "dir.md"));
-    const dir = await call("fmrl_edit", { id, content_file: path.join(work, "dir.md") });
-    expect(dir.isError).toBe(true);
+    await mkdir(path.join(folder, "dir.md"));
+    const sub = await call("fmrl_edit", { id, content_file: "dir.md" });
+    expect(sub.isError).toBe(true);
     if (process.platform !== "win32") {
-      const fifo = path.join(work, "pipe.md");
+      const fifo = path.join(folder, "pipe.md");
       execFileSync("mkfifo", [fifo]);
       const started = Date.now();
       const piped = await call("fmrl_edit", { id, content_file: fifo });

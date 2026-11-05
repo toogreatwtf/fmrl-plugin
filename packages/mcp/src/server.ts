@@ -727,7 +727,7 @@ export function createServer(deps: ServerDeps): McpServer {
     const priv = v.private;
     // A public page is read by anyone with the link: content that plainly carries a credential stays here.
     if (!priv) {
-      const refused = publicRefusal(content, "publish", title);
+      const refused = publicRefusal(content, "publish", title, format);
       if (refused) return fail(refused);
     }
     const notices: string[] = [];
@@ -890,7 +890,7 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           const d = await api.get(k, ref.id);
           if (!d.private) {
-            const refused = publicRefusal(content, "save", title);
+            const refused = publicRefusal(content, "save", title, format);
             if (refused) throw new Error(refused);
           }
           let body: Parameters<FmrlApi["update"]>[2] = { content, format, title, base_rev };
@@ -981,7 +981,7 @@ export function createServer(deps: ServerDeps): McpServer {
             const content = src ? src.source : opened.html;
             const format: "html" | "md" = src ? src.format : "html";
             const title = opened.title || undefined;
-            const refused = publicRefusal(content, "save", title);
+            const refused = publicRefusal(content, "save", title, format);
             if (refused) throw new Error(refused);
             if (confirm !== true) return { id: ref.id, url: base, visibility, changed: false, title, preview: previewOf(content), content_format: format };
             const u = await change({ content, format, title, encrypted: false });

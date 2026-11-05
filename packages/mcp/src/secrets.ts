@@ -1,3 +1,5 @@
+import { looksLikeHTML, toHTML } from "./markdown.js";
+
 /**
  * secretKinds names the kinds of credential that content plainly carries:
  * key material and tokens with a recognisable shape, not words like
@@ -108,9 +110,18 @@ export function secretKinds(content: string): string[] {
   return kinds;
 }
 
-/** publicRefusal is the message for public content that carries secrets, or undefined when it carries none. Nothing is sent either way: the scan runs here. */
-export function publicRefusal(content: string, verb: "publish" | "save", title?: string): string | undefined {
-  const kinds = secretKinds(title ? `${title}\n${content}` : content);
+/**
+ * publicRefusal is the message for public content that carries secrets, or undefined when it carries none. Nothing is
+ * sent either way: the scan runs here. Markdown (format "md", or no format and content that doesn't look like HTML, as
+ * the server detects it) is scanned as written and as it renders, as the server does, so emphasis can't split a key
+ * (gh**p**_…) past the check.
+ */
+export function publicRefusal(content: string, verb: "publish" | "save", title?: string, format?: "html" | "md"): string | undefined {
+  let text = title ? `${title}\n${content}` : content;
+  if (format === "md" || (format === undefined && !looksLikeHTML(content))) {
+    try { text += `\n${toHTML(content)}`; } catch { /* the source alone is still scanned */ }
+  }
+  const kinds = secretKinds(text);
   if (kinds.length === 0) return undefined;
   const list = kinds.length === 1 ? kinds[0] : `${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}`;
   return `Nothing was sent: this content looks like it contains ${list}, and a public page can be read by anyone with the link. Take the secret out, or ${verb === "publish" ? "publish it private (pass visibility: \"private\")" : "keep it off this public page"}. Tell the person what you found; don't repeat the secret itself.`;

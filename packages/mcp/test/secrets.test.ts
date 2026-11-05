@@ -83,4 +83,12 @@ describe("secretKinds", () => {
     expect(secretKinds(`sk-ant-api03-${T(40)}`)).toEqual(["an Anthropic API key"]);
     expect(secretKinds(`sk-ant-api03-${T(40)}\nsk-proj-${T(40)}`)).toEqual(["an Anthropic API key", "an OpenAI API key"]);
   });
+  it("scans Markdown as it renders too, so emphasis can't split a key past the check (as the server does)", () => {
+    const split = `gh**p**_${T(36)}`;
+    expect(secretKinds(split)).toEqual([]);
+    expect(publicRefusal(`# Notes\n\n${split}`, "publish")).toContain("a GitHub token");
+    expect(publicRefusal(`# Notes\n\n${split}`, "save", undefined, "md")).toContain("a GitHub token");
+    // HTML is taken as written: its own tags are what the reader sees.
+    expect(publicRefusal(`<p>${split}</p>`, "save", undefined, "html")).toBeUndefined();
+  });
 });

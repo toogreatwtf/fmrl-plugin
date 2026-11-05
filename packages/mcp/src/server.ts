@@ -270,6 +270,34 @@ export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<k
 export const MANAGE_HINT = (origin: string, id: string) => `To edit, supply ${origin}/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`;
 export const CONFLICT = (rev: number) => `Revision ${rev} is the latest; read it with fmrl_get and edit from there.`;
 
+export const VISIBILITY_OWNER = "Only the page's owner can change who can read it: the key that published it, or the account that owns it from its own browser. Nothing changed.";
+export const VISIBILITY_KEPT = "A kept page can't change who can read it: it has a lasting copy. Nothing changed. To share it the other way, publish a new page.";
+export const VISIBILITY_SAME = (to: "public" | "private") => `The page is already ${to}. Nothing changed.`;
+export const VISIBILITY_UNSURE = "The change's outcome is uncertain: it may or may not have gone through. Don't send it again yet; read the page with fmrl_get to see which it is now.";
+export const VISIBILITY_ASK = (rev: number) => `Nothing changed yet. Show the person this preview and say that anyone with the link will be able to read the page, and that its private versions, encrypted title and preview are deleted. Call fmrl_set_visibility again with confirm: true and rev: ${rev} only after they say yes.`;
+export const VISIBILITY_NEEDS_REV = "confirm: true needs rev: the revision number the preview showed, so only the revision the person looked over goes public. Nothing changed. Call again without confirm to preview it.";
+export const VISIBILITY_STALE = (latest: number, previewed: number) => `The page changed since the preview: revision ${latest} is the latest, not ${previewed}. Nothing changed. Call again without confirm to preview the latest and show it to the person.`;
+
+/** VisibilityResult is fmrl_set_visibility's answer: changed is false on the preview a public change answers first. */
+type VisibilityResult = { id: string; url: string; visibility: "public" | "private"; changed: boolean; rev?: number; title?: string; preview?: string; content_format?: "html" | "md" };
+
+function visibilityText(v: VisibilityResult): string {
+  if (!v.changed) {
+    const head = `Preview of ${v.url} going public${v.title ? `: "${v.title}"` : ""}. Opening of the ${v.content_format === "md" ? "Markdown" : "HTML"} anyone with the link will read:`;
+    return [head, "", v.preview ?? "", "", VISIBILITY_ASK(v.rev ?? 1)].join("\n");
+  }
+  if (v.visibility === "public") return `${v.url} is public now (revision ${v.rev}): anyone with the link can read it. Its private versions were deleted.`;
+  return `${v.url} is private now (revision ${v.rev}). It was encrypted here under a new key, the part of the link after #p=, which fmrl.site cannot read or recover: share this link, not the old one. Its earlier public versions, title and preview were deleted.`;
+}
+
+/** previewOf is the opening of a page's text for the person to look over: up to 600 characters, cut at a line. */
+function previewOf(content: string): string {
+  if (content.length <= 600) return content;
+  const cut = content.slice(0, 600);
+  const at = cut.lastIndexOf("\n");
+  return `${at > 200 ? cut.slice(0, at) : cut}\n…`;
+}
+
 /** EditConflict is a 409 on fmrl_edit: someone saved revision latest after the base_rev the caller read. */
 class EditConflict extends Error {
   constructor(public readonly latest: number) { super(CONFLICT(latest)); }
@@ -391,6 +419,10 @@ const readOutput = {
 const editOutput = {
   // On a conflict the tool fails with only id and latest_rev; url, rev and watching come with every saved edit.
   id: z.string(), url: z.string().optional(), rev: z.number().optional(), watching: z.boolean().optional(), latest_rev: z.number().optional(),
+};
+const visibilityOutput = {
+  id: z.string(), url: z.string(), visibility: z.enum(["public", "private"]), changed: z.boolean(), rev: z.number().optional(),
+  title: z.string().optional(), preview: z.string().optional(), content_format: z.enum(["html", "md"]).optional(),
 };
 const listOutput = { docs: z.array(z.object(pageOutput)) };
 const watchOutput = {
@@ -697,7 +729,7 @@ export function createServer(deps: ServerDeps): McpServer {
     const priv = v.private;
     // A public page is read by anyone with the link: content that plainly carries a credential stays here.
     if (!priv) {
-      const refused = publicRefusal(content, "publish", title);
+      const refused = publicRefusal(content, "publish", title, format);
       if (refused) return fail(refused);
     }
     const notices: string[] = [];
@@ -860,7 +892,7 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           const d = await api.get(k, ref.id);
           if (!d.private) {
-            const refused = publicRefusal(content, "save", title);
+            const refused = publicRefusal(content, "save", title, format);
             if (refused) throw new Error(refused);
           }
           let body: Parameters<FmrlApi["update"]>[2] = { content, format, title, base_rev };
@@ -902,6 +934,78 @@ export function createServer(deps: ServerDeps): McpServer {
         return ok(editText(v), v);
       } catch (e) {
         if (e instanceof EditConflict) return { ...fail(e.message), structuredContent: { id: ref.id, latest_rev: e.latest } };
+        return fail(errorText(e));
+      }
+    },
+  );
+
+  server.registerTool(
+    "fmrl_set_visibility",
+    {
+      title: "Make a fmrl.site page public or private",
+      description: "Change who can read a page you own, keeping its id. Going public answers a preview first and changes nothing: show it to the person, and call again with confirm: true and the preview's rev only after they say yes; content that carries a key or token is refused. Going private encrypts the page here under a new key and answers its new link (after #p=); the server deletes the page's earlier public versions, title and preview, so only do it when the person asked. A kept page can't change either way. Only the page's owner key can change it.",
+      inputSchema: {
+        id: z.string().min(1).describe("A page id or page URL; a private page going public needs its key (#p=) in the link, or one this machine already holds."),
+        visibility: z.enum(["public", "private"]).describe("Who can read the page after the change: public (anyone with the link) or private (only links that carry the new key)."),
+        confirm: z.boolean().optional().describe("true: make a private page public now, after the person said yes to its preview. Leave out the first time; going private needs no confirm."),
+        rev: z.number().int().min(1).optional().describe("With confirm: true, the revision number the preview answered. If the page has changed since, nothing is made public."),
+      },
+      outputSchema: visibilityOutput,
+    },
+    async ({ id, visibility, confirm, rev: previewed }) => {
+      let ref: ReturnType<typeof parsePageRef>;
+      try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
+      try {
+        const v = await withKey(async (k): Promise<VisibilityResult> => {
+          const d = await api.get(k, ref.id);
+          const isPrivate = d.private === true;
+          if ((visibility === "private") === isPrivate) throw new Error(VISIBILITY_SAME(visibility));
+          if (d.owned !== true) throw new Error(VISIBILITY_OWNER);
+          if (d.pinned || d.cid) throw new Error(VISIBILITY_KEPT);
+          const rev = d.rev ?? 1;
+          const current = await api.getRevision(k, ref.id, rev);
+          const base = d.url.split("#")[0];
+          const change = async (body: Parameters<FmrlApi["update"]>[2]): Promise<UpdateResponse> => {
+            try {
+              return await api.update(k, ref.id, { ...body, base_rev: rev, change_privacy: true });
+            } catch (e) {
+              if (e instanceof ApiError && e.status === 409 && e.code === "conflict" && e.rev !== undefined) throw new EditConflict(e.rev);
+              if (e instanceof ApiError && e.status === 409 && e.code === "kept") throw new Error(VISIBILITY_KEPT);
+              if (e instanceof ApiError && e.status === 403) throw new Error(VISIBILITY_OWNER);
+              if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) throw new Error(VISIBILITY_UNSURE);
+              throw e;
+            }
+          };
+          if (visibility === "public") {
+            const opened = await openPrivatePage(ref, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+            if (!opened) throw new Error(PRIVATE_NEEDS_KEY);
+            // The page as it reads, as fmrl_get answers it: the Markdown a private page was made from, else its HTML.
+            const src = readSource(opened.html);
+            const content = src ? src.source : opened.html;
+            const format: "html" | "md" = src ? src.format : "html";
+            const title = opened.title || undefined;
+            const refused = publicRefusal(content, "save", title, format);
+            if (refused) throw new Error(refused);
+            // A confirm makes public only the revision the person looked over: a page saved since is previewed again first.
+            if (confirm === true && previewed === undefined) throw new Error(VISIBILITY_NEEDS_REV);
+            if (confirm === true && previewed !== rev) throw new Error(VISIBILITY_STALE(rev, previewed!));
+            if (confirm !== true) return { id: ref.id, url: base, visibility, changed: false, rev, title, preview: previewOf(content), content_format: format };
+            const u = await change({ content, format, title, encrypted: false });
+            return { id: u.id, url: u.url, visibility, changed: true, rev: u.rev };
+          }
+          // Going private: the page as it reads now, sealed here under a fresh key, with its record under this key's ring.
+          // The page's own title rides along into the sealed record, so it isn't swapped for the first heading.
+          const prepared = await preparePrivate(current.content, current.format === "md" ? "md" : "html", current.title || undefined, undefined, "save");
+          const ring = await ringOrNothing(k);
+          const sealed = ring ? await sealRecord(ring, prepared.key, prepared.title) : undefined;
+          // The new key is kept before the change is sent, so a reply lost on the way back never leaves a page nobody can open.
+          await remember(ref.id, { key: prepared.key });
+          const u = await change({ ...prepared.body, ...(sealed ? { sealed } : {}) });
+          return { id: u.id, url: `${u.url}#p=${prepared.key}`, visibility, changed: true, rev: u.rev };
+        });
+        return ok(visibilityText(v), v);
+      } catch (e) {
+        if (e instanceof EditConflict) return fail(`${e.message} Nothing changed.`);
         return fail(errorText(e));
       }
     },

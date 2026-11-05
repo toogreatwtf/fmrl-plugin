@@ -73,6 +73,16 @@ describe("secretKinds", () => {
     expect(secretKinds(`<code>ghp&#95;${T(36)}</code>`)).toEqual(["a GitHub token"]);
     expect(secretKinds(`<p>AKIA<!-- -->Q7RZ3MXK5T2WB9PD</p>`)).toEqual(["an AWS access key"]);
   });
+  it("reads named and semicolonless references as a browser does, so ghp&lowbar; and ghp&#95 are still keys", () => {
+    expect(secretKinds(`<code>ghp&lowbar;${T(36)}</code>`)).toEqual(["a GitHub token"]);
+    expect(secretKinds(`<code>ghp&UnderBar;${T(36)}</code>`)).toEqual(["a GitHub token"]);
+    expect(secretKinds(`<code>ghp&#95${T(36)}</code>`)).toEqual(["a GitHub token"]);
+    expect(secretKinds(`<code>ghp&#x5F;${T(36)}</code>`)).toEqual(["a GitHub token"]);
+    expect(publicRefusal(`<p>ghp&lowbar;${T(36)}</p>`, "save", undefined, "html")).toContain("a GitHub token");
+    expect(publicRefusal(`<p>ghp&#95${T(36)}</p>`, "save", undefined, "html")).toContain("a GitHub token");
+    // A name that isn't one is left as it is.
+    expect(secretKinds(`<code>ghp&nosuch;${T(36)}</code>`)).toEqual([]);
+  });
   it("lets a real key through only when a stand-in word is a word of its own and most of it is words", () => {
     // Random runs that happen to hold the letters of "here" or "dummy" are still keys.
     expect(secretKinds("AKIAQ7RZ3MXKHERE5T2W")).toEqual(["an AWS access key"]);

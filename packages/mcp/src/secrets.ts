@@ -74,15 +74,23 @@ export function tokenWords(body: string): string[] {
   return words;
 }
 
-const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
+/** NAMED is the named references a key's characters can hide behind: the basics, and every HTML5 name for ASCII punctuation (names are case-sensitive, as browsers read them). */
+const NAMED: Record<string, string> = {
+  amp: "&", AMP: "&", lt: "<", LT: "<", gt: ">", GT: ">", quot: '"', QUOT: '"', apos: "'", nbsp: "\u00a0", Tab: "\t", NewLine: "\n",
+  lowbar: "_", UnderBar: "_", period: ".", sol: "/", bsol: "\\", plus: "+", equals: "=", colon: ":", semi: ";", comma: ",",
+  num: "#", excl: "!", quest: "?", commat: "@", dollar: "$", percnt: "%", ast: "*", midast: "*", Hat: "^", grave: "`", DiacriticalGrave: "`",
+  verbar: "|", vert: "|", VerticalLine: "|", lpar: "(", rpar: ")", lsqb: "[", rsqb: "]", lbrack: "[", rbrack: "]",
+  lcub: "{", rcub: "}", lbrace: "{", rbrace: "}",
+};
 
 /** joinedText is HTML's text as a browser joins it: comments and tags removed and entities decoded, so a key that markup splits (a syntax highlighter's spans, ghp&#95;…) is found as the reader sees it. */
 function joinedText(content: string): string {
   return content
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<[^>]*>/g, "")
-    .replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g, (all, dec?: string, hex?: string, name?: string) => {
-      if (name !== undefined) return NAMED[name.toLowerCase()] ?? all;
+    // A numeric reference needs no closing semicolon in a browser (ghp&#95abc reads ghp_abc); a named one is read with it.
+    .replace(/&(?:#(\d+);?|#[xX]([0-9a-fA-F]+);?|([a-zA-Z]+);)/g, (all, dec?: string, hex?: string, name?: string) => {
+      if (name !== undefined) return NAMED[name] ?? all;
       const n = dec !== undefined ? Number(dec) : parseInt(hex!, 16);
       return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : all;
     });

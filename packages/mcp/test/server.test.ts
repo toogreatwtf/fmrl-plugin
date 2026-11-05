@@ -152,6 +152,7 @@ describe("account vault sync integration", () => {
     expect(r.isError).toBeFalsy();
     expect(text(r)).not.toContain("Private page keys:");
     expect(text(r)).toContain(firstPin(fx.fingerprint));
+    expect((r.structuredContent as { notes?: string[] }).notes).toContain(firstPin(fx.fingerprint));
     expect(text(await call("fmrl_whoami"))).not.toContain("First sync:");
     expect(fake.requests.filter(q => q.path === "/api/v1/keys")).toHaveLength(1);
     expect(ringRequests()).toHaveLength(2);
@@ -1427,6 +1428,49 @@ describe("plugin freshness", () => {
     } finally {
       await c.close();
     }
+  });
+
+  /** strings is every string value in a structured answer, however deep. */
+  const strings = (v: unknown): string[] =>
+    typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === "object" ? Object.values(v).flatMap(strings) : [];
+
+  it("puts the ring, the plugin and a newer installed plugin in whoami's structured answer, not only its text (#23)", async () => {
+    // A cache with this session's plugin and a newer one beside it, as Claude Code keeps them.
+    const cacheDir = await mkdtemp(path.join(tmpdir(), "fmrl-cache-"));
+    for (const v of ["0.3.0", "9.9.9"]) {
+      await mkdir(path.join(cacheDir, v, ".claude-plugin"), { recursive: true });
+      await writeFile(path.join(cacheDir, v, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "fmrl", version: v }));
+    }
+    const api = new FmrlApi(fake.baseUrl);
+    const file = path.join(dir, "plugin-creds.json");
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file });
+    const c = await connect({ api, keys, pluginRoot: path.join(cacheDir, "0.3.0"), autoUpdate: { on: false, file: "/s.json" }, pluginSurface: "claude-cli" });
+    try {
+      const r = (await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      const s = r.structuredContent as Record<string, any>;
+      expect(s.ring).toEqual({ kept_in: "file", file, note: RING_FILE_LINE(file) });
+      expect(s.plugin).toMatchObject({ installed: "0.3.0", server: VERSION, stale: true, auto_update: "off", newer_installed: "9.9.9" });
+      expect(s.plugin.note).toContain("Plugin 9.9.9 is already installed, but this session started on 0.3.0: restart Claude Code to load it.");
+      // Every line past the key's own facts reaches a client that reads only the structured half.
+      const reachable = strings(s);
+      const lines = text(r).split("\n");
+      const tail = lines.slice(lines.indexOf(RING_FILE_LINE(file)));
+      expect(tail.length).toBeGreaterThan(1);
+      for (const line of tail) expect(reachable).toContain(line);
+      expect(text(r)).toContain("Plugin 9.9.9 is already installed");
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("leaves plugin out of whoami's structured answer when no manifest is readable", async () => {
+    await withRoot(undefined, async (c) => {
+      const r = (await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      expect(r.structuredContent).not.toHaveProperty("plugin");
+      expect(r.structuredContent).toHaveProperty("ring.kept_in", "file");
+    });
   });
 });
 

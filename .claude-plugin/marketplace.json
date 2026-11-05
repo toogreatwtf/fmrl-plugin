@@ -1,6 +1,10 @@
 {
   "name": "fmrl-plugin",
-  "owner": { "name": "Too Great LLC", "url": "https://fmrl.site" },
+  "owner": {
+    "name": "Too Great LLC",
+    "url": "https://fmrl.site"
+  },
+  "description": "fmrl's plugin: publish pages to fmrl.site from Claude Code and Cowork and get a link.",
   "plugins": [
     {
       "name": "fmrl",

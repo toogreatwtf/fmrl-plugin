@@ -8,8 +8,8 @@
  * The patterns are kept narrow on purpose: a false refusal costs a user a
  * public page they meant to share, so each one matches a token's real
  * prefix and length, not anything that merely looks random, and a match that
- * reads as a placeholder (ends in EXAMPLE, has no digit, or is one character
- * repeated) is let through, as docs and tutorials are full of those. It is a
+ * reads as a placeholder (ends in EXAMPLE, spells out a stand-in word like
+ * "your" or "here", or is one character repeated) is let through, as docs and tutorials are full of those. It is a
  * backstop for common kinds, not a promise that nothing secret goes out.
  */
 const PATTERNS: Array<{ kind: string; re: RegExp }> = [
@@ -32,10 +32,11 @@ const PATTERNS: Array<{ kind: string; re: RegExp }> = [
 function placeholder(match: string): boolean {
   if (/EXAMPLE$/i.test(match)) return true;
   if (match.startsWith("-----BEGIN")) return false;
-  // The body after the prefix: a real token mixes digits in; a stand-in is letters only, or one character over and over.
+  // The body after the prefix. A stand-in is one character over and over, or spells out that it is one;
+  // a real token can be all letters (about one AWS key id in thirty is), so a missing digit proves nothing.
   const body = match.replace(/^(?:sk-ant-|sk-(?:proj-|svcacct-|admin-)?|(?:sk|rk)_live_|gh[pousr]_|github_pat_|xox[abposr]-|AKIA|ASIA|AIza|glpat-|npm_|hf_|fmrl_)/, "");
-  if (!/[0-9]/.test(body)) return true;
-  return new Set(body.replace(/[-_]/g, "")).size <= 2;
+  if (new Set(body.replace(/[-_]/g, "")).size <= 2) return true;
+  return /your|here|placeholder|redacted|example|dummy|sample|changeme|replace|insert/i.test(body);
 }
 
 export function secretKinds(content: string): string[] {

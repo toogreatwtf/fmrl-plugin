@@ -10,6 +10,8 @@ describe("secretKinds", () => {
     ["-----BEGIN RSA PRIVATE KEY-----", "a private key block"],
     ["-----BEGIN PRIVATE KEY-----", "a private key block"],
     ["AKIA" + "Q7RZ3MXK5T2WB9PD", "an AWS access key"],
+    // All letters is still a real key id: AWS ids draw from A-Z and 2-7, and about one in thirty has no digit.
+    ["AKIA" + "QRZMXKTWBPDLHJNC", "an AWS access key"],
     ["ghp_" + T(36), "a GitHub token"],
     ["github_pat_" + T(32) + "_" + T(37), "a GitHub token"],
     ["xoxb-1234567890-abcdef", "a Slack token"],
@@ -38,6 +40,8 @@ describe("secretKinds", () => {
     "SLACK_BOT_TOKEN=xoxb-your-token-here-example",
     "GITHUB_TOKEN=ghp_" + "x".repeat(36),
     "GITHUB_TOKEN=ghp_" + "0".repeat(36),
+    "GITHUB_TOKEN=ghp_yourPersonalAccessTokenGoesRightHere1",
+    "OPENAI_API_KEY=sk-proj-REPLACE_WITH_YOUR_OWN_PROJECT_KEY_1234",
     "GITLAB_TOKEN=glpat-" + "x".repeat(20),
     "NPM_TOKEN=npm_" + "x".repeat(36),
     "HF_TOKEN=hf_" + "x".repeat(34),

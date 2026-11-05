@@ -5,6 +5,10 @@
   "author": { "name": "Too Great LLC", "url": "https://fmrl.site" },
   "homepage": "https://fmrl.site/install",
   "repository": "https://github.com/toogreatwtf/fmrl-plugin",
+  "documentationUrl": "https://github.com/toogreatwtf/fmrl-plugin#readme",
+  "privacyPolicyUrl": "https://fmrl.site/privacy",
+  "termsOfServiceUrl": "https://fmrl.site/terms",
+  "supportUrl": "https://fmrl.site/support",
   "license": "MIT",
   "keywords": ["fmrl", "share", "publish", "mcp"]
 }

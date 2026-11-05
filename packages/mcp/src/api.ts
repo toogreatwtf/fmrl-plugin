@@ -158,7 +158,7 @@ export class FmrlApi {
   update(
     key: string,
     id: string,
-    body: { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean; base_rev?: number },
+    body: { content: string; format?: "html" | "md"; title?: string; encrypted?: boolean; base_rev?: number; sealed?: string; change_privacy?: boolean },
     manageToken?: string,
   ): Promise<UpdateResponse> {
     const payload: Record<string, unknown> = { content: body.content };
@@ -166,6 +166,9 @@ export class FmrlApi {
     if (body.title !== undefined) payload.title = body.title;
     if (body.encrypted !== undefined) payload.encrypted = body.encrypted;
     if (body.base_rev !== undefined) payload.base_rev = body.base_rev;
+    // The owner's change of who can read the page: encrypted is the privacy it changes to (markymd #346).
+    if (body.change_privacy === true) payload.change_privacy = true;
+    if (body.sealed !== undefined) payload.sealed = body.sealed;
     const extraHeaders = manageToken !== undefined ? { "Fmrl-Manage-Token": manageToken } : undefined;
     return this.call<UpdateResponse>("PUT", `/docs/${encodeURIComponent(id)}`, key, payload, extraHeaders);
   }

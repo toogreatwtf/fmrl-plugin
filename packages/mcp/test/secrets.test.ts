@@ -68,4 +68,19 @@ describe("secretKinds", () => {
   it("still finds a real-shaped key on a line that also has a placeholder", () => {
     expect(secretKinds(`example: AKIAIOSFODNN7EXAMPLE\nreal: AKIAQ7RZ3MXK5T2WB9PD`)).toEqual(["an AWS access key"]);
   });
+  it("finds a key that markup splits, as the page reads (markymd's SecretKindsHTML)", () => {
+    expect(secretKinds(`<pre><span class="t">ghp</span><span>_${T(36)}</span></pre>`)).toEqual(["a GitHub token"]);
+    expect(secretKinds(`<code>ghp&#95;${T(36)}</code>`)).toEqual(["a GitHub token"]);
+    expect(secretKinds(`<p>AKIA<!-- -->Q7RZ3MXK5T2WB9PD</p>`)).toEqual(["an AWS access key"]);
+  });
+  it("lets a real key through only when a stand-in word is a word of its own and most of it is words", () => {
+    // Random runs that happen to hold the letters of "here" or "dummy" are still keys.
+    expect(secretKinds("AKIAQ7RZ3MXKHERE5T2W")).toEqual(["an AWS access key"]);
+    expect(secretKinds("ghp_Q7RZ3dummyK9mN2pQ4sT6vW8yZ1cF0xLaB3dE5")).toEqual(["a GitHub token"]);
+    expect(secretKinds("GITHUB_TOKEN=ghp_YOUR_PERSONAL_ACCESS_TOKEN_GOES_HERE")).toEqual([]);
+  });
+  it("names an Anthropic key once and still finds an OpenAI key beside it", () => {
+    expect(secretKinds(`sk-ant-api03-${T(40)}`)).toEqual(["an Anthropic API key"]);
+    expect(secretKinds(`sk-ant-api03-${T(40)}\nsk-proj-${T(40)}`)).toEqual(["an Anthropic API key", "an OpenAI API key"]);
+  });
 });

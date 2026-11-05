@@ -317,7 +317,7 @@ describe("account vault sync integration", () => {
 describe("tools", () => {
   it("lists exactly the twelve tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
+    expect(names).toEqual(["fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
   });
   it("fmrl_publish mints a key on first use and returns url, expiry, the seven-days line and the manage link", async () => {
     const r = await call("fmrl_publish", { visibility: "public", content: "# Hello", title: "Hello" });
@@ -1442,6 +1442,75 @@ describe("fmrl_edit", () => {
     expect(r.isError).toBeFalsy();
     expect(puts().map((q) => q.manageToken)).toEqual([manageTok(manage_url)]);
     expect(await b.pages.get(id)).toEqual({ manage: manageTok(manage_url) });
+  });
+});
+
+describe("fmrl_set_visibility", () => {
+  const changes = () => fake.privacyChanges;
+  const keyOfUrl = (url: string) => /#p=([A-Za-z0-9_-]{43})$/.exec(url)![1];
+
+  it("makes a public page private under a new key, keeping its id, and fmrl_get opens it with the key it remembered", async () => {
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Plan\n\nShip it." });
+    const { id } = pub.structuredContent as { id: string };
+    const r = await call("fmrl_set_visibility", { id, visibility: "private" });
+    expect(r.isError).toBeFalsy();
+    const v = r.structuredContent as { id: string; url: string; visibility: string; changed: boolean };
+    expect(v).toMatchObject({ id, visibility: "private", changed: true });
+    const key = keyOfUrl(v.url);
+    expect(await pagesAt().get(id)).toMatchObject({ key });
+    expect(changes().at(-1)).toEqual({ id, to: "private" });
+    const put = fake.requests.filter((q) => q.method === "PUT" && q.path === `/api/v1/docs/${id}`).at(-1)!;
+    const body = put.body as Record<string, unknown>;
+    expect(body).toMatchObject({ change_privacy: true, encrypted: true, format: "html", base_rev: 1 });
+    expect(String(body.content)).toMatch(/^MARKYENC/);
+    expect(JSON.stringify(body)).not.toContain("Ship it");
+    const got = await call("fmrl_get", { id });
+    expect(got.structuredContent).toMatchObject({ private: true, content: "# Plan\n\nShip it.", content_format: "md" });
+  });
+
+  it("going public answers a preview and changes nothing until confirm: true", async () => {
+    const priv = await call("fmrl_publish", { content: "# Notes\n\nFor everyone now." });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    const before = changes().length;
+    const first = await call("fmrl_set_visibility", { id: url, visibility: "public" });
+    expect(first.isError).toBeFalsy();
+    expect(first.structuredContent).toMatchObject({ id, visibility: "public", changed: false, preview: "# Notes\n\nFor everyone now.", content_format: "md" });
+    expect(text(first)).toContain("confirm: true only after they say yes");
+    expect(changes().length).toBe(before);
+    const second = await call("fmrl_set_visibility", { id: url, visibility: "public", confirm: true });
+    expect(second.structuredContent).toMatchObject({ id, visibility: "public", changed: true, url: `https://fmrl.test/${id}` });
+    expect(changes().at(-1)).toEqual({ id, to: "public" });
+    const put = fake.requests.filter((q) => q.method === "PUT" && q.path === `/api/v1/docs/${id}`).at(-1)!;
+    expect(put.body).toMatchObject({ change_privacy: true, encrypted: false, format: "md", content: "# Notes\n\nFor everyone now." });
+  });
+
+  it("refuses to make public a page that carries a key, before anything is sent", async () => {
+    const token = "ghp_" + "aB3dE5gH7jK9mN2pQ4sT6vW8yZ1cF0xL".repeat(2).slice(0, 36);
+    const priv = await call("fmrl_publish", { content: `# Deploy\n\n${token}` });
+    const { url } = priv.structuredContent as { url: string };
+    const before = fake.requests.filter((q) => q.method === "PUT").length;
+    const r = await call("fmrl_set_visibility", { id: url, visibility: "public", confirm: true });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("a GitHub token");
+    expect(text(r)).not.toContain(token);
+    expect(fake.requests.filter((q) => q.method === "PUT").length).toBe(before);
+  });
+
+  it("says so, and sends nothing, for the privacy the page already has, a kept page, or a page this key doesn't own", async () => {
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Same" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const before = fake.requests.filter((q) => q.method === "PUT").length;
+    const same = await call("fmrl_set_visibility", { id, visibility: "public" });
+    expect(same.isError).toBe(true);
+    expect(text(same)).toBe("The page is already public. Nothing changed.");
+    const kept = await call("fmrl_publish", { visibility: "public", content: "# Kept", title: "PINNED" });
+    const keptRes = await call("fmrl_set_visibility", { id: (kept.structuredContent as { id: string }).id, visibility: "private" });
+    expect(text(keptRes)).toContain("A kept page can't change who can read it");
+    const other = await agent({ file: "vis" });
+    const theirs = await other.call("fmrl_publish", { visibility: "public", content: "# Theirs" });
+    const notMine = await call("fmrl_set_visibility", { id: (theirs.structuredContent as { id: string }).id, visibility: "private" });
+    expect(text(notMine)).toContain("Only the page's owner can change who can read it");
+    expect(fake.requests.filter((q) => q.method === "PUT" && !q.path.endsWith("/watch")).length).toBe(before);
   });
 });
 

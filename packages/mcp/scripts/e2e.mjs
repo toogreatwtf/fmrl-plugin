@@ -53,7 +53,7 @@ console.log("whoami:", redact(who.content[0].text.split("\n")[0]));
 check(!who.isError && who.content[0].text.includes("Your key ring is in "), "whoami names the ring file");
 check(who.content[0].text.includes("Named Agent A"), "FMRL_AGENT_NAME names the key");
 
-const pub = await a.callTool({ name: "fmrl_publish_file", arguments: { path: file } });
+const pub = await a.callTool({ name: "fmrl_publish_file", arguments: { path: file, visibility: "public" } });
 console.log(redact(pub.isError ? "publish FAILED: " + pub.content[0].text : "publish:\n" + pub.content[0].text));
 check(!pub.isError, "public publish");
 const id = pub.structuredContent?.id;

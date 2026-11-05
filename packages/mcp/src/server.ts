@@ -9,7 +9,7 @@ import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
-import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
+import { documentTitle, firstHeading, looksLikeHTML, readSource, sourceBlock, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
 import { readProfile, type ProfileRead } from "./profile.js";
 import { publicRefusal } from "./secrets.js";
@@ -127,14 +127,15 @@ async function preparePrivate(content: string, format: "html" | "md" | undefined
       throw new Error(`Nothing to ${verb}: the content rendered to an empty page.`);
     }
     name = title || firstHeading(body);
-    html = wrapDocument(body, name);
+    // The source rides along, as the browser's own private pages carry it, so fmrl_get reads back Markdown.
+    html = wrapDocument(body + "\n" + sourceBlock(content), name);
   } else {
     name = title || documentTitle(content);
   }
   const sealed = pageKey ? { envelope: await sealWithKey(html, pageKey), key: pageKey } : await seal(html);
   const envBytes = Buffer.byteLength(sealed.envelope, "utf8");
   if (envBytes > MAX_BYTES) {
-    throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits.`);
+    throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits private. Make it smaller, or, if the person wants this page public, publish it with visibility: "public", where up to 2 MiB fits.`);
   }
   return { body: { content: sealed.envelope, format: "html", encrypted: true }, key: sealed.key, title: name };
 }
@@ -584,7 +585,7 @@ export function createServer(deps: ServerDeps): McpServer {
     const priv = v.private;
     // A public page is read by anyone with the link: content that plainly carries a credential stays here.
     if (!priv) {
-      const refused = publicRefusal(content, "publish");
+      const refused = publicRefusal(content, "publish", title);
       if (refused) return fail(refused);
     }
     const notices: string[] = [];
@@ -618,11 +619,11 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_publish",
     {
       title: "Publish a page to fmrl.site",
-      description: "Publish HTML or Markdown as a page on fmrl.site and get its link. Pages are private by default: encrypted here first, the key in the link after #p=. Pass visibility: \"public\" only when the person asked for a public page; a public page lasts seven days unless someone keeps it from the page itself. Public content that carries a credential is refused. Only call this when the user asked to share, send, or get a link for something.",
+      description: "Publish HTML or Markdown as a page on fmrl.site and get its link. Pages are private by default: encrypted here first, the key in the link after #p=. Pass visibility: \"public\" only when the person asked for a public page; a public page lasts seven days unless someone keeps it from the page itself. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe or fmrl key) is refused. Only call this when the user asked to share, send, or get a link for something.",
       // Strict: an unknown argument (the passphrase of older clients, say) is
       // refused rather than dropped, so nothing meant to be private publishes in the clear.
       inputSchema: z.object({
-        content: z.string().min(1).describe("The HTML or Markdown to publish (2 MiB at most)."),
+        content: z.string().min(1).describe("The HTML or Markdown to publish: 2 MiB at most public; private pages are encrypted first, so roughly 1.4 MB fits."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it."),
         title: z.string().optional().describe("Page title; the first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
         visibility: z.enum(["private", "public"]).optional().describe("private (the default): encrypted here before upload; the link carries the key after #p=, the page has no title or preview on fmrl.site, cannot be kept past seven days, and cannot be recovered without the link. public: anyone with the link can read it, it shows a title and preview, and it can be kept. Pass public only when the person asked for a public page, after showing them what will be shared."),
@@ -637,7 +638,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_publish_file",
     {
       title: "Publish a file to fmrl.site",
-      description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file (2 MiB at most) as a page on fmrl.site and get its link. Private by default, encrypted here first; pass visibility: \"public\" only when the person asked for a public page. Public content that carries a credential is refused. Only call this when the user asked to share the file.",
+      description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file as a page on fmrl.site (2 MiB at most public, roughly 1.4 MB private, since encryption adds about a third) and get its link. Private by default, encrypted here first; pass visibility: \"public\" only when the person asked for a public page. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe or fmrl key) is refused. Only call this when the user asked to share the file.",
       inputSchema: z.object({
         path: z.string().min(1).describe("Absolute path to the file (a leading ~ is expanded)."),
         title: z.string().optional().describe("Page title; the file's first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
@@ -717,7 +718,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
-        content: z.string().min(1).describe("The page's new HTML or Markdown (2 MiB at most)."),
+        content: z.string().min(1).describe("The page's new HTML or Markdown: 2 MiB at most on a public page, roughly 1.4 MB on a private one."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it. A private page is always sent as HTML, rendered here from Markdown."),
         title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
         base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),
@@ -739,7 +740,7 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           const d = await api.get(k, ref.id);
           if (!d.private) {
-            const refused = publicRefusal(content, "save");
+            const refused = publicRefusal(content, "save", title);
             if (refused) throw new Error(refused);
           }
           let body: Parameters<FmrlApi["update"]>[2] = { content, format, title, base_rev };

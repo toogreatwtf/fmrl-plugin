@@ -797,7 +797,7 @@ describe("tools", () => {
 
 describe("visibility: private unless asked (#30)", () => {
   const posts = () => fake.requests.filter((q) => q.method === "POST" && q.path.endsWith("/publish"));
-  const awsKey = "AKIA" + "ABCDEFGHIJKLMNOP";
+  const awsKey = "AKIA" + "Q7RZ3MXK5T2WB9PD";
 
   it("publishes private when neither visibility nor private is given", async () => {
     const r = await call("fmrl_publish", { content: "# Inventory\n\nwhere the keys live" });
@@ -816,6 +816,20 @@ describe("visibility: private unless asked (#30)", () => {
     }
     const sealed = await call("fmrl_publish", { content: "# Closed", visibility: "private" });
     expect((sealed.structuredContent as { url: string }).url).toContain("#p=");
+  });
+  it("keeps a private Markdown page's source with it, so a read gives back the Markdown and its profile, not the HTML it became", async () => {
+    const md = "# Plan\n\nstep <one> & two\n\n```fmrl-profile\nsections:\n  - id: plan\n    heading: Plan\n```\n";
+    const r = await call("fmrl_publish", { content: md, format: "md" });
+    const { url } = r.structuredContent as { url: string };
+    const got = await call("fmrl_get", { id: url });
+    expect(got.isError).toBeFalsy();
+    expect(got.structuredContent).toMatchObject({ content: md, content_format: "md" });
+  });
+  it("names the public option when a page fits public but not once encrypted", async () => {
+    const big = "# Big\n\n" + "word ".repeat(330_000);
+    const r = await call("fmrl_publish", { content: big, format: "md" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain('visibility: "public"');
   });
   it("refuses visibility and private that disagree, sending nothing", async () => {
     const n = posts().length;
@@ -848,7 +862,7 @@ describe("visibility: private unless asked (#30)", () => {
   it("refuses an edit that would put a credential on a public page", async () => {
     const pub = await call("fmrl_publish", { content: "# Notes", visibility: "public" });
     const id = (pub.structuredContent as { id: string }).id;
-    const token = "ghp_" + "a".repeat(36);
+    const token = "ghp_" + "aB3dE5gH7jK9mN2pQ4sT6vW8yZ1cF0xLaB3d";
     const r = await call("fmrl_edit", { id, content: `# Notes\n\n${token}`, base_rev: 1 });
     expect(r.isError).toBe(true);
     expect(text(r)).toContain("a GitHub token");
@@ -933,11 +947,11 @@ describe("fmrl_get reads the page", () => {
     expect(got.structuredContent).toMatchObject({ key_held: true, url: `https://fmrl.test/${id}#p=${key}`, content: "<p>held</p>", content_format: "html" });
   });
   it("opens the owner's private page through its ring, and returns the HTML when there is no source block", async () => {
-    const priv = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true });
+    const priv = await call("fmrl_publish", { content: "<!DOCTYPE html><html><head><title>Quiet</title></head><body><h1>Quiet</h1><p>hello</p></body></html>", format: "html", private: true });
     const { id, url } = priv.structuredContent as { id: string; url: string };
     const got = await call("fmrl_get", { id });
     expect(got.structuredContent).toMatchObject({ url, key_held: true, title: "Quiet", content_format: "html" });
-    expect((got.structuredContent as { content: string }).content).toContain('<h1 id="quiet">Quiet</h1>');
+    expect((got.structuredContent as { content: string }).content).toContain("<h1>Quiet</h1>");
   });
   it("a fragment key that doesn't open the page is not remembered, and the page reads as metadata and a note", async () => {
     const { id } = await plantPrivate("<p>secret</p>");
@@ -1118,7 +1132,8 @@ describe("fmrl_edit", () => {
 
     const got = await call("fmrl_get", { id: url });
     expect(got.structuredContent).toMatchObject({ rev: 2, latest_rev: 2 });
-    expect((got.structuredContent as { content: string }).content).toContain('<h1 id="plan-v2">Plan v2</h1>');
+    // The Markdown rides along with the sealed HTML, so the read gives back what was written.
+    expect(got.structuredContent).toMatchObject({ content: "# Plan v2\n\nsecond", content_format: "md" });
   });
   it("the owner edits its own private page through its ring, without a manage token and without sealed", async () => {
     const priv = await call("fmrl_publish", { content: "# Mine", private: true });

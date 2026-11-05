@@ -56,8 +56,8 @@ try{
  if(identity){assert.equal(who.attached_at,null);assert.match(who.attach_url,/\/c\/[A-Za-z0-9_-]{22}#r=/);assert(!('linked_at'in who));}
  else {assert.equal(who.linked_at,null);assert(!('attached_at'in who));assert(who.link_url.includes('#r='));}
  pass('strict whoami preserves linking/attachment semantics and ring hint');
- const page=ok(await a.call('fmrl_publish',{content:'# Original',format:'md'}));
- const first=ok(await c.call('fmrl_publish',{content:'# Publish first',format:'md'}));
+ const page=ok(await a.call('fmrl_publish',{content:'# Original',format:'md',visibility:'public'}));
+ const first=ok(await c.call('fmrl_publish',{content:'# Publish first',format:'md',visibility:'public'}));
  if(identity){assert.equal(page.recovery,'usable');assert.equal(page.attach_url,who.attach_url);assert.match(first.attach_url,/\/c\/[A-Za-z0-9_-]{22}#r=/);}
  else {assert(!('recovery'in page));assert.match(page.manage_url,/#k=/);}
  const token=(await a.pages.get(page.id)).manage;assert.match(token,/^[A-Za-z0-9_-]{22}$/);
@@ -83,12 +83,12 @@ try{
   ok(await b.call('fmrl_edit',{id:page.id,content:'# Durable role',base_rev:2}));
   assert(!new Headers(b.requests.filter(r=>r.method==='PUT').at(-1).headers).has('Fmrl-Manage-Token'));
   pass('spent recovery denied to a stranger while manager role persists');
-  const conflictPage=ok(await a.call('fmrl_publish',{content:'# Conflict test'}));
+  const conflictPage=ok(await a.call('fmrl_publish',{content:'# Conflict test',visibility:'public'}));
   ok(await a.call('fmrl_edit',{id:conflictPage.id,content:'# Advanced',base_rev:1}));
   const conflict=await c.call('fmrl_edit',{id:conflictPage.id,manage_token:conflictPage.manage_url,content:'# Stale',base_rev:1});assert(conflict.isError);
   ok(await c.call('fmrl_edit',{id:conflictPage.id,content:'# Retry on role',base_rev:2}));
   pass('recovery role persists after conflict without replaying the token');
-  const rotationPage=ok(await a.call('fmrl_publish',{content:'# Recovery rotation'}));
+  const rotationPage=ok(await a.call('fmrl_publish',{content:'# Recovery rotation',visibility:'public'}));
   const rotated=await fetch(`${base}/api/v1/docs/${rotationPage.id}/rotate`,{method:'POST',headers:{Authorization:`Bearer ${await a.keys.storedKey()}`}});assert.equal(rotated.status,200);const replacement=(await rotated.json()).manage_url;
   assert((await b.call('fmrl_edit',{id:rotationPage.id,manage_token:rotationPage.manage_url,content:'old'})).isError);
   ok(await b.call('fmrl_edit',{id:rotationPage.id,manage_token:replacement,content:'new'}));

@@ -223,6 +223,15 @@ export function* scriptBlocks(html: string): Generator<{ attrs: string; body: st
 }
 
 /**
+ * sourceBlock is the block readSource reads: the Markdown a private page was rendered from, written the way
+ * the browser writes it ("&" as &amp; and then "<" as &lt;, so no source can close the block), so that the
+ * page reads back, and edits on fmrl.site, as what the author wrote rather than the HTML it became.
+ */
+export function sourceBlock(source: string): string {
+  return '<script type="text/x-fmrl-source" data-format="md">' + source.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</script>";
+}
+
+/**
  * readSource is static/fmrl.js's readSource: the source a private page was
  * rendered from, when its sealed document carries one as
  * <script type="text/x-fmrl-source" data-format="…">. The browser writes the

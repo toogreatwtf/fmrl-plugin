@@ -208,8 +208,8 @@ describe("account vault sync integration", () => {
   it("two identical publishes and two whoami calls sync four times without throttle", async () => {
     await seed();
     const offset = await warm();
-    await call("fmrl_publish", { content: "# Same" });
-    await call("fmrl_publish", { content: "# Same" });
+    await call("fmrl_publish", { visibility: "public", content: "# Same" });
+    await call("fmrl_publish", { visibility: "public", content: "# Same" });
     await call("fmrl_whoami");
     await call("fmrl_whoami");
     expect(fake.requests.slice(offset).filter(q => q.path === "/api/v1/me")).toHaveLength(4);
@@ -220,13 +220,13 @@ describe("account vault sync integration", () => {
     const offset = await warm();
     const big = path.join(dir, "oversized.md");
     await writeFile(big, "a".repeat(MAX_BYTES + 1));
-    expect((await call("fmrl_publish", { content: " " })).isError).toBe(true);
+    expect((await call("fmrl_publish", { visibility: "public", content: " " })).isError).toBe(true);
     expect((await call("fmrl_publish", { content: "a".repeat(MAX_BYTES), private: true })).isError).toBe(true);
-    expect((await call("fmrl_publish_file", { path: big })).isError).toBe(true);
+    expect((await call("fmrl_publish_file", { visibility: "public", path: big })).isError).toBe(true);
     fake.quota = 0;
-    expect((await call("fmrl_publish", { content: "# Denied" })).isError).toBe(true);
+    expect((await call("fmrl_publish", { visibility: "public", content: "# Denied" })).isError).toBe(true);
     fake.quota = 25;
-    expect((await call("fmrl_publish", { content: "a".repeat(MAX_BYTES + 1) })).isError).toBe(true);
+    expect((await call("fmrl_publish", { visibility: "public", content: "a".repeat(MAX_BYTES + 1) })).isError).toBe(true);
     expect(fake.requests.slice(offset).filter(q => q.path === "/api/v1/me")).toHaveLength(0);
     expect(ringRequests()).toHaveLength(0);
     expect(fake.publishes.get(key)).toBeUndefined();
@@ -241,7 +241,7 @@ describe("account vault sync integration", () => {
     const has = fake.accountVaults.has.bind(fake.accountVaults);
     fake.accountVaults.has = k => fake.keys.has(k) || has(k);
     fake.accountVaults.get = k => original(k) ?? { pub: fx.pub, fingerprint: fx.fingerprint };
-    const r = await call("fmrl_publish", { content: "# Replacement" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "# Replacement" });
     expect(r.isError).toBeFalsy();
     const replacement = (await readCredentials(credFile)).keys[fake.baseUrl].key;
     expect(replacement).not.toBe(key);
@@ -256,7 +256,7 @@ describe("account vault sync integration", () => {
     const key = await seed();
     await warm();
     fake.ringStatus = 401;
-    const r = await call("fmrl_publish", { content: "# Once" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "# Once" });
     expect(r.isError).toBeFalsy();
     expect(fake.requests.filter(q => q.path === "/api/v1/keys")).toHaveLength(1);
     expect(fake.requests.filter(q => q.path === "/api/v1/publish")).toHaveLength(1);
@@ -278,7 +278,7 @@ describe("account vault sync integration", () => {
     await seed();
     await warm();
     const results = await Promise.all([
-      call("fmrl_publish", { content: "# First" }),
+      call("fmrl_publish", { visibility: "public", content: "# First" }),
       call("fmrl_publish", { content: "# Second", private: true }),
     ]);
     expect(results.every(r => !r.isError)).toBe(true);
@@ -304,7 +304,7 @@ describe("account vault sync integration", () => {
       const boxes = fake.ringBatches.flat().map(b => b.box);
       const activeRing = (await readCredentials(credFile)).keys[fake.baseUrl].ring!;
       api.putRings = async () => { throw new ApiError(500, "secret_error", [...rings, activeRing, fx.vault_key, fx.private_pkcs8, fx.pub, ...boxes].join("|")); };
-      results.push((await c.callTool({ name: "fmrl_publish", arguments: { content: "# Public" } })) as ToolResult);
+      results.push((await c.callTool({ name: "fmrl_publish", arguments: { visibility: "public", content: "# Public" } })) as ToolResult);
       results.push((await c.callTool({ name: "fmrl_whoami", arguments: {} })) as ToolResult);
       expect(results.every(r => !r.isError)).toBe(true);
       const output = JSON.stringify({ results, logs });
@@ -320,7 +320,7 @@ describe("tools", () => {
     expect(names).toEqual(["fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
   });
   it("fmrl_publish mints a key on first use and returns url, expiry, the seven-days line and the manage link", async () => {
-    const r = await call("fmrl_publish", { content: "# Hello", title: "Hello" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "# Hello", title: "Hello" });
     expect(r.isError).toBeFalsy();
     const t = text(r);
     const id = (r.structuredContent as { id: string }).id;
@@ -340,23 +340,23 @@ describe("tools", () => {
     expect(firstPublish().body).toEqual({ content: "# Hello", title: "Hello" });
   });
   it("fmrl_publish passes an explicit format", async () => {
-    await call("fmrl_publish", { content: "x", format: "html" });
+    await call("fmrl_publish", { visibility: "public", content: "x", format: "html" });
     expect(lastPublish()?.body).toEqual({ content: "x", format: "html" });
   });
   it("fmrl_publish_file maps the extension, refuses others, and caps the size", async () => {
     const md = path.join(dir, "note.MD");
     await writeFile(md, "# From a file");
-    const ok = await call("fmrl_publish_file", { path: md });
+    const ok = await call("fmrl_publish_file", { visibility: "public", path: md });
     expect(ok.isError).toBeFalsy();
     expect(lastPublish()?.body).toEqual({ content: "# From a file", format: "md" });
     const pdf = path.join(dir, "x.pdf");
     await writeFile(pdf, "%PDF");
-    const bad = await call("fmrl_publish_file", { path: pdf });
+    const bad = await call("fmrl_publish_file", { visibility: "public", path: pdf });
     expect(bad.isError).toBe(true);
     expect(text(bad)).toMatch(/\.html, \.htm, \.md, \.markdown, \.mdx, \.txt/);
     const big = path.join(dir, "big.md");
     await writeFile(big, "a".repeat(2 * 1024 * 1024 + 1));
-    const tooBig = await call("fmrl_publish_file", { path: big });
+    const tooBig = await call("fmrl_publish_file", { visibility: "public", path: big });
     expect(tooBig.isError).toBe(true);
     expect(text(tooBig)).toBe("That's bigger than the 2 MiB limit.");
     expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(1);
@@ -364,7 +364,7 @@ describe("tools", () => {
   it("fmrl_publish_file publishes a file of exactly MAX_BYTES", async () => {
     const exact = path.join(dir, "exact.md");
     await writeFile(exact, "a".repeat(MAX_BYTES));
-    const r = await call("fmrl_publish_file", { path: exact });
+    const r = await call("fmrl_publish_file", { visibility: "public", path: exact });
     expect(r.isError).toBeFalsy();
     expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(1);
   });
@@ -380,7 +380,7 @@ describe("tools", () => {
     const client2 = new Client({ name: "test3", version: "0" });
     await client2.connect(ct2);
     try {
-      const r = (await client2.callTool({ name: "fmrl_publish_file", arguments: { path: big } })) as ToolResult;
+      const r = (await client2.callTool({ name: "fmrl_publish_file", arguments: { visibility: "public", path: big } })) as ToolResult;
       expect(r.isError).toBe(true);
       expect(text(r)).toBe("That's bigger than the 2 MiB limit.");
       expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(0);
@@ -390,7 +390,7 @@ describe("tools", () => {
     }
   });
   it("fmrl_get and fmrl_delete accept an id or a URL", async () => {
-    const pub = await call("fmrl_publish", { content: "x" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "x" });
     const id = (pub.structuredContent as { id: string }).id;
     const got = await call("fmrl_get", { id: `https://fmrl.test/${id}/raw` });
     expect(got.isError).toBeFalsy();
@@ -426,9 +426,9 @@ describe("tools", () => {
     expect(r.structuredContent).toMatchObject({ quota: { publishes: { used: 0, limit: 25 } } });
   });
   it("fmrl_publish says nothing about a link once the key is linked", async () => {
-    const first = await call("fmrl_publish", { content: "# a" });
+    const first = await call("fmrl_publish", { visibility: "public", content: "# a" });
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
-    const r = await call("fmrl_publish", { content: "# b" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "# b" });
     expect(text(first)).toContain("Attach this agent to your identity");
     expect(text(r)).not.toContain("See your pages");
     expect(r.structuredContent).not.toHaveProperty("attach_url");
@@ -445,13 +445,13 @@ describe("tools", () => {
   });
   it("a 402 is a tool error with the reset time and is not retried", async () => {
     fake.quota = 0;
-    const r = await call("fmrl_publish", { content: "x" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "x" });
     expect(r.isError).toBe(true);
     expect(text(r)).toBe("This key has used its free publishes for the month; it resets at 2026-10-01T00:00:00Z.");
     expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(1);
   });
   it("a 422 is a tool error with the API's message", async () => {
-    const r = await call("fmrl_publish", { content: "PHISH" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "PHISH" });
     expect(r.isError).toBe(true);
     expect(text(r)).toBe("That can't be shared: it looks like phishing: a well-known brand next to a sign-in prompt.");
   });
@@ -492,7 +492,7 @@ describe("tools", () => {
     const abs = path.join(os.homedir(), name);
     await writeFile(abs, "# Home file");
     try {
-      const r = await call("fmrl_publish_file", { path: `~/${name}` });
+      const r = await call("fmrl_publish_file", { visibility: "public", path: `~/${name}` });
       expect(r.isError).toBeFalsy();
       expect(lastPublish()?.body).toEqual({ content: "# Home file", format: "md" });
     } finally {
@@ -502,18 +502,18 @@ describe("tools", () => {
   it("fmrl_publish_file rejects a non-UTF-8 file without publishing", async () => {
     const bad = path.join(dir, "bad.md");
     await writeFile(bad, Buffer.from([0xff, 0xfe, 0xfd, 0xfc]));
-    const r = await call("fmrl_publish_file", { path: bad });
+    const r = await call("fmrl_publish_file", { visibility: "public", path: bad });
     expect(r.isError).toBe(true);
     expect(text(r)).toBe("That file isn't UTF-8 text.");
     expect(fake.requests.filter((q) => q.path === "/api/v1/publish")).toHaveLength(0);
   });
   it("fmrl_publish reports the server's 413 for oversized content", async () => {
-    const r = await call("fmrl_publish", { content: "a".repeat(2 * 1024 * 1024 + 1) });
+    const r = await call("fmrl_publish", { visibility: "public", content: "a".repeat(2 * 1024 * 1024 + 1) });
     expect(r.isError).toBe(true);
     expect(text(r)).toBe("That's bigger than the 2 MiB limit.");
   });
   it("fmrl_get renders a pinned page as kept forever with its CID", async () => {
-    const pub = await call("fmrl_publish", { content: "x", title: "PINNED" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "x", title: "PINNED" });
     const id = (pub.structuredContent as { id: string }).id;
     const got = await call("fmrl_get", { id });
     expect(got.isError).toBeFalsy();
@@ -550,7 +550,7 @@ describe("tools", () => {
     expect(titledHtml).toContain("<title>Custom Title</title>");
   });
   it("fmrl_publish refuses a passphrase argument: there is no passphrase mode", async () => {
-    const r = await call("fmrl_publish", { content: "<h1>x</h1>", passphrase: "open sesame" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "<h1>x</h1>", passphrase: "open sesame" });
     expect(r.isError).toBe(true);
     expect(fake.requests).toHaveLength(0); // refused before the handler ran: no key mint, nothing published
   });
@@ -566,7 +566,7 @@ describe("tools", () => {
     expect(await openEnvelope(body.content, { key })).toContain("<li>one</li>");
   });
   it("a public publish sends neither encrypted nor a rendered body", async () => {
-    await call("fmrl_publish", { content: "# Plain" });
+    await call("fmrl_publish", { visibility: "public", content: "# Plain" });
     expect(firstPublish().body).toEqual({ content: "# Plain" });
   });
   it("fmrl_publish private: whitespace-only content is refused before sending", async () => {
@@ -575,7 +575,7 @@ describe("tools", () => {
     expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
   });
   it("fmrl_publish public: whitespace-only content is refused before sending", async () => {
-    const r = await call("fmrl_publish", { content: "  \n ", format: "md" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "  \n ", format: "md" });
     expect(r.isError).toBe(true);
     expect(text(r)).toContain("Nothing to publish");
     expect(fake.requests.some((q) => q.path === "/api/v1/publish")).toBe(false);
@@ -621,7 +621,7 @@ describe("tools", () => {
     await writeCredentials(credFile, { version: 1, keys: { [fake.baseUrl]: { key, prefix: key.slice(0, 9), created_at: "x" } } });
     fake.keys.add(key);
     fake.linked.add(key);
-    const r = await call("fmrl_publish", { content: "# a" });
+    const r = await call("fmrl_publish", { visibility: "public", content: "# a" });
     expect(r.structuredContent).not.toHaveProperty("attach_url");
     expect(await ringInFile()).toBeUndefined();
   });
@@ -732,7 +732,7 @@ describe("tools", () => {
     expect(r.structuredContent).toEqual({ docs: [] });
   });
   it("fmrl_list hands back a private page's title and keyed link, and a public page's url, newest first", async () => {
-    const pub = await call("fmrl_publish", { content: "# Open" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Open" });
     const priv = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true });
     const pubId = (pub.structuredContent as { id: string }).id;
     const { id: privId, url: privUrl } = priv.structuredContent as { id: string; url: string };
@@ -798,6 +798,82 @@ describe("tools", () => {
   });
 });
 
+describe("visibility: private unless asked (#30)", () => {
+  const posts = () => fake.requests.filter((q) => q.method === "POST" && q.path.endsWith("/publish"));
+  const awsKey = "AKIA" + "Q7RZ3MXK5T2WB9PD";
+
+  it("publishes private when neither visibility nor private is given", async () => {
+    const r = await call("fmrl_publish", { content: "# Inventory\n\nwhere the keys live" });
+    expect(r.isError).toBeFalsy();
+    expect((r.structuredContent as { url: string }).url).toContain("#p=");
+    expect(posts().at(-1)?.body).toMatchObject({ encrypted: true });
+    expect(JSON.stringify(posts().at(-1)?.body)).not.toContain("where the keys live");
+    expect(text(r)).toContain(SEVEN_DAYS_PRIVATE);
+  });
+  it("publishes in the clear only on visibility public, or private: false from older callers", async () => {
+    for (const args of [{ visibility: "public" }, { private: false }]) {
+      const r = await call("fmrl_publish", { content: "# Open", ...args });
+      expect(r.isError).toBeFalsy();
+      expect((r.structuredContent as { url: string }).url).not.toContain("#p=");
+      expect(posts().at(-1)?.body).toMatchObject({ content: "# Open" });
+    }
+    const sealed = await call("fmrl_publish", { content: "# Closed", visibility: "private" });
+    expect((sealed.structuredContent as { url: string }).url).toContain("#p=");
+  });
+  it("keeps a private Markdown page's source with it, so a read gives back the Markdown and its profile, not the HTML it became", async () => {
+    const md = "# Plan\n\nstep <one> & two\n\n```fmrl-profile\nsections:\n  - id: plan\n    heading: Plan\n```\n";
+    const r = await call("fmrl_publish", { content: md, format: "md" });
+    const { url } = r.structuredContent as { url: string };
+    const got = await call("fmrl_get", { id: url });
+    expect(got.isError).toBeFalsy();
+    expect(got.structuredContent).toMatchObject({ content: md, content_format: "md" });
+  });
+  it("names the public option when a page fits public but not once encrypted", async () => {
+    const big = "# Big\n\n" + "word ".repeat(330_000);
+    const r = await call("fmrl_publish", { content: big, format: "md" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain('visibility: "public"');
+  });
+  it("refuses visibility and private that disagree, sending nothing", async () => {
+    const n = posts().length;
+    const r = await call("fmrl_publish", { content: "# Which", visibility: "public", private: true });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("disagree");
+    expect(posts()).toHaveLength(n);
+  });
+  it("refuses public content that carries a credential, names the kind and not the value, and lets it go private", async () => {
+    const n = posts().length;
+    const r = await call("fmrl_publish", { content: `# Setup\n\naws_access_key_id = ${awsKey}`, visibility: "public" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("an AWS access key");
+    expect(text(r)).not.toContain(awsKey);
+    expect(posts()).toHaveLength(n);
+    const priv = await call("fmrl_publish", { content: `# Setup\n\naws_access_key_id = ${awsKey}` });
+    expect(priv.isError).toBeFalsy();
+  });
+  it("applies the same rules to fmrl_publish_file", async () => {
+    const work = await mkdtemp(path.join(tmpdir(), "fmrl-vis-"));
+    const f = path.join(work, "inventory.md");
+    await writeFile(f, "# Inventory\n\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n");
+    const pub = await call("fmrl_publish_file", { path: f, visibility: "public" });
+    expect(pub.isError).toBe(true);
+    expect(text(pub)).toContain("a private key block");
+    const priv = await call("fmrl_publish_file", { path: f });
+    expect(priv.isError).toBeFalsy();
+    expect((priv.structuredContent as { url: string }).url).toContain("#p=");
+  });
+  it("refuses an edit that would put a credential on a public page", async () => {
+    const pub = await call("fmrl_publish", { content: "# Notes", visibility: "public" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const token = "ghp_" + "aB3dE5gH7jK9mN2pQ4sT6vW8yZ1cF0xLaB3d";
+    const r = await call("fmrl_edit", { id, content: `# Notes\n\n${token}`, base_rev: 1 });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("a GitHub token");
+    expect(text(r)).not.toContain(token);
+    expect(fake.requests.filter((q) => q.method === "PUT")).toHaveLength(0);
+  });
+});
+
 describe("fmrl_get reads the page", () => {
   const OTHER = "fmrl_" + "Z".repeat(32);
   const MANAGE = "m".repeat(22);
@@ -821,7 +897,7 @@ describe("fmrl_get reads the page", () => {
     expect(tool.description).toBe("Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.");
   });
   it("reads a public Markdown page's latest revision: its source, its format, and who wrote it", async () => {
-    const pub = await call("fmrl_publish", { content: "# Hello\n\nworld", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Hello\n\nworld", format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
     const prefix = keyOf(fake.requests.at(-1)!).slice(0, 9);
     const got = await call("fmrl_get", { id: `https://fmrl.test/${id}` });
@@ -838,7 +914,7 @@ describe("fmrl_get reads the page", () => {
     expect(text(got).endsWith("\n\n# Hello\n\nworld")).toBe(true);
   });
   it("reads an older revision when rev is given, and the latest otherwise", async () => {
-    const pub = await call("fmrl_publish", { content: "# One", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# One", format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
     const key = keyOf(fake.requests.at(-1)!);
     fake.labels.set(key, "claude-code");
@@ -874,11 +950,11 @@ describe("fmrl_get reads the page", () => {
     expect(got.structuredContent).toMatchObject({ key_held: true, url: `https://fmrl.test/${id}#p=${key}`, content: "<p>held</p>", content_format: "html" });
   });
   it("opens the owner's private page through its ring, and returns the HTML when there is no source block", async () => {
-    const priv = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true });
+    const priv = await call("fmrl_publish", { content: "<!DOCTYPE html><html><head><title>Quiet</title></head><body><h1>Quiet</h1><p>hello</p></body></html>", format: "html", private: true });
     const { id, url } = priv.structuredContent as { id: string; url: string };
     const got = await call("fmrl_get", { id });
     expect(got.structuredContent).toMatchObject({ url, key_held: true, title: "Quiet", content_format: "html" });
-    expect((got.structuredContent as { content: string }).content).toContain('<h1 id="quiet">Quiet</h1>');
+    expect((got.structuredContent as { content: string }).content).toContain("<h1>Quiet</h1>");
   });
   it("a fragment key that doesn't open the page is not remembered, and the page reads as metadata and a note", async () => {
     const { id } = await plantPrivate("<p>secret</p>");
@@ -906,7 +982,7 @@ describe("fmrl_get reads the page", () => {
   };
   const withProfile = (p: unknown) => "# Handoff\n\n```fmrl-profile\n" + JSON.stringify(p) + "\n```\n\n## Header\n\nx\n";
   it("reads a public page's profile and section map, and says so in the text", async () => {
-    const pub = await call("fmrl_publish", { content: withProfile(PROFILE), format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: withProfile(PROFILE), format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
     const got = await call("fmrl_get", { id });
     expect(got.isError).toBeFalsy();
@@ -931,13 +1007,13 @@ describe("fmrl_get reads the page", () => {
     expect(text(got)).toContain("\nProfile handoff-review v1: 1 of 2 sections found; missing: review-map (required).\n");
   });
   it("a page with no profile block carries no profile keys at all", async () => {
-    const pub = await call("fmrl_publish", { content: "# Plain\n\n## Header\n", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Plain\n\n## Header\n", format: "md" });
     const got = await call("fmrl_get", { id: (pub.structuredContent as { id: string }).id });
     for (const k of ["profile", "section_map", "missing", "profile_error"]) expect(got.structuredContent).not.toHaveProperty(k);
     expect(text(got)).not.toContain("Profile");
   });
   it("a page whose profile block is broken says so", async () => {
-    const pub = await call("fmrl_publish", { content: "# Broken\n\n```fmrl-profile\n{nope\n```\n", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Broken\n\n```fmrl-profile\n{nope\n```\n", format: "md" });
     const got = await call("fmrl_get", { id: (pub.structuredContent as { id: string }).id });
     expect(got.isError).toBeFalsy();
     const err = (got.structuredContent as { profile_error: string }).profile_error;
@@ -971,7 +1047,7 @@ describe("fmrl_edit", () => {
     expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token); a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
   });
   it("publishing remembers the page's manage token, and a private page's key", async () => {
-    const pub = await call("fmrl_publish", { content: "# Open" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Open" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     expect(await pagesAt().get(id)).toEqual({ manage: manageTok(manage_url) });
     const priv = await call("fmrl_publish", { content: "# Closed", private: true });
@@ -980,7 +1056,7 @@ describe("fmrl_edit", () => {
   });
   it("fmrl_get's to_file writes the content into the fmrl folder and fmrl_edit's content_file saves it back, never through the model (#33)", async () => {
     const big = "# Canvas\n\n<!-- section:a -->\nold\n<!-- /section:a -->\n\n" + "filler line\n".repeat(2000);
-    const pub = await call("fmrl_publish", { content: big, format: "md" });
+    const pub = await call("fmrl_publish", { content: big, format: "md", visibility: "public" });
     const id = (pub.structuredContent as { id: string }).id;
 
     const got = await call("fmrl_get", { id, to_file: true });
@@ -1157,7 +1233,7 @@ describe("fmrl_edit", () => {
     expect(text(got)).not.toContain("step one");
   });
   it("the owner edits its own public page, and the next read is the new revision", async () => {
-    const pub = await call("fmrl_publish", { content: "# One", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# One", format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
     const r = await call("fmrl_edit", { id, content: "# Two", format: "md", title: "Two", base_rev: 1 });
     expect(r.isError).toBeFalsy();
@@ -1168,7 +1244,7 @@ describe("fmrl_edit", () => {
     expect(got.structuredContent).toMatchObject({ rev: 2, latest_rev: 2, content: "# Two" });
   });
   it("an edit watches the page: the editor hears the next revision with no fmrl_watch call", async () => {
-    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
     const r = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# Edited by B", base_rev: 1 });
@@ -1182,7 +1258,7 @@ describe("fmrl_edit", () => {
     expect(fake.requests.filter((q) => q.method === "PUT" && q.path.endsWith("/watch"))).toHaveLength(0);
   });
   it("an edit by a key at its watch limit is saved, and says the page is not watched", async () => {
-    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
     fake.watchLimit = 0;
@@ -1192,7 +1268,7 @@ describe("fmrl_edit", () => {
     expect(text(r)).toBe(`Saved revision 2 of https://fmrl.test/${id}. Not watched: the page could not be added to this key's watches, usually because the key watches the most pages it may, so replies will not show up in fmrl_inbox. Call fmrl_watch to try again; it says whether the key is at its limit.`);
   });
   it("another key edits with the manage link passed once, then by bare id, the token remembered only once it worked", async () => {
-    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
 
@@ -1237,7 +1313,8 @@ describe("fmrl_edit", () => {
 
     const got = await call("fmrl_get", { id: url });
     expect(got.structuredContent).toMatchObject({ rev: 2, latest_rev: 2 });
-    expect((got.structuredContent as { content: string }).content).toContain('<h1 id="plan-v2">Plan v2</h1>');
+    // The Markdown rides along with the sealed HTML, so the read gives back what was written.
+    expect(got.structuredContent).toMatchObject({ content: "# Plan v2\n\nsecond", content_format: "md" });
   });
   it("the owner edits its own private page through its ring, without a manage token and without sealed", async () => {
     const priv = await call("fmrl_publish", { content: "# Mine", private: true });
@@ -1263,7 +1340,7 @@ describe("fmrl_edit", () => {
     expect(await b.pages.get(id)).toEqual({});
   });
   it("a stale base_rev fails naming the latest revision", async () => {
-    const pub = await call("fmrl_publish", { content: "# One", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# One", format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
     await call("fmrl_edit", { id, content: "# Two", base_rev: 1 });
     const r = await call("fmrl_edit", { id, content: "# Also two", base_rev: 1 });
@@ -1275,13 +1352,13 @@ describe("fmrl_edit", () => {
     const priv = await call("fmrl_publish", { content: "# S", private: true });
     const { id, url } = priv.structuredContent as { id: string; url: string };
     await call("fmrl_edit", { id: url, content: "# S2" });
-    const pub = await call("fmrl_publish", { content: "# P" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# P" });
     await call("fmrl_edit", { id: (pub.structuredContent as { id: string }).id, content: "# P2" });
     expect(puts()).toHaveLength(2);
     for (const q of puts()) expect(q.body).not.toHaveProperty("sealed");
   });
   it("refuses blank content before any request", async () => {
-    const pub = await call("fmrl_publish", { content: "# One" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# One" });
     const id = (pub.structuredContent as { id: string }).id;
     const r = await call("fmrl_edit", { id, content: "   " });
     expect(r.isError).toBe(true);
@@ -1316,7 +1393,7 @@ describe("fmrl_edit", () => {
     expect(puts()).toHaveLength(0);
   });
   it("the owner never sends a manage token, even one its link carries, and stores none", async () => {
-    const pub = await call("fmrl_publish", { content: "# Mine", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Mine", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     await writeFile(pagesFile, JSON.stringify({ version: 1, pages: {} }));
     const r = await call("fmrl_edit", { id, manage_token: manage_url, content: "# Mine, again", base_rev: 1 });
@@ -1325,7 +1402,7 @@ describe("fmrl_edit", () => {
     expect(await pagesAt().get(id)).toEqual({});
   });
   it("GET /docs/{id} says whether the caller owns the page", async () => {
-    const pub = await call("fmrl_publish", { content: "# Owned" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Owned" });
     const id = (pub.structuredContent as { id: string }).id;
     const a = new FmrlApi(fake.baseUrl);
     expect((await a.get(keyOf(firstPublish()), id)).owned).toBe(true);
@@ -1335,7 +1412,7 @@ describe("fmrl_edit", () => {
     expect((await a.list(keyOf(firstPublish()))).docs.every((d) => d.owned === true)).toBe(true);
   });
   it("a refused link token falls back once to the stored one, which stays stored", async () => {
-    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
     await b.pages.remember(id, { manage: manageTok(manage_url) });
@@ -1347,7 +1424,7 @@ describe("fmrl_edit", () => {
     expect(await b.pages.get(id)).toEqual({ manage: manageTok(manage_url) });
   });
   it("a refused link token with no other stored token fails with the manage-link hint, once", async () => {
-    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id } = pub.structuredContent as { id: string };
     const b = await second();
     const r = await b.call("fmrl_edit", { id, manage_token: "f".repeat(22), content: "# By B" });
@@ -1357,7 +1434,7 @@ describe("fmrl_edit", () => {
     expect(await b.pages.get(id)).toEqual({});
   });
   it("a link token the server accepts replaces a stale stored one", async () => {
-    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id, manage_url } = pub.structuredContent as { id: string; manage_url: string };
     const b = await second();
     await b.pages.remember(id, { manage: "s".repeat(22) });
@@ -1422,7 +1499,7 @@ describe("fmrl_watch and fmrl_inbox", () => {
     expect(await b.pages.get(id)).toEqual({});
   });
   it("the inbox lists another key's revision by its name, can_open, and fmrl_get of it empties the inbox", async () => {
-    const pub = await call("fmrl_publish", { content: "# Shared", format: "md" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id, url, manage_url } = pub.structuredContent as { id: string; url: string; manage_url: string };
     const b = await agent({ file: "b", agentName: "Bee" });
     const edit = await b.call("fmrl_edit", { id, manage_token: manage_url, content: "# Shared, by B", base_rev: 1 });
@@ -1514,7 +1591,7 @@ describe("the key's name", () => {
     const api = new FmrlApi(fake.baseUrl);
     api.setLabel = async () => { throw new Error("PATCH refused"); };
     const b = await agent({ file: "b", agentName: "Bee", api, log: (l) => lines.push(l) });
-    const r = await b.call("fmrl_publish", { content: "# Still published" });
+    const r = await b.call("fmrl_publish", { visibility: "public", content: "# Still published" });
     expect(r.isError).toBeFalsy();
     expect(lines.filter((l) => l.includes("PATCH refused"))).toHaveLength(1);
   });
@@ -1592,7 +1669,7 @@ describe("plugin freshness", () => {
   });
   it("the other tools' results are unchanged by a stale plugin", async () => {
     await withRoot(await root("0.3.0"), async (c) => {
-      const r = (await c.callTool({ name: "fmrl_publish", arguments: { content: "# hi" } })) as ToolResult;
+      const r = (await c.callTool({ name: "fmrl_publish", arguments: { visibility: "public", content: "# hi" } })) as ToolResult;
       expect(text(r)).not.toContain("plugin");
     });
   });
@@ -1678,7 +1755,7 @@ describe("key codes, rotation and revocation", () => {
     expect(text(r)).toBe(`Redeemed the key code for ${prefix}…, this machine's key: its new secret is saved to ${credFile}. Its pages, name, linked browsers and key ring carry over.`);
     expect(text(r)).not.toContain(after.key);
     expect(r.structuredContent).toEqual({ prefix, file: credFile });
-    const pub = await call("fmrl_publish", { content: "# after" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# after" });
     expect(pub.isError).toBeFalsy();
     expect(keyOf(firstPublish())).toBe(after.key);
     expect(mints()).toBe(1);
@@ -1745,7 +1822,7 @@ describe("key codes, rotation and revocation", () => {
       expect(r.isError).toBe(true);
       const fresh = [...fake.keys].find((k) => fake.prefixOf(k) === key.slice(0, 9))!;
       expect(text(r)).toMatch(new RegExp(`^Redeemed the key code for ${key.slice(0, 9)}…, but couldn't save it to ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(.+\\); this session uses it until it ends\\. The code is spent and fmrl\\.site keeps only a hash of the key, so save it now, or set FMRL_API_KEY to it: ${fresh}$`));
-      const pub = (await c.callTool({ name: "fmrl_publish", arguments: { content: "# still works" } })) as ToolResult;
+      const pub = (await c.callTool({ name: "fmrl_publish", arguments: { visibility: "public", content: "# still works" } })) as ToolResult;
       expect(pub.isError).toBeFalsy();
       expect(keyOf(fake.requests.filter((q) => q.path === "/api/v1/publish").at(-1)!)).toBe(fresh);
     } finally {
@@ -1852,7 +1929,7 @@ describe("key codes, rotation and revocation", () => {
     expect(await stored()).toEqual(before);
     expect(mints()).toBe(1);
     // As it says: the next publish replaces the key, and the old ring stays under its prefix.
-    const pub = await call("fmrl_publish", { content: "# new key" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# new key" });
     expect(pub.isError).toBeFalsy();
     expect(mints()).toBe(2);
     expect((await readCredentials(credFile)).rings).toEqual({ [before.prefix]: before.ring });
@@ -1905,7 +1982,7 @@ describe("fmrl_status", () => {
     expect(lines[4]).toBe(VERBOSE_HINT);
   });
   it("describes the key, its ring, the pages remembered and the last call once other tools have run", async () => {
-    const pub = await call("fmrl_publish", { content: "# Hello" });
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Hello" });
     // A publish ends with the vault sync's own calls, so read the page back: the last call is then the read, with its id blanked.
     await call("fmrl_get", { id: (pub.structuredContent as { id: string }).id });
     const n = fake.requests.length;
@@ -1934,7 +2011,7 @@ describe("fmrl_status", () => {
     it("asks fmrl.site and npm, in a bounded time, and never names or replaces the key", async () => {
       let asked = 0;
       await withDeps({ latestOnNpm: async () => { asked++; return "9.9.9"; } }, async (c) => {
-        const pub = (await c.callTool({ name: "fmrl_publish", arguments: { content: "# Hello" } })) as ToolResult;
+        const pub = (await c.callTool({ name: "fmrl_publish", arguments: { visibility: "public", content: "# Hello" } })) as ToolResult;
         await c.callTool({ name: "fmrl_get", arguments: { id: (pub.structuredContent as { id: string }).id } });
         const n = fake.requests.length;
         const t = await status(c, { verbose: true });
@@ -1957,7 +2034,7 @@ describe("fmrl_status", () => {
     });
     it("reports a refused key without replacing it", async () => {
       await withDeps({ latestOnNpm: async () => VERSION }, async (c) => {
-        await c.callTool({ name: "fmrl_publish", arguments: { content: "# Hello" } });
+        await c.callTool({ name: "fmrl_publish", arguments: { visibility: "public", content: "# Hello" } });
         const key = keyOf(firstPublish());
         fake.revoked.add(key);
         const t = await status(c, { verbose: true });

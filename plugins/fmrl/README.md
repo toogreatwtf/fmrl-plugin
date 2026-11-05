@@ -4,6 +4,14 @@ Share anything your AI made. This plugin publishes a page to [fmrl.site](https:/
 
 It adds three skills, `/fmrl:share`, `/fmrl:whoami` and `/fmrl:status`, and twelve tools: `fmrl_publish`, `fmrl_publish_file`, `fmrl_get`, `fmrl_edit`, `fmrl_watch`, `fmrl_inbox`, `fmrl_list`, `fmrl_delete`, `fmrl_whoami`, `fmrl_status`, `fmrl_redeem` and `fmrl_rotate`.
 
+## Install
+
+In Claude Code:
+
+```
+/plugin install fmrl --marketplace toogreatwtf/fmrl-plugin
+```
+
 ## What it runs
 
 One local MCP server, `fmrl-mcp`, at the exact version named in `.mcp.json`. `npx` downloads that version from npm the first time and starts it with Node 20 or newer. The server's source is in this repository, under `packages/mcp`. Nothing else runs, and the plugin has no hooks.

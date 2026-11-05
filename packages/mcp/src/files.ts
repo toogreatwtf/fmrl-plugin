@@ -17,23 +17,31 @@ export function filesDir(env: NodeJS.ProcessEnv = process.env, homedir: () => st
   return path.resolve(p);
 }
 
-/** openFilesDir makes the folder if it is missing (mode 0700, readable only by this user) and answers its real path. */
+/**
+ * openFilesDir makes the folder if it is missing (mode 0700, readable only by this user) and answers its real path.
+ * A folder that already exists is used only if it is this user's and no one else can write in it, so another
+ * account on a shared machine can't plant or swap the files fmrl_edit uploads.
+ */
 export async function openFilesDir(dir: string): Promise<string> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const real = await realpath(dir);
-  if (!(await lstat(real)).isDirectory()) throw new Error(`The fmrl folder ${dir} is not a folder.`);
+  const st = await lstat(real);
+  if (!st.isDirectory()) throw new Error(`The fmrl folder ${dir} is not a folder.`);
+  if (process.platform !== "win32" && typeof process.getuid === "function") {
+    if (st.uid !== process.getuid()) throw new Error(`The fmrl folder ${dir} belongs to another user, so fmrl won't read or write files in it. Set FMRL_FILES_DIR to a folder of your own.`);
+    if ((st.mode & 0o022) !== 0) throw new Error(`Other users can write in the fmrl folder ${dir}, so fmrl won't read or write files in it. Make it private (chmod 700 ${dir}) or set FMRL_FILES_DIR to another folder.`);
+  }
   return real;
 }
 
-/** inFolder is whether real (a resolved path) names something inside folder (also resolved), not the folder itself. */
-export function inFolder(folder: string, real: string): boolean {
-  const rel = path.relative(folder, real);
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+/** fileStem is the part of a page's file name before the extension: its id, cleaned to safe characters. */
+export function fileStem(id: string): string {
+  return id.replace(/[^A-Za-z0-9_-]/g, "") || "page";
 }
 
 /** fileName is the name a page's content is written under: its id, cleaned to safe characters, and its format. */
 export function fileName(id: string, format: "html" | "md"): string {
-  return `${id.replace(/[^A-Za-z0-9_-]/g, "") || "page"}.${format}`;
+  return `${fileStem(id)}.${format}`;
 }
 
 /**

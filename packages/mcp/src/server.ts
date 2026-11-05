@@ -1,4 +1,5 @@
-import { open as fsOpen, stat as fsStat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat as fsLstat, open as fsOpen, realpath, stat as fsStat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ApiError, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
-import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
+import { fileName, fileStem, filesDir, openFilesDir, writeIn } from "./files.js";
+import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, sourceBlock, toHTML, wrapDocument } from "./markdown.js";
@@ -49,6 +51,8 @@ export interface ServerDeps {
   nonessentialTrafficOff?: boolean;
   /** probeTimeoutMs bounds each of fmrl_status's verbose calls to fmrl.site; 3 s unless a test says otherwise. */
   probeTimeoutMs?: number;
+  /** filesDir is the fmrl folder for to_file and content_file (files.filesDir); tests give their own. */
+  filesDir?: string;
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -148,6 +152,20 @@ function withNotes<T extends object>(p: T, notices: string[]): T & { notes?: str
   return notices.length ? { ...p, notes: [...notices] } : p;
 }
 /**
+ * absolutePath expands a leading ~ (and ~\ on Windows) and answers the absolute path p names. A path that is still
+ * relative is refused rather than read against whatever folder the server happens to run in, and so is a Windows
+ * network path, since opening one makes an outbound connection that can carry the user's credentials.
+ */
+function absolutePath(p: string, what: string): string {
+  const win = process.platform === "win32";
+  let q = p;
+  if (q === "~" || q.startsWith("~/") || (win && q.startsWith("~\\"))) q = path.join(os.homedir(), q.slice(1));
+  if (win && /^(?:\\\\|\/\/)/.test(q)) throw new Error(`${what} may not be a network path. Nothing was read.`);
+  if (!path.isAbsolute(q)) throw new Error(`${what} must be an absolute path (a leading ~ is expanded); ${p} is not.`);
+  return path.resolve(q);
+}
+
+/**
  * resolveVisibility turns a publish's arguments into private or public.
  * Private is the default (#30): a page goes out in the clear only when the
  * caller says so, with visibility "public" or, from older callers, private:
@@ -243,6 +261,11 @@ function readText(r: PageRead, at: string): string {
   return [meta, `Revision ${r.rev} of ${r.latest_rev}, edited by ${editorText(r.editor)} at ${at}.`, ...profileText(r), ...rest, "", r.content ?? r.content_note ?? ""].join("\n");
 }
 
+export const EDIT_ONE_SOURCE = "Give the new content as content or as content_file, one of the two. Nothing was saved.";
+export const OUTSIDE_FOLDER = (tool: string, folder: string, p: string) => `${tool} reads only files in the fmrl folder, ${folder}, where fmrl_get's to_file writes; ${p} is not one of them. Nothing was read.`;
+export const NOT_OWN_FILE = (tool: string, folder: string, p: string, stem: string) => `${tool} reads only the edited page's own file in the fmrl folder, ${folder}: ${stem}.md or ${stem}.html, the name fmrl_get's to_file writes it under; ${p} is not that file. Nothing was read.`;
+export const NO_OWN_FILE = (tool: string, folder: string, name: string) => `${tool}: there is no ${name} in the fmrl folder, ${folder}. fmrl_get with to_file writes it there. Nothing was read.`;
+export const CONTENT_WRITTEN = (file: string, bytes: number, format: string) => `Content (${format}, ${bytes} bytes) written to ${file}, not shown here. Edit that file and save it with fmrl_edit's content_file.`;
 export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
 export const MANAGE_HINT = (origin: string, id: string) => `To edit, supply ${origin}/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`;
 export const CONFLICT = (rev: number) => `Revision ${rev} is the latest; read it with fmrl_get and edit from there.`;
@@ -355,6 +378,7 @@ const readOutput = {
   rev: z.number(), latest_rev: z.number(),
   editor: editorOutput,
   content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
+  content_file: z.object({ path: z.string(), bytes: z.number() }).strict().optional(),
   profile: z.object({
     profile: z.string(), v: z.number(),
     sections: z.array(z.object({ id: z.string(), purpose: z.string(), by: z.string(), required: z.boolean() })),
@@ -419,6 +443,92 @@ export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
+
+  /** readBounded reads an open handle's regular file, 2 MiB at most, as UTF-8. */
+  const readBounded = async (handle: Awaited<ReturnType<typeof fsOpen>>, label: string): Promise<string> => {
+    const st = await handle.stat();
+    if (!st.isFile()) throw new Error(`${label} is not a regular file. Nothing was read.`);
+    if (st.size > MAX_BYTES) throw new Error(TOO_LARGE_MESSAGE);
+    const buf = Buffer.alloc(MAX_BYTES + 1);
+    const { bytesRead } = await handle.read(buf, 0, MAX_BYTES + 1, 0);
+    if (bytesRead > MAX_BYTES) throw new Error(TOO_LARGE_MESSAGE);
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, bytesRead));
+    } catch {
+      throw new Error("That file isn't UTF-8 text.");
+    }
+  };
+  const extensionFormat = (name: string, tool: string): "html" | "md" => {
+    try {
+      return formatForPath(name);
+    } catch (e) {
+      if (tool === "fmrl_publish_file") throw e;
+      throw new Error(`${tool} reads ${ACCEPTED_EXTENSIONS.join(", ")} files; ${name} is not one.`);
+    }
+  };
+  /**
+   * readTextFile reads fmrl_publish_file's file: an absolute path, a symlink followed and judged by its target,
+   * which must itself be a page file. It is opened without blocking and checked to be a regular file on the open
+   * handle, so a FIFO or a device can't hang the call.
+   */
+  const readTextFile = async (p: string, tool: string): Promise<{ content: string; format: "html" | "md"; resolved: string }> => {
+    const resolved = await realpath(absolutePath(p, tool));
+    const format = extensionFormat(path.basename(resolved) || p, tool);
+    const info = await stat(resolved);
+    if (info.size > MAX_BYTES) throw new Error(TOO_LARGE_MESSAGE);
+    const handle = await open(resolved, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
+    try {
+      return { content: await readBounded(handle, resolved), format, resolved };
+    } finally {
+      await handle.close();
+    }
+  };
+  /**
+   * readOwnFile reads fmrl_edit's content_file: only the edited page's own file, <id> plus a page extension, directly
+   * in the fmrl folder, by bare name or by full path. Which file is meant is settled from the text alone, before
+   * anything is touched, so nothing outside the folder is ever looked up. The file is then opened by its place in the
+   * folder's real path, never through a link (O_NOFOLLOW, and the open handle must be the very entry the folder
+   * holds), and must be a regular file with no other hard link. So neither a file elsewhere on the machine nor another
+   * page's file, a decrypted private page included, can be uploaded under this page.
+   */
+  const readOwnFile = async (p: string, tool: string, id: string): Promise<{ content: string; format: "html" | "md" }> => {
+    const configured = deps.filesDir ?? filesDir();
+    const real = await openFilesDir(configured);
+    const outside = () => new Error(OUTSIDE_FOLDER(tool, real, p));
+    let name: string;
+    if (!path.isAbsolute(p) && !/^~(?:$|[/\\])/.test(p)) {
+      if (/[/\\]/.test(p) || p === "." || p === "..") throw outside();
+      name = p;
+    } else {
+      const abs = absolutePath(p, tool);
+      const dir = path.dirname(abs);
+      if (path.relative(dir, path.resolve(configured)) !== "" && path.relative(dir, real) !== "") throw outside();
+      name = path.basename(abs);
+    }
+    const stem = fileStem(id);
+    if (path.basename(name, path.extname(name)) !== stem || path.extname(name) === "") throw new Error(NOT_OWN_FILE(tool, real, p, stem));
+    const format = extensionFormat(name, tool);
+    const file = path.join(real, name);
+    let handle: Awaited<ReturnType<typeof fsOpen>>;
+    try {
+      handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") throw new Error(NO_OWN_FILE(tool, real, name));
+      if (code === "ELOOP") throw outside();
+      throw e;
+    }
+    try {
+      const st = await handle.stat();
+      if (st.isFile() && st.nlink > 1) throw outside();
+      // Where O_NOFOLLOW isn't there (Windows), or the entry was swapped since: the handle must be the entry itself.
+      const entry = await fsLstat(file).catch(() => undefined);
+      if (!entry || entry.isSymbolicLink() || entry.ino !== st.ino || entry.dev !== st.dev) throw outside();
+      return { content: await readBounded(handle, file), format };
+    } finally {
+      await handle.close();
+    }
+  };
   // Read once at startup: a plugin update takes a restart to load anyway.
   const plugin = pluginStatus(deps.pluginRoot, VERSION);
   // The facts reach fmrl_whoami whenever they are known; the offer only on
@@ -427,6 +537,8 @@ export function createServer(deps: ServerDeps): McpServer {
   const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
 
   const log = deps.log;
+  /** folder is the fmrl folder's real path, made on first use; a bad FMRL_FILES_DIR is reported then, not at startup. */
+  const folder = async (): Promise<string> => openFilesDir(deps.filesDir ?? filesDir());
   const vault = new VaultSync({ api, keys, log });
 
   /** whoamiPlugin is the installed plugin's state for fmrl_whoami, as facts and as the line the text carries; undefined with no readable manifest. */
@@ -648,32 +760,13 @@ export function createServer(deps: ServerDeps): McpServer {
       outputSchema: publishOutput,
     },
     async ({ path: p, title, visibility, private: priv }) => {
-      let format: "html" | "md";
-      let content: string;
+      let file: { content: string; format: "html" | "md" };
       try {
-        const expanded = p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p;
-        const resolved = path.resolve(expanded);
-        format = formatForPath(resolved);
-        const info = await stat(resolved);
-        if (info.size > MAX_BYTES) return fail(TOO_LARGE_MESSAGE);
-        const buf = Buffer.alloc(MAX_BYTES + 1);
-        let bytesRead: number;
-        const handle = await open(resolved, "r");
-        try {
-          ({ bytesRead } = await handle.read(buf, 0, MAX_BYTES + 1, 0));
-        } finally {
-          await handle.close();
-        }
-        if (bytesRead > MAX_BYTES) return fail(TOO_LARGE_MESSAGE);
-        try {
-          content = new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, bytesRead));
-        } catch {
-          return fail("That file isn't UTF-8 text.");
-        }
+        file = await readTextFile(p, "fmrl_publish_file");
       } catch (e) {
         return fail(errorText(e));
       }
-      return publishOrSeal(content, format, title, visibility, priv);
+      return publishOrSeal(file.content, file.format, title, visibility, priv);
     },
   );
 
@@ -685,10 +778,11 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
+        to_file: z.boolean().optional().describe("true: write the content, as it reads after opening, to <id>.md or <id>.html in the fmrl folder (~/fmrl unless FMRL_FILES_DIR says otherwise) instead of returning it, and answer with that file's path. It replaces an earlier copy of the same page. For a large page, or one you will edit and save back with fmrl_edit's content_file. The file is readable only by this user."),
       },
       outputSchema: readOutput,
     },
-    async ({ id, rev }) => {
+    async ({ id, rev, to_file }) => {
       let ref: ReturnType<typeof parsePageRef>;
       try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       let at = "";
@@ -700,12 +794,25 @@ export function createServer(deps: ServerDeps): McpServer {
         const read = (row: PageRow): PageRead => ({ ...row, rev: r.rev, latest_rev: latest, editor: project(editorOutput, r.editor) });
         // The profile is read here, from the content as it reads after opening: the server never sees a private page's.
         const withContent = (row: PageRead, content: string, content_format: "html" | "md"): PageRead => ({ ...row, content, content_format, ...readProfile(content, content_format) });
-        if (!d.private) return withContent(read(pageRow(d, undefined)), r.content, r.format);
-        const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
-        if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
-        const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
-        const src = readSource(opened.html);
-        return src ? withContent(row, src.source, src.format) : withContent(row, opened.html, "html");
+        let v: PageRead;
+        if (!d.private) v = withContent(read(pageRow(d, undefined)), r.content, r.format);
+        else {
+          const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+          if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
+          const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
+          const src = readSource(opened.html);
+          v = src ? withContent(row, src.source, src.format) : withContent(row, opened.html, "html");
+        }
+        if (!to_file || v.content === undefined) return v;
+        // The content goes to disk, not through the model: the answer keeps everything else, the profile included.
+        const format = v.content_format ?? "html";
+        const dir = await folder();
+        const file = await writeIn(dir, fileName(ref.id, format), v.content);
+        // A copy in the other format is from an older revision: remove it, so fmrl_edit can't save that one back.
+        await unlink(path.join(dir, fileName(ref.id, format === "md" ? "html" : "md"))).catch(() => undefined);
+        const written = { path: file, bytes: Buffer.byteLength(v.content) };
+        const { content: ignoredContent, ...rest } = v;
+        return { ...rest, content_file: written, content_note: CONTENT_WRITTEN(written.path, written.bytes, format) };
       }, (v) => readText(v, at));
     },
   );
@@ -718,17 +825,30 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
-        content: z.string().min(1).describe("The page's new HTML or Markdown: 2 MiB at most on a public page, roughly 1.4 MB on a private one."),
-        format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it. A private page is always sent as HTML, rendered here from Markdown."),
+        content: z.string().min(1).optional().describe("The page's new HTML or Markdown: 2 MiB at most on a public page, roughly 1.4 MB on a private one. Give this or content_file, not both."),
+        content_file: z.string().min(1).optional().describe("Read the new content from this page's own file instead, so a large page never passes through the model: write it with fmrl_get's to_file, edit the file, save it from there. Only <id>.md or <id>.html (or .htm, .markdown, .mdx, .txt) in the fmrl folder (~/fmrl unless FMRL_FILES_DIR says otherwise) is read, where <id> is this page's id: give its file name or its full path. 2 MiB at most."),
+        format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it, or, with content_file, to take it from the extension. A private page is always sent as HTML, rendered here from Markdown."),
         title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
         base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),
       },
       outputSchema: editOutput,
     },
-    async ({ id, content, format, title, base_rev, manage_token }) => {
+    async ({ id, content: given, content_file, format: givenFormat, title, base_rev, manage_token }) => {
       let ref: ReturnType<typeof parsePageRef>;
       try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       try { if (manage_token !== undefined) ref.manage = parseRecoveryToken(manage_token); } catch (e) { return fail(errorText(e)); }
+      if ((given === undefined) === (content_file === undefined)) return fail(EDIT_ONE_SOURCE);
+      let content: string;
+      let format = givenFormat;
+      if (content_file !== undefined) {
+        try {
+          const file = await readOwnFile(content_file, "fmrl_edit's content_file", ref.id);
+          content = file.content;
+          format = givenFormat ?? file.format;
+        } catch (e) {
+          return fail(errorText(e));
+        }
+      } else content = given!;
       if (content.trim() === "") return fail("Nothing to save: the content is empty.");
       try {
         const v = await withKey(async (k): Promise<EditResult> => {

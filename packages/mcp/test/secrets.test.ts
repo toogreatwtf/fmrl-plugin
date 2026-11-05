@@ -17,6 +17,9 @@ describe("secretKinds", () => {
     ["sk-proj-" + T(40), "an OpenAI API key"],
     ["AIza" + T(35), "a Google API key"],
     ["sk_live_" + T(24), "a Stripe secret key"],
+    ["glpat-" + T(20), "a GitLab token"],
+    ["npm_" + T(36), "an npm token"],
+    ["hf_" + T(34), "a Hugging Face token"],
     ["fmrl_" + T(32), "an fmrl key"],
   ])("finds %s", (content, kind) => {
     expect(secretKinds(`before ${content} after`)).toEqual([kind]);
@@ -35,6 +38,9 @@ describe("secretKinds", () => {
     "SLACK_BOT_TOKEN=xoxb-your-token-here-example",
     "GITHUB_TOKEN=ghp_" + "x".repeat(36),
     "GITHUB_TOKEN=ghp_" + "0".repeat(36),
+    "GITLAB_TOKEN=glpat-" + "x".repeat(20),
+    "NPM_TOKEN=npm_" + "x".repeat(36),
+    "HF_TOKEN=hf_" + "x".repeat(34),
     // Names that merely contain "sk-": CSS classes and kebab-case identifiers.
     ".sk-skeleton-loader-container-placeholder-wrapper2 { display: none }",
     "schedule: sk-learning-rate-schedule-warmup-cosine-decay-v2",

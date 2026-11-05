@@ -619,7 +619,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_publish",
     {
       title: "Publish a page to fmrl.site",
-      description: "Publish HTML or Markdown as a page on fmrl.site and get its link. Pages are private by default: encrypted here first, the key in the link after #p=. Pass visibility: \"public\" only when the person asked for a public page; a public page lasts seven days unless someone keeps it from the page itself. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe or fmrl key) is refused. Only call this when the user asked to share, send, or get a link for something.",
+      description: "Publish HTML or Markdown as a page on fmrl.site and get its link. Pages are private by default: encrypted here first, the key in the link after #p=. Pass visibility: \"public\" only when the person asked for a public page; a public page lasts seven days unless someone keeps it from the page itself. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. Only call this when the user asked to share, send, or get a link for something.",
       // Strict: an unknown argument (the passphrase of older clients, say) is
       // refused rather than dropped, so nothing meant to be private publishes in the clear.
       inputSchema: z.object({
@@ -638,7 +638,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_publish_file",
     {
       title: "Publish a file to fmrl.site",
-      description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file as a page on fmrl.site (2 MiB at most public, roughly 1.4 MB private, since encryption adds about a third) and get its link. Private by default, encrypted here first; pass visibility: \"public\" only when the person asked for a public page. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe or fmrl key) is refused. Only call this when the user asked to share the file.",
+      description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file as a page on fmrl.site (2 MiB at most public, roughly 1.4 MB private, since encryption adds about a third) and get its link. Private by default, encrypted here first; pass visibility: \"public\" only when the person asked for a public page. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. Only call this when the user asked to share the file.",
       inputSchema: z.object({
         path: z.string().min(1).describe("Absolute path to the file (a leading ~ is expanded)."),
         title: z.string().optional().describe("Page title; the file's first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),

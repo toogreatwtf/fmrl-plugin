@@ -22,6 +22,9 @@ const PATTERNS: Array<{ kind: string; re: RegExp }> = [
   { kind: "an OpenAI API key", re: /(?<![\w.-])sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}/ },
   { kind: "a Google API key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
   { kind: "a Stripe secret key", re: /\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b/ },
+  { kind: "a GitLab token", re: /\bglpat-[A-Za-z0-9_-]{20,}/ },
+  { kind: "an npm token", re: /\bnpm_[A-Za-z0-9]{36}\b/ },
+  { kind: "a Hugging Face token", re: /\bhf_[A-Za-z0-9]{34,}\b/ },
   { kind: "an fmrl key", re: /\bfmrl_[A-Za-z0-9]{24,}\b/ },
 ];
 
@@ -30,7 +33,7 @@ function placeholder(match: string): boolean {
   if (/EXAMPLE$/i.test(match)) return true;
   if (match.startsWith("-----BEGIN")) return false;
   // The body after the prefix: a real token mixes digits in; a stand-in is letters only, or one character over and over.
-  const body = match.replace(/^(?:sk-ant-|sk-(?:proj-|svcacct-|admin-)?|(?:sk|rk)_live_|gh[pousr]_|github_pat_|xox[abposr]-|AKIA|ASIA|AIza|fmrl_)/, "");
+  const body = match.replace(/^(?:sk-ant-|sk-(?:proj-|svcacct-|admin-)?|(?:sk|rk)_live_|gh[pousr]_|github_pat_|xox[abposr]-|AKIA|ASIA|AIza|glpat-|npm_|hf_|fmrl_)/, "");
   if (!/[0-9]/.test(body)) return true;
   return new Set(body.replace(/[-_]/g, "")).size <= 2;
 }

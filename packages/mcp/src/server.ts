@@ -9,9 +9,10 @@ import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./
 import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
-import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
+import { documentTitle, firstHeading, looksLikeHTML, readSource, sourceBlock, toHTML, wrapDocument } from "./markdown.js";
 import { openPrivatePage } from "./opener.js";
 import { readProfile, type ProfileRead } from "./profile.js";
+import { publicRefusal } from "./secrets.js";
 import type { PageStore } from "./pages.js";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { VaultSync, type VaultSyncResult } from "./vault-sync.js";
@@ -126,14 +127,15 @@ async function preparePrivate(content: string, format: "html" | "md" | undefined
       throw new Error(`Nothing to ${verb}: the content rendered to an empty page.`);
     }
     name = title || firstHeading(body);
-    html = wrapDocument(body, name);
+    // The source rides along, as the browser's own private pages carry it, so fmrl_get reads back Markdown.
+    html = wrapDocument(body + "\n" + sourceBlock(content), name);
   } else {
     name = title || documentTitle(content);
   }
   const sealed = pageKey ? { envelope: await sealWithKey(html, pageKey), key: pageKey } : await seal(html);
   const envBytes = Buffer.byteLength(sealed.envelope, "utf8");
   if (envBytes > MAX_BYTES) {
-    throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits.`);
+    throw new Error(`The encrypted page is ${envBytes} bytes, over the 2 MiB limit. Encryption adds about a third, so roughly 1.4 MB of HTML fits private. Make it smaller, or, if the person wants this page public, publish it with visibility: "public", where up to 2 MiB fits.`);
   }
   return { body: { content: sealed.envelope, format: "html", encrypted: true }, key: sealed.key, title: name };
 }
@@ -144,6 +146,19 @@ function withFragment(p: PublishResponse, key: string): PublishResponse {
 /** withNotes puts the notices a publish's text carries into its structured answer too. */
 function withNotes<T extends object>(p: T, notices: string[]): T & { notes?: string[] } {
   return notices.length ? { ...p, notes: [...notices] } : p;
+}
+/**
+ * resolveVisibility turns a publish's arguments into private or public.
+ * Private is the default (#30): a page goes out in the clear only when the
+ * caller says so, with visibility "public" or, from older callers, private:
+ * false. Both given and disagreeing is refused rather than guessed.
+ */
+export function resolveVisibility(visibility: "public" | "private" | undefined, priv: boolean | undefined): { private: boolean } | { error: string } {
+  const fromFlag = priv === undefined ? undefined : priv ? "private" : "public";
+  if (visibility !== undefined && fromFlag !== undefined && visibility !== fromFlag) {
+    return { error: `visibility "${visibility}" and private: ${priv} disagree. Pass visibility alone. Nothing was published.` };
+  }
+  return { private: (visibility ?? fromFlag ?? "private") === "private" };
 }
 
 function privateText(p: PublishResponse): string {
@@ -557,13 +572,21 @@ export function createServer(deps: ServerDeps): McpServer {
 
   /** publishOrSeal is the shared branch behind fmrl_publish and fmrl_publish_file: publish as given, or seal first when private was asked for. */
   const publishOrSeal = async (
-    content: string, format: "html" | "md" | undefined, title: string | undefined, priv: boolean | undefined,
+    content: string, format: "html" | "md" | undefined, title: string | undefined, visibility: "public" | "private" | undefined, privFlag: boolean | undefined,
   ): Promise<ToolResult> => {
     // Refuse blank content before any request, on every path: the server
     // turns empty content away too, but a local message is clearer than a
     // 400, and a private page would otherwise seal and publish a blank page.
     if (content.trim() === "") {
       return fail("Nothing to publish: the content is empty.");
+    }
+    const v = resolveVisibility(visibility, privFlag);
+    if ("error" in v) return fail(v.error);
+    const priv = v.private;
+    // A public page is read by anyone with the link: content that plainly carries a credential stays here.
+    if (!priv) {
+      const refused = publicRefusal(content, "publish", title);
+      if (refused) return fail(refused);
     }
     const notices: string[] = [];
     const render = (p: PublishResponse, privatePage: boolean): string =>
@@ -596,33 +619,35 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_publish",
     {
       title: "Publish a page to fmrl.site",
-      description: "Publish HTML or Markdown as a page on fmrl.site and get its link. The page lasts seven days unless someone keeps it from the page itself. Pass private: true to encrypt it here first. Only call this when the user asked to share, send, or get a link for something.",
+      description: "Publish HTML or Markdown as a page on fmrl.site and get its link. Pages are private by default: encrypted here first, the key in the link after #p=. Pass visibility: \"public\" only when the person asked for a public page; a public page lasts seven days unless someone keeps it from the page itself. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. Only call this when the user asked to share, send, or get a link for something.",
       // Strict: an unknown argument (the passphrase of older clients, say) is
       // refused rather than dropped, so nothing meant to be private publishes in the clear.
       inputSchema: z.object({
-        content: z.string().min(1).describe("The HTML or Markdown to publish (2 MiB at most)."),
+        content: z.string().min(1).describe("The HTML or Markdown to publish: 2 MiB at most public; private pages are encrypted first, so roughly 1.4 MB fits."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it."),
         title: z.string().optional().describe("Page title; the first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
-        private: z.boolean().optional().describe("Encrypt the page here before upload; the returned link carries the key after #p=. The page has no title or preview on fmrl.site and cannot be recovered without the link."),
+        visibility: z.enum(["private", "public"]).optional().describe("private (the default): encrypted here before upload; the link carries the key after #p=, the page has no title or preview on fmrl.site, cannot be kept past seven days, and cannot be recovered without the link. public: anyone with the link can read it, it shows a title and preview, and it can be kept. Pass public only when the person asked for a public page, after showing them what will be shared."),
+        private: z.boolean().optional().describe("Older form of visibility: true is private, false is public. Prefer visibility."),
       }).strict(),
       outputSchema: publishOutput,
     },
-    async ({ content, format, title, private: priv }) => publishOrSeal(content, format, title, priv),
+    async ({ content, format, title, visibility, private: priv }) => publishOrSeal(content, format, title, visibility, priv),
   );
 
   server.registerTool(
     "fmrl_publish_file",
     {
       title: "Publish a file to fmrl.site",
-      description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file (2 MiB at most) as a page on fmrl.site and get its link. Pass private: true to encrypt it here first. Only call this when the user asked to share the file.",
+      description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file as a page on fmrl.site (2 MiB at most public, roughly 1.4 MB private, since encryption adds about a third) and get its link. Private by default, encrypted here first; pass visibility: \"public\" only when the person asked for a public page. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. Only call this when the user asked to share the file.",
       inputSchema: z.object({
         path: z.string().min(1).describe("Absolute path to the file (a leading ~ is expanded)."),
         title: z.string().optional().describe("Page title; the file's first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
-        private: z.boolean().optional().describe("Encrypt the page here before upload; the returned link carries the key after #p=. The page has no title or preview on fmrl.site and cannot be recovered without the link."),
+        visibility: z.enum(["private", "public"]).optional().describe("private (the default): encrypted here before upload; the link carries the key after #p=, the page has no title or preview on fmrl.site, cannot be kept past seven days, and cannot be recovered without the link. public: anyone with the link can read it, it shows a title and preview, and it can be kept. Pass public only when the person asked for a public page, after showing them what will be shared."),
+        private: z.boolean().optional().describe("Older form of visibility: true is private, false is public. Prefer visibility."),
       }).strict(),
       outputSchema: publishOutput,
     },
-    async ({ path: p, title, private: priv }) => {
+    async ({ path: p, title, visibility, private: priv }) => {
       let format: "html" | "md";
       let content: string;
       try {
@@ -648,7 +673,7 @@ export function createServer(deps: ServerDeps): McpServer {
       } catch (e) {
         return fail(errorText(e));
       }
-      return publishOrSeal(content, format, title, priv);
+      return publishOrSeal(content, format, title, visibility, priv);
     },
   );
 
@@ -693,7 +718,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
-        content: z.string().min(1).describe("The page's new HTML or Markdown (2 MiB at most)."),
+        content: z.string().min(1).describe("The page's new HTML or Markdown: 2 MiB at most on a public page, roughly 1.4 MB on a private one."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it. A private page is always sent as HTML, rendered here from Markdown."),
         title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
         base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),
@@ -714,6 +739,10 @@ export function createServer(deps: ServerDeps): McpServer {
             log?.(`fmrl-mcp: couldn't read the page store: ${errorText(e)}`);
           }
           const d = await api.get(k, ref.id);
+          if (!d.private) {
+            const refused = publicRefusal(content, "save", title);
+            if (refused) throw new Error(refused);
+          }
           let body: Parameters<FmrlApi["update"]>[2] = { content, format, title, base_rev };
           let pageKey: string | undefined;
           if (d.private) {

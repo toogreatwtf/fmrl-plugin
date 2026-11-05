@@ -78,7 +78,7 @@ it("remembers a published /c/ recovery and never describes it as deletion author
   const p = await original(key,body);
   return { ...p, manage_url:`https://fmrl.test/c/${token}`, attach_url:"https://fmrl.test/attach/abc" };
  });
- const r = await call("fmrl_publish", { content:"hello" });
+ const r = await call("fmrl_publish", { visibility: "public", content:"hello" });
  expect(r.isError).not.toBe(true);
  const p = r.structuredContent as { id:string };
  expect(await pages.get(p.id)).toMatchObject({ manage:token });
@@ -97,7 +97,7 @@ it.each(["mismatched", "rotated", "spent"])("refused %s recovery is not remember
 
 it("publish replay retains its recovery and a previously supplied courtesy hint", async () => {
  vi.spyOn(api,"publish").mockResolvedValue({ id:"abcdefghjkmn", url:"https://fmrl.test/abcdefghjkmn", raw_url:"https://fmrl.test/abcdefghjkmn/raw", manage_url:`https://fmrl.test/c/${token}`, expires_at:"2026-11-01T00:00:00Z", status:"live", recovery:"usable" });
- const r = await call("fmrl_publish", { content:"replay" });
+ const r = await call("fmrl_publish", { visibility: "public", content:"replay" });
  expect(r.isError).not.toBe(true);
  expect((r.structuredContent as any).attach_url).toContain("#r=");
  expect(JSON.stringify(r.content)).toContain("Attach this agent");
@@ -114,7 +114,7 @@ it("whoami declares separate optional legacy linking and identity attachment fie
 const wire = JSON.parse(readFileSync(new URL("./fixtures/identity-wire.json", import.meta.url), "utf8"));
 it("strict publish accepts captured real-server recovery", async () => {
  vi.spyOn(api,"publish").mockResolvedValue(wire.publish);
- expect((await call("fmrl_publish", {content:"fixture"})).structuredContent).toMatchObject(wire.publish);
+ expect((await call("fmrl_publish", {visibility:"public",content:"fixture"})).structuredContent).toMatchObject(wire.publish);
 });
 it.each([wire.revision.editor, {kind:"human",label:"snapshot label",display_name:"Current Person"}])("strict get and inbox accept identity editor %j", async editor => {
  const id = wire.publish.id;
@@ -130,14 +130,14 @@ it.each([wire.revision.editor, {kind:"human",label:"snapshot label",display_name
 });
 it("strict publish projects future fields out of its closed schema", async () => {
  vi.spyOn(api,"publish").mockResolvedValue({...wire.publish,unexpected:"must reject"});
- const r = await call("fmrl_publish", {content:"fixture"});
+ const r = await call("fmrl_publish", {visibility:"public",content:"fixture"});
  expect(r.isError).not.toBe(true);
  expect(r.structuredContent).not.toHaveProperty("unexpected");
 });
 
 it.each(["usable", "spent", "revoked"])("declares recovery state %s and nullable expiry", async recovery => {
  vi.spyOn(api,"publish").mockResolvedValue({...wire.publish,recovery,expires_at:null});
- expect((await call("fmrl_publish",{content:"fixture"})).structuredContent).toMatchObject({recovery,expires_at:null});
+ expect((await call("fmrl_publish",{visibility:"public",content:"fixture"})).structuredContent).toMatchObject({recovery,expires_at:null});
 });
 it("strict inbox projects future editor fields out of its closed schema", async () => {
  const editor = {...wire.revision.editor,unexpected:"must reject"};

@@ -18,6 +18,8 @@ Use this when the user asks to share, send, hand off, publish, or get a link for
 
 Call `fmrl_get` with the whole page link — the part after `#` included — to read a page someone handed you. Editing a page with `fmrl_edit` watches it, so revisions other editors make show up in `fmrl_inbox`; `fmrl_watch` is for a page you read and do not edit.
 
+For a large page, or one you will change only in part, keep the content out of the conversation: call `fmrl_get` with `out` set to a file path, edit that file, then save it with `fmrl_edit`'s `content_file` and the `base_rev` you read. Change only the part you were asked to; the rest of the file goes back exactly as it came.
+
 For an edit, pass the page ID or URL as `id` and the recovery token or `/c/<token>` link separately as `manage_token`. Ask the sender for both: a recovery link contains no page ID. Never open or redeem it to discover the page. A manager may edit but cannot delete.
 
 ## Composing canvas links
@@ -43,6 +45,8 @@ This guidance ships with the plugin's share skill. Updating the `fmrl-mcp` npm p
 ## Starting a handoff canvas
 
 When you are about to publish a canvas that hands work to someone else to review, whether an agent or a person, offer the `handoff-review` starter before writing your own shape. It is `handoff-review.md` beside this skill (people can read it at https://fmrl.site/h4ndrv): eight sections, each with what it is for, and a `fmrl-profile` block that records the shape. Start from its Markdown, keep the block, replace the opening paragraph, and fill each section; evidence goes in a results table, never a transcript. If you change the shape later, change the block in a revision of your own and say so in that revision's Header. `fmrl_get` returns any page's profile and which heading holds each section, so check a canvas you are handed against it.
+
+After publishing or editing a canvas that should carry a profile, read it back with `fmrl_get` before you hand it over. Check that the result has a `profile` (not a `profile_error`) and that `missing` names no required section. Keep the block a `fmrl-profile` fence exactly as the starter writes it, and publish the canvas as Markdown so the fence becomes the inert profile script; the same block rendered by hand into HTML, as a `<code class="language-fmrl-profile">` block, is only text and carries no profile. If the read-back shows no profile, a profile error or a missing required section, fix it in a new revision of the same canvas with `fmrl_edit` and the `base_rev` you read (a private canvas stays private under its key), then read it back again. If `fmrl_get` returns no profile fields at all, say that this connector does not report profiles rather than guessing the canvas is right.
 
 ## The sweep
 

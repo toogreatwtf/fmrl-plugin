@@ -1,4 +1,4 @@
-import { open as fsOpen, stat as fsStat } from "node:fs/promises";
+import { open as fsOpen, rename, stat as fsStat, unlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ApiError, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
-import { MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
+import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, toHTML, wrapDocument } from "./markdown.js";
@@ -141,6 +141,36 @@ async function preparePrivate(content: string, format: "html" | "md" | undefined
 function withFragment(p: PublishResponse, key: string): PublishResponse {
   return { ...p, url: `${p.url}#p=${key}` };
 }
+/** expandPath expands a leading ~ and resolves p to an absolute path. */
+function expandPath(p: string): string {
+  return path.resolve(p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
+}
+
+/**
+ * writeContentFile writes a page's content to out for fmrl_get: through a
+ * sibling temp file renamed into place, mode 0600 since a private page's
+ * content is as private here as on the page. A directory, or anything but a
+ * regular file, at out is refused rather than replaced.
+ */
+async function writeContentFile(out: string, content: string): Promise<{ path: string; bytes: number }> {
+  const resolved = expandPath(out);
+  try {
+    const info = await fsStat(resolved);
+    if (!info.isFile()) throw new Error(`${resolved} exists and is not a regular file; nothing was written.`);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  const tmp = `${resolved}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tmp, content, { mode: 0o600 });
+    await rename(tmp, resolved);
+  } catch (e) {
+    await unlink(tmp).catch(() => undefined);
+    throw e;
+  }
+  return { path: resolved, bytes: Buffer.byteLength(content) };
+}
+
 function privateText(p: PublishResponse): string {
   return [...publishTextLines(p, SEVEN_DAYS_PRIVATE), PRIVATE_LINE].join("\n");
 }
@@ -223,6 +253,8 @@ function readText(r: PageRead, at: string): string {
   return [meta, `Revision ${r.rev} of ${r.latest_rev}, edited by ${editorText(r.editor)} at ${at}.`, ...profileText(r), ...rest, "", r.content ?? r.content_note ?? ""].join("\n");
 }
 
+export const EDIT_ONE_SOURCE = "Give the new content as content or as content_file, one of the two. Nothing was saved.";
+export const CONTENT_WRITTEN = (file: string, bytes: number, format: string) => `Content (${format}, ${bytes} bytes) written to ${file}, not shown here. Edit that file and save it with fmrl_edit's content_file.`;
 export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
 export const MANAGE_HINT = (origin: string, id: string) => `To edit, supply ${origin}/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`;
 export const CONFLICT = (rev: number) => `Revision ${rev} is the latest; read it with fmrl_get and edit from there.`;
@@ -333,6 +365,7 @@ const readOutput = {
   rev: z.number(), latest_rev: z.number(),
   editor: editorOutput,
   content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
+  content_file: z.object({ path: z.string(), bytes: z.number() }).strict().optional(),
   profile: z.object({
     profile: z.string(), v: z.number(),
     sections: z.array(z.object({ id: z.string(), purpose: z.string(), by: z.string(), required: z.boolean() })),
@@ -375,6 +408,34 @@ export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
+
+  /** readTextFile reads a page's content from a file: 2 MiB at most, UTF-8, its format from the extension. tool names the caller in the refusal of an unknown extension. */
+  const readTextFile = async (p: string, tool: string): Promise<{ content: string; format: "html" | "md"; resolved: string }> => {
+    const resolved = expandPath(p);
+    let format: "html" | "md";
+    try {
+      format = formatForPath(resolved);
+    } catch (e) {
+      if (tool === "fmrl_publish_file") throw e;
+      throw new Error(`${tool} reads ${ACCEPTED_EXTENSIONS.join(", ")} files; ${path.basename(resolved) || p} is not one.`);
+    }
+    const info = await stat(resolved);
+    if (info.size > MAX_BYTES) throw new Error(TOO_LARGE_MESSAGE);
+    const buf = Buffer.alloc(MAX_BYTES + 1);
+    let bytesRead: number;
+    const handle = await open(resolved, "r");
+    try {
+      ({ bytesRead } = await handle.read(buf, 0, MAX_BYTES + 1, 0));
+    } finally {
+      await handle.close();
+    }
+    if (bytesRead > MAX_BYTES) throw new Error(TOO_LARGE_MESSAGE);
+    try {
+      return { content: new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, bytesRead)), format, resolved };
+    } catch {
+      throw new Error("That file isn't UTF-8 text.");
+    }
+  };
   // Read once at startup: a plugin update takes a restart to load anyway.
   const plugin = pluginStatus(deps.pluginRoot, VERSION);
   // The facts reach fmrl_whoami whenever they are known; the offer only on
@@ -577,32 +638,13 @@ export function createServer(deps: ServerDeps): McpServer {
       outputSchema: publishOutput,
     },
     async ({ path: p, title, private: priv }) => {
-      let format: "html" | "md";
-      let content: string;
+      let file: { content: string; format: "html" | "md" };
       try {
-        const expanded = p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p;
-        const resolved = path.resolve(expanded);
-        format = formatForPath(resolved);
-        const info = await stat(resolved);
-        if (info.size > MAX_BYTES) return fail(TOO_LARGE_MESSAGE);
-        const buf = Buffer.alloc(MAX_BYTES + 1);
-        let bytesRead: number;
-        const handle = await open(resolved, "r");
-        try {
-          ({ bytesRead } = await handle.read(buf, 0, MAX_BYTES + 1, 0));
-        } finally {
-          await handle.close();
-        }
-        if (bytesRead > MAX_BYTES) return fail(TOO_LARGE_MESSAGE);
-        try {
-          content = new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, bytesRead));
-        } catch {
-          return fail("That file isn't UTF-8 text.");
-        }
+        file = await readTextFile(p, "fmrl_publish_file");
       } catch (e) {
         return fail(errorText(e));
       }
-      return publishOrSeal(content, format, title, priv);
+      return publishOrSeal(file.content, file.format, title, priv);
     },
   );
 
@@ -614,10 +656,11 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
+        out: z.string().min(1).optional().describe("Write the content, as it reads after opening, to this file (absolute; a leading ~ is expanded) instead of returning it: for a large page, or one you will edit with fmrl_edit's content_file. Written with mode 0600; an existing regular file is replaced."),
       },
       outputSchema: readOutput,
     },
-    async ({ id, rev }) => {
+    async ({ id, rev, out }) => {
       let ref: ReturnType<typeof parsePageRef>;
       try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       let at = "";
@@ -629,12 +672,20 @@ export function createServer(deps: ServerDeps): McpServer {
         const read = (row: PageRow): PageRead => ({ ...row, rev: r.rev, latest_rev: latest, editor: project(editorOutput, r.editor) });
         // The profile is read here, from the content as it reads after opening: the server never sees a private page's.
         const withContent = (row: PageRead, content: string, content_format: "html" | "md"): PageRead => ({ ...row, content, content_format, ...readProfile(content, content_format) });
-        if (!d.private) return withContent(read(pageRow(d, undefined)), r.content, r.format);
-        const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
-        if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
-        const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
-        const src = readSource(opened.html);
-        return src ? withContent(row, src.source, src.format) : withContent(row, opened.html, "html");
+        let v: PageRead;
+        if (!d.private) v = withContent(read(pageRow(d, undefined)), r.content, r.format);
+        else {
+          const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+          if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
+          const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
+          const src = readSource(opened.html);
+          v = src ? withContent(row, src.source, src.format) : withContent(row, opened.html, "html");
+        }
+        if (out === undefined || v.content === undefined) return v;
+        // The content goes to disk, not through the model: the answer keeps everything else, the profile included.
+        const written = await writeContentFile(out, v.content);
+        const { content: ignoredContent, ...rest } = v;
+        return { ...rest, content_file: written, content_note: CONTENT_WRITTEN(written.path, written.bytes, v.content_format ?? "html") };
       }, (v) => readText(v, at));
     },
   );
@@ -647,17 +698,30 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
-        content: z.string().min(1).describe("The page's new HTML or Markdown (2 MiB at most)."),
-        format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it. A private page is always sent as HTML, rendered here from Markdown."),
+        content: z.string().min(1).optional().describe("The page's new HTML or Markdown (2 MiB at most). Give this or content_file, not both."),
+        content_file: z.string().min(1).optional().describe("Read the new content from this file instead (absolute; a leading ~ is expanded; .html, .htm, .md, .markdown, .mdx or .txt, 2 MiB at most), so a large page never passes through the model: read it with fmrl_get's out, edit the file, save it from there."),
+        format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it, or, with content_file, to take it from the extension. A private page is always sent as HTML, rendered here from Markdown."),
         title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
         base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),
       },
       outputSchema: editOutput,
     },
-    async ({ id, content, format, title, base_rev, manage_token }) => {
+    async ({ id, content: given, content_file, format: givenFormat, title, base_rev, manage_token }) => {
       let ref: ReturnType<typeof parsePageRef>;
       try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       try { if (manage_token !== undefined) ref.manage = parseRecoveryToken(manage_token); } catch (e) { return fail(errorText(e)); }
+      if ((given === undefined) === (content_file === undefined)) return fail(EDIT_ONE_SOURCE);
+      let content: string;
+      let format = givenFormat;
+      if (content_file !== undefined) {
+        try {
+          const file = await readTextFile(content_file, "fmrl_edit's content_file");
+          content = file.content;
+          format = givenFormat ?? file.format;
+        } catch (e) {
+          return fail(errorText(e));
+        }
+      } else content = given!;
       if (content.trim() === "") return fail("Nothing to save: the content is empty.");
       try {
         const v = await withKey(async (k): Promise<EditResult> => {

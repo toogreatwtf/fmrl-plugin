@@ -105,10 +105,15 @@ function serverLine(s: StatusSnapshot): string {
   return `fmrl-mcp ${s.server}, up ${upFor(s.upMs)}, launched by ${by}${where ? ` (${where})` : ""}.`;
 }
 
+/** newerCachedLine says a newer plugin is installed than the one this session started on, and how to load it. Shared by /fmrl:status and fmrl_whoami. */
+export function newerCachedLine(newer: string, installed: string, surface: PluginSurface): string {
+  return `Plugin ${newer} is already installed, but this session started on ${installed}: ${restart(surface)} to load it.`;
+}
+
 function pluginLine(s: StatusSnapshot): string {
   const line = s.pluginLine ?? (s.pluginRoot ? `Plugin: manifest unreadable under ${s.pluginRoot}.` : NO_PLUGIN_LINE);
-  if (!s.newerCached) return line;
-  return `${line} Plugin ${s.newerCached} is already installed, but this session started on ${s.installed}: ${restart(s.surface)} to load it.`;
+  if (!s.newerCached || !s.installed) return line;
+  return `${line} ${newerCachedLine(s.newerCached, s.installed, s.surface)}`;
 }
 
 function keyLine(s: StatusSnapshot): string {

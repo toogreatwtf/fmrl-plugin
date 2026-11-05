@@ -18,7 +18,7 @@ import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { VaultSync, type VaultSyncResult } from "./vault-sync.js";
 import { pinnedServer, pluginInstructions, pluginLine, pluginStatus, type PluginSurface } from "./plugin.js";
 import { latestOnNpm as latestOnNpmDefault } from "./registry.js";
-import { newestCachedPlugin, statusText, type ApiCheck, type NpmCheck, type StatusSnapshot } from "./status.js";
+import { newerCachedLine, newestCachedPlugin, statusText, type ApiCheck, type NpmCheck, type StatusSnapshot } from "./status.js";
 
 // The version the server reports to MCP clients is the package's, read at
 // runtime, so a release bump in package.json cannot leave this behind.
@@ -141,6 +141,10 @@ async function preparePrivate(content: string, format: "html" | "md" | undefined
 
 function withFragment(p: PublishResponse, key: string): PublishResponse {
   return { ...p, url: `${p.url}#p=${key}` };
+}
+/** withNotes puts the notices a publish's text carries into its structured answer too. */
+function withNotes<T extends object>(p: T, notices: string[]): T & { notes?: string[] } {
+  return notices.length ? { ...p, notes: [...notices] } : p;
 }
 /**
  * resolveVisibility turns a publish's arguments into private or public.
@@ -273,7 +277,7 @@ function listText(rows: PageRow[]): string {
   return [`${count} on this key, newest first${rows.length >= 50 ? " (the newest 50)" : ""}:`, ...rows.map(listLine)].join("\n");
 }
 export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
-function meText(m: MeResponse, ringLine: string, plugin: string | undefined): string {
+function meText(m: MeResponse, ringLine: string, plugin: string | undefined, notes: string[] = []): string {
   const q = m.quota.publishes;
   const linked = m.attached_at !== undefined
     ? m.attached_at ? `This agent attached to its identity on ${m.attached_at}.` : "This agent is not attached to an identity."
@@ -286,7 +290,7 @@ function meText(m: MeResponse, ringLine: string, plugin: string | undefined): st
   if (m.attach_url) lines.push(LINK_HINT(m.attach_url));
   else if (m.link_url && m.attached_at === undefined) lines.push(`Link a browser to this key: open ${m.link_url} in your browser.${ringCarried(m.link_url)}`);
   else if (m.attached_at === null) lines.push("No attach link is available here. A previously supplied link may still be live; this tool does not replace it.");
-  return [...lines, ringLine, ...(plugin ? [plugin] : [])].join("\n");
+  return [...lines, ...(ringLine ? [ringLine] : []), ...(plugin ? [plugin] : []), ...notes].join("\n");
 }
 
 /** revokedText says a key was revoked, and how this machine gets a new one: a stored key is replaced by the next tool that needs one; FMRL_API_KEY never is, and without it the file's key, if any, is used. */
@@ -336,6 +340,8 @@ function inboxText(items: InboxRow[]): string {
 const publishOutput = {
   id: z.string(), url: z.string(), raw_url: z.string(), manage_url: z.string(), expires_at: z.string().nullable(), status: z.string(), recovery: z.enum(["usable", "spent", "revoked"]).optional(),
   attach_url: z.string().optional(), link_url: z.string().optional(),
+  // The notices the text carries after the link (a first vault pin, say), word for word, so a client that reads only this half misses none.
+  notes: z.array(z.string()).optional(),
 };
 const pageOutput = {
   id: z.string(), url: z.string(), status: z.string(), format: z.string(), size: z.number(),
@@ -382,6 +388,28 @@ function project<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> 
   if (!parsed.success) throw new Error("The server response has invalid known fields; no write was retried.");
   return parsed.data;
 }
+/**
+ * whoamiOutput is fmrl_whoami's structured answer: the key's facts from
+ * /me, then what only this machine knows. Claude Code hands the model the
+ * structured half when there is one, so every line the text carries has a
+ * place here too: where the ring is kept, the installed plugin, and the
+ * vault notices (notes), word for word.
+ */
+const whoamiOutput = {
+  ...meOutput,
+  ring: z.object({
+    kept_in: z.enum(["file", "env", "unsaved"]).describe("file: the key ring is in the credentials file; env: FMRL_RING supplies it; unsaved: it could not be written."),
+    file: z.string().optional(),
+    note: z.string(),
+  }).strict().optional(),
+  plugin: z.object({
+    installed: z.string(), server: z.string(), stale: z.boolean(),
+    auto_update: z.enum(["on", "off", "not_run"]).optional().describe("Claude Code CLI only: whether its auto-update pass keeps this plugin current."),
+    newer_installed: z.string().optional().describe("A newer plugin version already installed beside the one this session started on: a restart loads it."),
+    note: z.string(),
+  }).strict().optional(),
+  notes: z.array(z.string()).optional(),
+};
 const redeemOutput = { prefix: z.string(), file: z.string(), replaced: z.string().optional() };
 const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string(), replaced: z.string().optional() };
 
@@ -399,6 +427,23 @@ export function createServer(deps: ServerDeps): McpServer {
 
   const log = deps.log;
   const vault = new VaultSync({ api, keys, log });
+
+  /** whoamiPlugin is the installed plugin's state for fmrl_whoami, as facts and as the line the text carries; undefined with no readable manifest. */
+  const whoamiPlugin = async () => {
+    const line = pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface);
+    if (!plugin || !line) return undefined;
+    const pass = deps.autoUpdatePass;
+    const auto_update: "on" | "off" | "not_run" | undefined = deps.pluginSurface !== "claude-cli"
+      ? undefined
+      : pass !== undefined && !pass.runs ? "not_run" : deps.autoUpdate === undefined ? undefined : deps.autoUpdate.on ? "on" : "off";
+    const newer = deps.pluginRoot ? await newestCachedPlugin(deps.pluginRoot, plugin.installed) : undefined;
+    return {
+      installed: plugin.installed, server: plugin.server, stale: plugin.stale,
+      ...(auto_update ? { auto_update } : {}),
+      ...(newer ? { newer_installed: newer } : {}),
+      note: newer ? `${line} ${newerCachedLine(newer, plugin.installed, deps.pluginSurface ?? "unknown")}` : line,
+    };
+  };
 
   /** ringOrNothing is keys.ringFor for a caller that must not fail on it: a page goes out without a sealed record, and a link without a ring, rather than not at all. */
   const ringOrNothing = async (k: string): Promise<string | undefined> => {
@@ -549,7 +594,7 @@ export function createServer(deps: ServerDeps): McpServer {
       return run<PublishResponse & Record<string, unknown>>(async (k) => {
         const p = await publishAs(k, { content, format, title }, notices);
         await rememberRecovery(p);
-        return p as PublishResponse & Record<string, unknown>;
+        return withNotes(p, notices) as PublishResponse & Record<string, unknown>;
       }, p => render(p, false));
     }
     let prepared: Awaited<ReturnType<typeof preparePrivate>>;
@@ -563,7 +608,7 @@ export function createServer(deps: ServerDeps): McpServer {
         const p = await publishAs(k, prepared.body, notices, { key: prepared.key, title: prepared.title });
         await remember(p.id, { key: prepared.key });
         await rememberRecovery(p);
-        return withFragment(p, prepared.key) as PublishResponse & Record<string, unknown>;
+        return withNotes(withFragment(p, prepared.key), notices) as PublishResponse & Record<string, unknown>;
       },
       p => render(p, true),
     );
@@ -834,23 +879,25 @@ export function createServer(deps: ServerDeps): McpServer {
       title: "This fmrl.site key",
       description: "The key's prefix, how many of this month's free publishes it has used, agent attachment time, an attach link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
       inputSchema: { trust_vault: z.string().optional() },
-      outputSchema: meOutput,
+      outputSchema: whoamiOutput,
     },
     async ({ trust_vault }) => {
       const notices: string[] = [];
-      let ringLine = "";
+      let ring: { kept_in: "file" | "env" | "unsaved"; file?: string; note: string } | undefined;
       let used = "";
       try {
         // A revoked key is reported, not replaced: this is where the user learns of it.
         const m = await withKey(async (k) => {
           used = k;
           const me = await api.me(k);
-          let ring: string | undefined;
+          let ringValue: string | undefined;
           try {
-            ring = await keys.ringFor(k);
-            ringLine = keys.ringFromEnv ? RING_ENV_LINE : RING_FILE_LINE(keys.file);
+            ringValue = await keys.ringFor(k);
+            ring = keys.ringFromEnv
+              ? { kept_in: "env", note: RING_ENV_LINE }
+              : { kept_in: "file", file: keys.file, note: RING_FILE_LINE(keys.file) };
           } catch (e) {
-            ringLine = RING_UNSAVED_LINE(keys.file, errorText(e));
+            ring = { kept_in: "unsaved", file: keys.file, note: RING_UNSAVED_LINE(keys.file, errorText(e)) };
           }
           const synced = await vault.sync(k, { me, trust: trust_vault });
           if (synced.state === "synced") notices.push(SYNCED(synced.fingerprint));
@@ -866,13 +913,20 @@ export function createServer(deps: ServerDeps): McpServer {
             else delete output.attach_url;
           }
           else if (output.attached_at) delete output.attach_url;
-          if (ring) {
-            if (output.attach_url) output.attach_url = withRing(output.attach_url, output.prefix, ring);
-            if (output.link_url) output.link_url = withRing(output.link_url, output.prefix, ring);
+          if (ringValue) {
+            if (output.attach_url) output.attach_url = withRing(output.attach_url, output.prefix, ringValue);
+            if (output.link_url) output.link_url = withRing(output.link_url, output.prefix, ringValue);
           }
           return output;
         }, { replaceRevoked: false });
-        return ok([meText(m, ringLine, pluginLine(plugin, deps.autoUpdate, deps.autoUpdatePass, deps.pluginSurface)), ...notices].join("\n"), m);
+        const pluginState = await whoamiPlugin();
+        const out = {
+          ...m,
+          ...(ring ? { ring } : {}),
+          ...(pluginState ? { plugin: pluginState } : {}),
+          ...(notices.length ? { notes: notices } : {}),
+        };
+        return ok(meText(m, ring?.note ?? "", pluginState?.note, notices), out);
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }

@@ -1,4 +1,5 @@
-import { open as fsOpen, realpath, stat as fsStat, unlink } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { mkdtemp, open as fsOpen, realpath, stat as fsStat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -145,55 +146,39 @@ function withFragment(p: PublishResponse, key: string): PublishResponse {
 function withNotes<T extends object>(p: T, notices: string[]): T & { notes?: string[] } {
   return notices.length ? { ...p, notes: [...notices] } : p;
 }
-/** expandPath expands a leading ~ and resolves p to an absolute path. */
-function expandPath(p: string): string {
-  return path.resolve(p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
-}
-
-/** Files agents load as instructions: content a page carries never lands in one. */
-const INSTRUCTION_FILES = new Set(["claude.md", "claude.local.md", "agents.md", "agent.md", "gemini.md", "copilot-instructions.md"]);
-
 /**
- * outRefusal answers why fmrl_get will not write to target, or undefined when it may: only a page file
- * (an accepted extension), never an agent instruction file, and never inside a hidden folder such as
- * ~/.ssh, ~/.claude or .github, where a file is read as configuration. target is the real path, so a
- * symlinked folder is judged by where it points.
+ * absolutePath expands a leading ~ (and ~\ on Windows) and answers the absolute path p names. A path that is still
+ * relative is refused rather than read against whatever folder the server happens to run in, and so is a Windows
+ * network path, since opening one makes an outbound connection that can carry the user's credentials.
  */
-function outRefusal(target: string): string | undefined {
-  const base = path.basename(target);
-  const ext = path.extname(base).toLowerCase();
-  if (!(ACCEPTED_EXTENSIONS as readonly string[]).includes(ext)) return `out must name a ${ACCEPTED_EXTENSIONS.join(", ")} file; ${base} is not one. Nothing was written.`;
-  if (INSTRUCTION_FILES.has(base.toLowerCase())) return `out may not name ${base}, which agents load as instructions. Nothing was written.`;
-  if (target.split(path.sep).some((seg) => seg.startsWith(".") && seg !== "." && seg !== "..")) return `out may not be a hidden file or sit in a hidden folder (${target}). Choose a new file elsewhere, such as in the system temp folder. Nothing was written.`;
-  return undefined;
+function absolutePath(p: string, what: string): string {
+  const win = process.platform === "win32";
+  let q = p;
+  if (q === "~" || q.startsWith("~/") || (win && q.startsWith("~\\"))) q = path.join(os.homedir(), q.slice(1));
+  if (win && /^(?:\\\\|\/\/)/.test(q)) throw new Error(`${what} may not be a network path. Nothing was read.`);
+  if (!path.isAbsolute(q)) throw new Error(`${what} must be an absolute path (a leading ~ is expanded); ${p} is not.`);
+  return path.resolve(q);
 }
 
 /**
- * writeContentFile writes a page's content to out for fmrl_get, mode 0600 since a private page's content
- * is as private here as on the page. It only ever creates a new page file (see outRefusal), opened with
- * O_CREAT|O_EXCL so an existing file, directory or symlink at out is refused, never replaced or followed.
+ * writeContentFile writes a page's content for fmrl_get's to_file. The caller never picks the place: each call
+ * makes its own new folder in the system temp directory (mkdtemp, mode 0700) and writes one new file there
+ * (O_CREAT|O_EXCL, mode 0600), so page content can't land in a config, instruction or startup file, and a
+ * private page's content is as private on disk as on the page.
  */
-async function writeContentFile(out: string, content: string): Promise<{ path: string; bytes: number }> {
-  const asked = expandPath(out);
-  let dir: string;
-  try { dir = await realpath(path.dirname(asked)); } catch { throw new Error(`The folder for ${asked} does not exist; nothing was written.`); }
-  const resolved = path.join(dir, path.basename(asked));
-  const refused = outRefusal(resolved);
-  if (refused) throw new Error(refused);
-  let fh: Awaited<ReturnType<typeof fsOpen>>;
-  try { fh = await fsOpen(resolved, "wx", 0o600); } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${resolved} already exists; fmrl_get writes only a new file, so choose another name. Nothing was written.`);
-    throw e;
-  }
+async function writeContentFile(id: string, format: "html" | "md", content: string): Promise<{ path: string; bytes: number }> {
+  const dir = await mkdtemp(path.join(await realpath(os.tmpdir()), "fmrl-page-"));
+  const file = path.join(dir, `${id.replace(/[^A-Za-z0-9_-]/g, "") || "page"}.${format}`);
+  const fh = await fsOpen(file, "wx", 0o600);
   try {
     await fh.writeFile(content);
   } catch (e) {
     await fh.close().catch(() => undefined);
-    await unlink(resolved).catch(() => undefined);
+    await unlink(file).catch(() => undefined);
     throw e;
   }
   await fh.close();
-  return { path: resolved, bytes: Buffer.byteLength(content) };
+  return { path: file, bytes: Buffer.byteLength(content) };
 }
 
 function privateText(p: PublishResponse): string {
@@ -458,9 +443,15 @@ export function createServer(deps: ServerDeps): McpServer {
   const open = deps.open ?? fsOpen;
   const stat = deps.stat ?? fsStat;
 
-  /** readTextFile reads a page's content from a file: 2 MiB at most, UTF-8, its format from the extension. tool names the caller in the refusal of an unknown extension. */
+  /**
+   * readTextFile reads a page's content from a file: 2 MiB at most, UTF-8, its format from the extension. The
+   * path must be absolute; a symlink is followed and judged by its target, which must itself be a page file.
+   * The file is opened without blocking and checked to be a regular file on the open handle, so a FIFO or a
+   * device can't hang the call and nothing can be swapped in between the check and the read. tool names the
+   * caller in the refusal of an unknown extension.
+   */
   const readTextFile = async (p: string, tool: string): Promise<{ content: string; format: "html" | "md"; resolved: string }> => {
-    const resolved = expandPath(p);
+    const resolved = await realpath(absolutePath(p, tool));
     let format: "html" | "md";
     try {
       format = formatForPath(resolved);
@@ -472,8 +463,9 @@ export function createServer(deps: ServerDeps): McpServer {
     if (info.size > MAX_BYTES) throw new Error(TOO_LARGE_MESSAGE);
     const buf = Buffer.alloc(MAX_BYTES + 1);
     let bytesRead: number;
-    const handle = await open(resolved, "r");
+    const handle = await open(resolved, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
     try {
+      if (!(await handle.stat()).isFile()) throw new Error(`${resolved} is not a regular file. Nothing was read.`);
       ({ bytesRead } = await handle.read(buf, 0, MAX_BYTES + 1, 0));
     } finally {
       await handle.close();
@@ -722,11 +714,11 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
-        out: z.string().min(1).optional().describe("Write the content, as it reads after opening, to this file (absolute; a leading ~ is expanded) instead of returning it: for a large page, or one you will edit with fmrl_edit's content_file. It must be a new file with a page extension (.md, .html, .txt and the like) outside hidden folders; an existing file is never replaced. Written with mode 0600."),
+        to_file: z.boolean().optional().describe("true: write the content, as it reads after opening, to a new file in a private folder of the system temp directory instead of returning it, and answer with that file's path. For a large page, or one you will edit and save back with fmrl_edit's content_file. The file is readable only by this user."),
       },
       outputSchema: readOutput,
     },
-    async ({ id, rev, out }) => {
+    async ({ id, rev, to_file }) => {
       let ref: ReturnType<typeof parsePageRef>;
       try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       let at = "";
@@ -747,9 +739,9 @@ export function createServer(deps: ServerDeps): McpServer {
           const src = readSource(opened.html);
           v = src ? withContent(row, src.source, src.format) : withContent(row, opened.html, "html");
         }
-        if (out === undefined || v.content === undefined) return v;
+        if (!to_file || v.content === undefined) return v;
         // The content goes to disk, not through the model: the answer keeps everything else, the profile included.
-        const written = await writeContentFile(out, v.content);
+        const written = await writeContentFile(ref.id, v.content_format ?? "html", v.content);
         const { content: ignoredContent, ...rest } = v;
         return { ...rest, content_file: written, content_note: CONTENT_WRITTEN(written.path, written.bytes, v.content_format ?? "html") };
       }, (v) => readText(v, at));
@@ -765,7 +757,7 @@ export function createServer(deps: ServerDeps): McpServer {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
         content: z.string().min(1).optional().describe("The page's new HTML or Markdown (2 MiB at most). Give this or content_file, not both."),
-        content_file: z.string().min(1).optional().describe("Read the new content from this file instead (absolute; a leading ~ is expanded; .html, .htm, .md, .markdown, .mdx or .txt, 2 MiB at most), so a large page never passes through the model: read it with fmrl_get's out, edit the file, save it from there."),
+        content_file: z.string().min(1).optional().describe("Read the new content from this file instead (absolute; a leading ~ is expanded; .html, .htm, .md, .markdown, .mdx or .txt, 2 MiB at most), so a large page never passes through the model: read it with fmrl_get's to_file, edit the file, save it from there."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it, or, with content_file, to take it from the extension. A private page is always sent as HTML, rendered here from Markdown."),
         title: z.string().optional().describe("Page title; for a private page it titles the encrypted document only."),
         base_rev: z.number().int().min(1).optional().describe("The revision you read and are editing from; the edit fails if someone saved a newer one."),

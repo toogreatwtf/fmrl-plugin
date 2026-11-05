@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, type Stats } from "node:fs";
 import { createECDH } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, realpath, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
@@ -975,18 +976,22 @@ describe("fmrl_edit", () => {
     const p = priv.structuredContent as { id: string; url: string; manage_url: string };
     expect(await pagesAt().get(p.id)).toEqual({ key: p.url.split("#p=")[1], manage: manageTok(p.manage_url) });
   });
-  it("fmrl_get's out writes the content to disk and fmrl_edit's content_file saves it back, never through the model (#33)", async () => {
+  it("fmrl_get's to_file writes the content to disk and fmrl_edit's content_file saves it back, never through the model (#33)", async () => {
     const big = "# Canvas\n\n<!-- section:a -->\nold\n<!-- /section:a -->\n\n" + "filler line\n".repeat(2000);
     const pub = await call("fmrl_publish", { content: big, format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
-    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
-    const out = path.join(work, "canvas.md");
 
-    const got = await call("fmrl_get", { id, out });
+    const got = await call("fmrl_get", { id, to_file: true });
     expect(got.isError).toBeFalsy();
-    const g = got.structuredContent as Record<string, unknown>;
+    const g = got.structuredContent as Record<string, unknown> & { content_file: { path: string; bytes: number } };
     expect(g).not.toHaveProperty("content");
-    expect(g).toMatchObject({ rev: 1, content_format: "md", content_file: { path: out, bytes: Buffer.byteLength(big) } });
+    const out = g.content_file.path;
+    // The server picks the place: a new private folder in the temp directory, named for the page.
+    expect(path.dirname(path.dirname(out))).toBe(await realpath(tmpdir()));
+    expect(path.basename(path.dirname(out))).toMatch(/^fmrl-page-/);
+    expect(path.basename(out)).toBe(`${id}.md`);
+    expect((await statFile(path.dirname(out))).mode & 0o777).toBe(0o700);
+    expect(g).toMatchObject({ rev: 1, content_format: "md", content_file: { bytes: Buffer.byteLength(big) } });
     expect(g.content_note).toBe(CONTENT_WRITTEN(out, Buffer.byteLength(big), "md"));
     expect(text(got)).not.toContain("filler line");
     expect(await readFile(out, "utf8")).toBe(big);
@@ -1000,11 +1005,26 @@ describe("fmrl_edit", () => {
     // The format comes from the extension when none is given.
     expect(puts().at(-1)).toMatchObject({ body: { content: edited, format: "md", base_rev: 1 } });
     expect((await call("fmrl_get", { id })).structuredContent).toMatchObject({ rev: 2, content: edited });
+
+    // A second read gets a new file of its own; the first is never touched.
+    const again = (await call("fmrl_get", { id, to_file: true })).structuredContent as { content_file: { path: string } };
+    expect(again.content_file.path).not.toBe(out);
+    expect(await readFile(out, "utf8")).toBe(edited);
+  });
+  it("fmrl_get's to_file takes no path, so a caller can't aim the write", async () => {
+    const pub = await call("fmrl_publish", { content: "ssh-ed25519 AAAA attacker", format: "md" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
+    const target = path.join(work, "authorized_keys");
+    const r = await call("fmrl_get", { id, out: target, path: target, to_file: true });
+    expect(r.isError).toBeFalsy();
+    expect(await readdir(work)).toEqual([]);
+    expect((r.structuredContent as { content_file: { path: string } }).content_file.path).not.toContain(work);
   });
   it("fmrl_edit takes content or content_file, exactly one, and refuses a file it cannot read as a page", async () => {
     const pub = await call("fmrl_publish", { content: "# One", format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
-    const work = await mkdtemp(path.join(tmpdir(), "fmrl-out-"));
+    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
     const md = path.join(work, "page.md");
     await writeFile(md, "# Two");
     for (const args of [{ id }, { id, content: "# Two", content_file: md }]) {
@@ -1017,55 +1037,43 @@ describe("fmrl_edit", () => {
     const wrong = await call("fmrl_edit", { id, content_file: bin });
     expect(wrong.isError).toBe(true);
     expect(text(wrong)).toContain("fmrl_edit's content_file reads .html");
+
+    // A .md name on a link to a file that isn't a page is judged by where it points.
+    const key = path.join(work, "id_ed25519");
+    await writeFile(key, "-----BEGIN OPENSSH PRIVATE KEY-----");
+    await symlink(key, path.join(work, "readme.md"));
+    const linked = await call("fmrl_edit", { id, content_file: path.join(work, "readme.md") });
+    expect(linked.isError).toBe(true);
+    expect(text(linked)).toContain("id_ed25519 is not one");
+
+    // A relative path is refused rather than read against the server's own folder.
+    const relative = await call("fmrl_edit", { id, content_file: "page.md" });
+    expect(relative.isError).toBe(true);
+    expect(text(relative)).toContain("must be an absolute path");
+
+    // A folder named like a page, and a FIFO, are refused at once, not read or waited on.
+    await mkdir(path.join(work, "dir.md"));
+    const dir = await call("fmrl_edit", { id, content_file: path.join(work, "dir.md") });
+    expect(dir.isError).toBe(true);
+    if (process.platform !== "win32") {
+      const fifo = path.join(work, "pipe.md");
+      execFileSync("mkfifo", [fifo]);
+      const started = Date.now();
+      const piped = await call("fmrl_edit", { id, content_file: fifo });
+      expect(piped.isError).toBe(true);
+      expect(text(piped)).toContain("is not a regular file");
+      expect(Date.now() - started).toBeLessThan(2000);
+    }
     expect(puts()).toHaveLength(0);
   });
-  it("fmrl_get's out opens a private page here and writes its source, and refuses to replace a directory", async () => {
+  it("fmrl_get's to_file opens a private page here and writes its source", async () => {
     const priv = await call("fmrl_publish", { content: "# Secret plan\n\nstep one", format: "md", private: true });
     const { url } = priv.structuredContent as { url: string };
-    const work = await mkdtemp(path.join(tmpdir(), "fmrl-out-"));
-    const out = path.join(work, "plan.md");
-    const got = await call("fmrl_get", { id: url, out });
+    const got = await call("fmrl_get", { id: url, to_file: true });
     expect(got.isError).toBeFalsy();
+    const out = (got.structuredContent as { content_file: { path: string } }).content_file.path;
     expect(await readFile(out, "utf8")).toContain("step one");
     expect(text(got)).not.toContain("step one");
-    // The same path again is refused: fmrl_get only ever creates a file.
-    const again = await call("fmrl_get", { id: url, out });
-    expect(again.isError).toBe(true);
-    expect(text(again)).toContain("already exists");
-    expect(await readFile(out, "utf8")).toContain("step one");
-  });
-  it("fmrl_get's out writes only a new page file, never config, instruction files or through a symlink", async () => {
-    const pub = await call("fmrl_publish", { content: "ssh-ed25519 AAAA attacker", format: "md" });
-    const id = (pub.structuredContent as { id: string }).id;
-    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
-    const victim = path.join(work, "notes.md");
-    await writeFile(victim, "mine");
-    await mkdir(path.join(work, ".ssh"));
-    await mkdir(path.join(work, "proj"));
-    await symlink(path.join(work, ".ssh"), path.join(work, "innocent"));
-    await symlink(victim, path.join(work, "link.md"));
-    const cases: [string, string][] = [
-      [work, "is not one"],
-      [path.join(work, ".bashrc"), "is not one"],
-      [path.join(work, ".ssh", "authorized_keys"), "is not one"],
-      [path.join(work, ".ssh", "keys.md"), "hidden"],
-      [path.join(work, "innocent", "keys.md"), "hidden"],
-      [path.join(work, ".notes.md"), "hidden"],
-      [path.join(work, "proj", "CLAUDE.md"), "as instructions"],
-      [path.join(work, "proj", "agents.md"), "as instructions"],
-      [victim, "already exists"],
-      [path.join(work, "link.md"), "already exists"],
-      [path.join(work, "missing", "page.md"), "does not exist"],
-    ];
-    for (const [out, says] of cases) {
-      const r = await call("fmrl_get", { id, out });
-      expect(r.isError, out).toBe(true);
-      expect(text(r), out).toContain(says);
-    }
-    expect(await readFile(victim, "utf8")).toBe("mine");
-    expect(await readdir(path.join(work, ".ssh"))).toEqual([]);
-    expect((await readdir(work)).sort()).toEqual([".ssh", "innocent", "link.md", "notes.md", "proj"]);
-    expect(await readdir(path.join(work, "proj"))).toEqual([]);
   });
   it("the owner edits its own public page, and the next read is the new revision", async () => {
     const pub = await call("fmrl_publish", { content: "# One", format: "md" });

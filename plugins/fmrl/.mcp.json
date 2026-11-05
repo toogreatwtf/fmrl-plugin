@@ -1,5 +1,5 @@
 {
   "mcpServers": {
-    "fmrl": { "command": "npx", "args": ["-y", "fmrl-mcp@0.17.0"] }
+    "fmrl": { "command": "npx", "args": ["-y", "fmrl-mcp@0.17.1"] }
   }
 }

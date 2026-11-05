@@ -5,6 +5,7 @@ import { alreadyOffered, autoUpdatePass, autoUpdateState, claimOffer, shouldOffe
 import { loadConfig } from "./config.js";
 import { credentialsPath } from "./credentials.js";
 import { KeyStore } from "./keys.js";
+import { exitWithClient, processAlive } from "./lifecycle.js";
 import { PageStore, pagesPath } from "./pages.js";
 import { pluginStatus, pluginSurface } from "./plugin.js";
 import { createServer, VERSION } from "./server.js";
@@ -40,6 +41,15 @@ async function main(): Promise<void> {
     nonessentialTrafficOff: Boolean(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC),
   });
   await server.connect(new StdioServerTransport());
+  // A client that crashes or is killed must not leave this server running.
+  exitWithClient({
+    stdin: process.stdin,
+    onSignal: (signal, handler) => process.on(signal, handler),
+    ppid: () => process.ppid,
+    alive: processAlive,
+    exit: (code) => process.exit(code),
+    log,
+  });
 }
 
 main().catch((e) => {

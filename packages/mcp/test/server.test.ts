@@ -1,6 +1,6 @@
 import { readFileSync, type Stats } from "node:fs";
 import { createECDH } from "node:crypto";
-import { mkdir, mkdtemp, readFile, stat as statFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -978,7 +978,7 @@ describe("fmrl_edit", () => {
     const big = "# Canvas\n\n<!-- section:a -->\nold\n<!-- /section:a -->\n\n" + "filler line\n".repeat(2000);
     const pub = await call("fmrl_publish", { content: big, format: "md" });
     const id = (pub.structuredContent as { id: string }).id;
-    const work = await mkdtemp(path.join(tmpdir(), "fmrl-out-"));
+    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
     const out = path.join(work, "canvas.md");
 
     const got = await call("fmrl_get", { id, out });
@@ -1027,9 +1027,44 @@ describe("fmrl_edit", () => {
     expect(got.isError).toBeFalsy();
     expect(await readFile(out, "utf8")).toContain("step one");
     expect(text(got)).not.toContain("step one");
-    const dirOut = await call("fmrl_get", { id: url, out: work });
-    expect(dirOut.isError).toBe(true);
-    expect(text(dirOut)).toContain("is not a regular file");
+    // The same path again is refused: fmrl_get only ever creates a file.
+    const again = await call("fmrl_get", { id: url, out });
+    expect(again.isError).toBe(true);
+    expect(text(again)).toContain("already exists");
+    expect(await readFile(out, "utf8")).toContain("step one");
+  });
+  it("fmrl_get's out writes only a new page file, never config, instruction files or through a symlink", async () => {
+    const pub = await call("fmrl_publish", { content: "ssh-ed25519 AAAA attacker", format: "md" });
+    const id = (pub.structuredContent as { id: string }).id;
+    const work = await realpath(await mkdtemp(path.join(tmpdir(), "fmrl-out-")));
+    const victim = path.join(work, "notes.md");
+    await writeFile(victim, "mine");
+    await mkdir(path.join(work, ".ssh"));
+    await mkdir(path.join(work, "proj"));
+    await symlink(path.join(work, ".ssh"), path.join(work, "innocent"));
+    await symlink(victim, path.join(work, "link.md"));
+    const cases: [string, string][] = [
+      [work, "is not one"],
+      [path.join(work, ".bashrc"), "is not one"],
+      [path.join(work, ".ssh", "authorized_keys"), "is not one"],
+      [path.join(work, ".ssh", "keys.md"), "hidden"],
+      [path.join(work, "innocent", "keys.md"), "hidden"],
+      [path.join(work, ".notes.md"), "hidden"],
+      [path.join(work, "proj", "CLAUDE.md"), "as instructions"],
+      [path.join(work, "proj", "agents.md"), "as instructions"],
+      [victim, "already exists"],
+      [path.join(work, "link.md"), "already exists"],
+      [path.join(work, "missing", "page.md"), "does not exist"],
+    ];
+    for (const [out, says] of cases) {
+      const r = await call("fmrl_get", { id, out });
+      expect(r.isError, out).toBe(true);
+      expect(text(r), out).toContain(says);
+    }
+    expect(await readFile(victim, "utf8")).toBe("mine");
+    expect(await readdir(path.join(work, ".ssh"))).toEqual([]);
+    expect((await readdir(work)).sort()).toEqual([".ssh", "innocent", "link.md", "notes.md", "proj"]);
+    expect(await readdir(path.join(work, "proj"))).toEqual([]);
   });
   it("the owner edits its own public page, and the next read is the new revision", async () => {
     const pub = await call("fmrl_publish", { content: "# One", format: "md" });

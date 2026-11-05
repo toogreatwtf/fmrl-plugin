@@ -1,4 +1,4 @@
-import { open as fsOpen, rename, stat as fsStat, unlink, writeFile } from "node:fs/promises";
+import { open as fsOpen, realpath, stat as fsStat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -146,28 +146,49 @@ function expandPath(p: string): string {
   return path.resolve(p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
 }
 
+/** Files agents load as instructions: content a page carries never lands in one. */
+const INSTRUCTION_FILES = new Set(["claude.md", "claude.local.md", "agents.md", "agent.md", "gemini.md", "copilot-instructions.md"]);
+
 /**
- * writeContentFile writes a page's content to out for fmrl_get: through a
- * sibling temp file renamed into place, mode 0600 since a private page's
- * content is as private here as on the page. A directory, or anything but a
- * regular file, at out is refused rather than replaced.
+ * outRefusal answers why fmrl_get will not write to target, or undefined when it may: only a page file
+ * (an accepted extension), never an agent instruction file, and never inside a hidden folder such as
+ * ~/.ssh, ~/.claude or .github, where a file is read as configuration. target is the real path, so a
+ * symlinked folder is judged by where it points.
+ */
+function outRefusal(target: string): string | undefined {
+  const base = path.basename(target);
+  const ext = path.extname(base).toLowerCase();
+  if (!(ACCEPTED_EXTENSIONS as readonly string[]).includes(ext)) return `out must name a ${ACCEPTED_EXTENSIONS.join(", ")} file; ${base} is not one. Nothing was written.`;
+  if (INSTRUCTION_FILES.has(base.toLowerCase())) return `out may not name ${base}, which agents load as instructions. Nothing was written.`;
+  if (target.split(path.sep).some((seg) => seg.startsWith(".") && seg !== "." && seg !== "..")) return `out may not be a hidden file or sit in a hidden folder (${target}). Choose a new file elsewhere, such as in the system temp folder. Nothing was written.`;
+  return undefined;
+}
+
+/**
+ * writeContentFile writes a page's content to out for fmrl_get, mode 0600 since a private page's content
+ * is as private here as on the page. It only ever creates a new page file (see outRefusal), opened with
+ * O_CREAT|O_EXCL so an existing file, directory or symlink at out is refused, never replaced or followed.
  */
 async function writeContentFile(out: string, content: string): Promise<{ path: string; bytes: number }> {
-  const resolved = expandPath(out);
-  try {
-    const info = await fsStat(resolved);
-    if (!info.isFile()) throw new Error(`${resolved} exists and is not a regular file; nothing was written.`);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-  }
-  const tmp = `${resolved}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await writeFile(tmp, content, { mode: 0o600 });
-    await rename(tmp, resolved);
-  } catch (e) {
-    await unlink(tmp).catch(() => undefined);
+  const asked = expandPath(out);
+  let dir: string;
+  try { dir = await realpath(path.dirname(asked)); } catch { throw new Error(`The folder for ${asked} does not exist; nothing was written.`); }
+  const resolved = path.join(dir, path.basename(asked));
+  const refused = outRefusal(resolved);
+  if (refused) throw new Error(refused);
+  let fh: Awaited<ReturnType<typeof fsOpen>>;
+  try { fh = await fsOpen(resolved, "wx", 0o600); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${resolved} already exists; fmrl_get writes only a new file, so choose another name. Nothing was written.`);
     throw e;
   }
+  try {
+    await fh.writeFile(content);
+  } catch (e) {
+    await fh.close().catch(() => undefined);
+    await unlink(resolved).catch(() => undefined);
+    throw e;
+  }
+  await fh.close();
   return { path: resolved, bytes: Buffer.byteLength(content) };
 }
 
@@ -656,7 +677,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
-        out: z.string().min(1).optional().describe("Write the content, as it reads after opening, to this file (absolute; a leading ~ is expanded) instead of returning it: for a large page, or one you will edit with fmrl_edit's content_file. Written with mode 0600; an existing regular file is replaced."),
+        out: z.string().min(1).optional().describe("Write the content, as it reads after opening, to this file (absolute; a leading ~ is expanded) instead of returning it: for a large page, or one you will edit with fmrl_edit's content_file. It must be a new file with a page extension (.md, .html, .txt and the like) outside hidden folders; an existing file is never replaced. Written with mode 0600."),
       },
       outputSchema: readOutput,
     },

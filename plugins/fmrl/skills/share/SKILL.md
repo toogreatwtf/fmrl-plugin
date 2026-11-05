@@ -18,7 +18,7 @@ Use this when the user asks to share, send, hand off, publish, or get a link for
 
 Call `fmrl_get` with the whole page link — the part after `#` included — to read a page someone handed you. Editing a page with `fmrl_edit` watches it, so revisions other editors make show up in `fmrl_inbox`; `fmrl_watch` is for a page you read and do not edit.
 
-For a large page, or one you will change only in part, keep the content out of the conversation: call `fmrl_get` with `out` set to a file path, edit that file, then save it with `fmrl_edit`'s `content_file` and the `base_rev` you read. Change only the part you were asked to; the rest of the file goes back exactly as it came.
+For a large page, or one you will change only in part, keep the content out of the conversation: call `fmrl_get` with `out` set to a new file with the page's extension (`.md` or `.html`) in the system temp folder or the working folder, never a hidden folder or an existing file, edit that file, then save it with `fmrl_edit`'s `content_file` and the `base_rev` you read. Change only the part you were asked to; the rest of the file goes back exactly as it came.
 
 For an edit, pass the page ID or URL as `id` and the recovery token or `/c/<token>` link separately as `manage_token`. Ask the sender for both: a recovery link contains no page ID. Never open or redeem it to discover the page. A manager may edit but cannot delete.
 

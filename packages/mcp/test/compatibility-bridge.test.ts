@@ -73,7 +73,7 @@ it.each(["legacy","identity"] as const)("strict client matrix: %s publish/whoami
  const a=await agent("a",contract),b=await agent("b",contract);
  const original=a.api.publish.bind(a.api);
  vi.spyOn(a.api,"publish").mockImplementation(async(k,p)=>({...await original(k,p),future_field:"not public"}));
- const p=await a.call("fmrl_publish",{content:"# first",format:"md"});expect(p.isError).not.toBe(true);
+ const p=await a.call("fmrl_publish",{visibility:"public",content:"# first",format:"md"});expect(p.isError).not.toBe(true);
  const page=p.structuredContent as any;expect(page).not.toHaveProperty("future_field");
  const who=await a.call("fmrl_whoami");expect(who.isError).not.toBe(true);
  if(contract==="legacy") {
@@ -90,7 +90,7 @@ it.each(["legacy","identity"] as const)("strict client matrix: %s publish/whoami
 it.each(["spent","revoked",undefined])("does not advertise or remember new recovery with state %s",async recovery=>{
  const a=await agent("a");
  vi.spyOn(a.api,"publish").mockResolvedValue({id:"abcdefghjkmn",url:"https://fmrl.test/abcdefghjkmn",raw_url:"https://fmrl.test/abcdefghjkmn/raw",manage_url:`https://fmrl.test/c/${token}`,expires_at:null,status:"live",recovery} as any);
- const r=await a.call("fmrl_publish",{content:"hello"});expect(r.isError).not.toBe(true);
+ const r=await a.call("fmrl_publish",{visibility:"public",content:"hello"});expect(r.isError).not.toBe(true);
  expect(await a.pages.get("abcdefghjkmn")).not.toHaveProperty("manage");
  expect(text(r)).not.toContain("grants management");
  expect(text(r)).toContain(recovery??"state is not reported");
@@ -125,10 +125,10 @@ it.each(["spent","revoked"])("unusable %s recovery clears only the matching stor
  const a=await agent("a");const id="abcdefghjkmn",key="B".repeat(43);
  await a.pages.remember(id,{manage:token,key});
  vi.spyOn(a.api,"publish").mockResolvedValue({id,url:`https://fmrl.test/${id}`,raw_url:`https://fmrl.test/${id}/raw`,manage_url:`https://fmrl.test/c/${token}`,expires_at:null,status:"live",recovery} as any);
- expect((await a.call("fmrl_publish",{content:"replay"})).isError).not.toBe(true);
+ expect((await a.call("fmrl_publish",{visibility:"public",content:"replay"})).isError).not.toBe(true);
  expect(await a.pages.get(id)).toEqual({key});
  await a.pages.remember(id,{manage:"C".repeat(22)});
- await a.call("fmrl_publish",{content:"replay"});
+ await a.call("fmrl_publish",{visibility:"public",content:"replay"});
  expect(await a.pages.get(id)).toEqual({key,manage:"C".repeat(22)});
 });
 it.each(["legacy","identity"] as const)("strict %s private publication keeps original page key and decrypts after edit",async contract=>{
@@ -153,7 +153,7 @@ it.each(["fmrl_get","fmrl_inbox","fmrl_whoami"])("known malformed fields still f
 it("a timeout after server acceptance performs exactly one publish and warns against retry",async()=>{
  const a=await agent("a");const publish=a.api.publish.bind(a.api);
  vi.spyOn(a.api,"publish").mockImplementation(async(k,b)=>{await publish(k,b);throw new (await import("../src/api.js")).ApiError(0,"timeout","timeout");});
- const r=await a.call("fmrl_publish",{content:"# accepted"});expect(r.isError).toBe(true);expect(text(r)).toContain("Do not republish");
+ const r=await a.call("fmrl_publish",{visibility:"public",content:"# accepted"});expect(r.isError).toBe(true);expect(text(r)).toContain("Do not republish");
  expect(fake.docs.size).toBe(1);expect(fake.requests.filter(q=>q.method==="POST"&&q.path.endsWith("/publish"))).toHaveLength(1);
 });
 it("transitional schemas remain closed at the root and editor boundary",async()=>{
@@ -170,7 +170,7 @@ it.each(["legacy","identity"] as const)("pinned %s server wire fixtures pass str
  const who=await a.call("fmrl_whoami");expect(who.isError).not.toBe(true);
  expect(who.structuredContent).not.toHaveProperty("principal");
  vi.spyOn(a.api,"publish").mockResolvedValue(wire.publish);
- const published=await a.call("fmrl_publish",{content:"fixture"});expect(published.isError).not.toBe(true);
+ const published=await a.call("fmrl_publish",{visibility:"public",content:"fixture"});expect(published.isError).not.toBe(true);
  expect(published.structuredContent).toMatchObject({id:wire.publish.id,status:wire.publish.status});
  fake.docs.set(wire.publish.id,{id:wire.publish.id,owner:"another",format:wire.revision.format,size:wire.revision.size,rev:wire.revision.rev});
  vi.spyOn(a.api,"getRevision").mockResolvedValue(wire.revision);
@@ -180,14 +180,14 @@ it.each(["legacy","identity"] as const)("pinned %s server wire fixtures pass str
  expect((await a.call("fmrl_inbox")).isError).not.toBe(true);
  if(wire.publish_with_attach){
   vi.spyOn(a.api,"publish").mockResolvedValue(wire.publish_with_attach);
-  const p=await a.call("fmrl_publish",{content:"with hint"});expect(p.isError).not.toBe(true);
+  const p=await a.call("fmrl_publish",{visibility:"public",content:"with hint"});expect(p.isError).not.toBe(true);
   expect((p.structuredContent as any).attach_url).toContain(wire.publish_with_attach.attach_url);
  }
 });
 
 it("legacy management URLs still edit the named page without discovery",async()=>{
  const a=await agent("a","legacy"),b=await agent("b","legacy");
- const published=await a.call("fmrl_publish",{content:"# original"});const p=published.structuredContent as any;
+ const published=await a.call("fmrl_publish",{visibility:"public",content:"# original"});const p=published.structuredContent as any;
  const edit=await b.call("fmrl_edit",{id:p.manage_url,content:"# changed",base_rev:1});
  expect(edit.isError).not.toBe(true);
  expect(fake.requests.some(q=>q.method==="GET"&&q.path.startsWith("/manage/"))).toBe(false);
@@ -195,7 +195,7 @@ it("legacy management URLs still edit the named page without discovery",async()=
 });
 it("concurrent first calls share the one-live courtesy without automatic mint or token consumption",async()=>{
  const a=await agent("a");
- const results=await Promise.all([a.call("fmrl_whoami"),a.call("fmrl_publish",{content:"# concurrent"})]);
+ const results=await Promise.all([a.call("fmrl_whoami"),a.call("fmrl_publish",{visibility:"public",content:"# concurrent"})]);
  for(const r of results)expect(r.isError).not.toBe(true);
  expect((results[0].structuredContent as any).attach_url).toBe((results[1].structuredContent as any).attach_url);
  expect(fake.requests.some(q=>q.method==="POST"&&q.path.endsWith("/me/attach"))).toBe(false);

@@ -1474,14 +1474,42 @@ describe("fmrl_set_visibility", () => {
     const before = changes().length;
     const first = await call("fmrl_set_visibility", { id: url, visibility: "public" });
     expect(first.isError).toBeFalsy();
-    expect(first.structuredContent).toMatchObject({ id, visibility: "public", changed: false, preview: "# Notes\n\nFor everyone now.", content_format: "md" });
-    expect(text(first)).toContain("confirm: true only after they say yes");
+    expect(first.structuredContent).toMatchObject({ id, visibility: "public", changed: false, rev: 1, preview: "# Notes\n\nFor everyone now.", content_format: "md" });
+    expect(text(first)).toContain("confirm: true and rev: 1 only after they say yes");
     expect(changes().length).toBe(before);
-    const second = await call("fmrl_set_visibility", { id: url, visibility: "public", confirm: true });
+    const second = await call("fmrl_set_visibility", { id: url, visibility: "public", confirm: true, rev: 1 });
     expect(second.structuredContent).toMatchObject({ id, visibility: "public", changed: true, url: `https://fmrl.test/${id}` });
     expect(changes().at(-1)).toEqual({ id, to: "public" });
     const put = fake.requests.filter((q) => q.method === "PUT" && q.path === `/api/v1/docs/${id}`).at(-1)!;
-    expect(put.body).toMatchObject({ change_privacy: true, encrypted: false, format: "md", content: "# Notes\n\nFor everyone now." });
+    expect(put.body).toMatchObject({ change_privacy: true, encrypted: false, format: "md", content: "# Notes\n\nFor everyone now.", base_rev: 1 });
+  });
+
+  it("a confirm makes public only the revision that was previewed: none named, or a newer one saved since, sends nothing", async () => {
+    const priv = await call("fmrl_publish", { content: "# Draft\n\nLooked over." });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    const puts = () => fake.requests.filter((q) => q.method === "PUT" && q.path === `/api/v1/docs/${id}`).length;
+    const preview = await call("fmrl_set_visibility", { id: url, visibility: "public" });
+    expect(preview.structuredContent).toMatchObject({ rev: 1, changed: false });
+    const noRev = await call("fmrl_set_visibility", { id: url, visibility: "public", confirm: true });
+    expect(noRev.isError).toBe(true);
+    expect(text(noRev)).toContain("confirm: true needs rev");
+    const edited = await call("fmrl_edit", { id: url, content: "# Draft\n\nNot looked over." });
+    expect(edited.isError).toBeFalsy();
+    const before = puts();
+    const stale = await call("fmrl_set_visibility", { id: url, visibility: "public", confirm: true, rev: 1 });
+    expect(stale.isError).toBe(true);
+    expect(text(stale)).toBe("The page changed since the preview: revision 2 is the latest, not 1. Nothing changed. Call again without confirm to preview the latest and show it to the person.");
+    expect(puts()).toBe(before);
+    expect(changes().filter((c) => c.id === id)).toEqual([]);
+  });
+
+  it("going private keeps the page's own title rather than its first heading", async () => {
+    const pub = await call("fmrl_publish", { visibility: "public", content: "# Plan\n\nShip it.", title: "Launch notes" });
+    const { id } = pub.structuredContent as { id: string };
+    const r = await call("fmrl_set_visibility", { id, visibility: "private" });
+    expect(r.isError).toBeFalsy();
+    const got = await call("fmrl_get", { id });
+    expect(got.structuredContent).toMatchObject({ private: true, title: "Launch notes" });
   });
 
   it("refuses to make public a page that carries a key, before anything is sent", async () => {

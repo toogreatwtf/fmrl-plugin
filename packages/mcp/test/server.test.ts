@@ -1016,6 +1016,12 @@ describe("fmrl_edit", () => {
     const again = (await call("fmrl_get", { id, to_file: true })).structuredContent as { content_file: { path: string } };
     expect(again.content_file.path).toBe(out);
     expect(await readFile(out, "utf8")).toBe(edited);
+
+    // A copy left in the other format is an older revision: the next to_file removes it, so it can't be saved back.
+    const html = path.join(folder, `${id}.html`);
+    await writeFile(html, "<p>older</p>");
+    await call("fmrl_get", { id, to_file: true });
+    expect(await readdir(folder)).toEqual([`${id}.md`]);
   });
   it("fmrl_get's to_file takes no path, so a caller can't aim the write, and a link planted under the page's name is replaced, not followed", async () => {
     const pub = await call("fmrl_publish", { content: "ssh-ed25519 AAAA attacker", format: "md" });

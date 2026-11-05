@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { lstat as fsLstat, open as fsOpen, realpath, stat as fsStat } from "node:fs/promises";
+import { lstat as fsLstat, open as fsOpen, realpath, stat as fsStat, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -780,7 +780,10 @@ export function createServer(deps: ServerDeps): McpServer {
         if (!to_file || v.content === undefined) return v;
         // The content goes to disk, not through the model: the answer keeps everything else, the profile included.
         const format = v.content_format ?? "html";
-        const file = await writeIn(await folder(), fileName(ref.id, format), v.content);
+        const dir = await folder();
+        const file = await writeIn(dir, fileName(ref.id, format), v.content);
+        // A copy in the other format is from an older revision: remove it, so fmrl_edit can't save that one back.
+        await unlink(path.join(dir, fileName(ref.id, format === "md" ? "html" : "md"))).catch(() => undefined);
         const written = { path: file, bytes: Buffer.byteLength(v.content) };
         const { content: ignoredContent, ...rest } = v;
         return { ...rest, content_file: written, content_note: CONTENT_WRITTEN(written.path, written.bytes, format) };

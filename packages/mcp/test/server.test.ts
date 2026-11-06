@@ -335,7 +335,9 @@ describe("tools", () => {
     expect(text(r)).toContain("Code on the page: K7Q-4MZ");
     expect(text(r)).toContain("It works once, for 10 minutes.");
     fake.linked.add(keyOf(req));
+    const before = fake.requests.filter((q) => q.path === "/api/v1/me/attach").length;
     const again = await call("fmrl_attach");
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/attach").length).toBe(before);
     expect(again.isError).toBeFalsy();
     expect(again.structuredContent).toMatchObject({ attached: true, attached_at: "2026-09-16T12:00:00Z" });
     expect(again.structuredContent?.attach_url).toBeUndefined();

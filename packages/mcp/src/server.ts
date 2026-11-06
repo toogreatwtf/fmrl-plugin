@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, canvasesUrl, isRevoked, type AttachResponse, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
+import { ApiError, canvasesUrl, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { fileName, fileStem, filesDir, openFilesDir, writeIn } from "./files.js";
 import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
@@ -515,7 +515,7 @@ export function machineName(host = os.hostname()): string {
 }
 
 /** attachText is fmrl_attach's answer, per the attach command mockups (markymd #355): the link, the code to compare and how long it lasts; or, already attached, that there is nothing to do. */
-export function attachText(a: AttachResponse & { attach_url?: string; canvases_url?: string }, machine: string): string {
+export function attachText(a: { attached: boolean; machine?: string; attach_url?: string; code?: string; attached_at?: string; canvases_url?: string }, machine: string): string {
   const on = a.machine || machine;
   const who = on ? `this agent on ${on}` : "this agent";
   if (a.attached) {
@@ -1337,7 +1337,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_attach",
     {
       title: "Attach this agent to a person's fmrl account",
-      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it. Names this machine on the page (machine overrides the host name). When the agent is already attached it says so and changes nothing. Only call this when the user asked to attach the agent. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself.",
+      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it. Names this machine on the page (machine overrides the host name). When the agent is already attached it says so, asks for no link and changes nothing. Only call this when the user asked to attach the agent. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself.",
       inputSchema: { machine: z.string().max(40).optional().describe("The machine name to show on the page; defaults to this computer's host name.") },
       outputSchema: attachOutput,
     },
@@ -1347,11 +1347,14 @@ export function createServer(deps: ServerDeps): McpServer {
       try {
         const out = await withKey(async (k) => {
           used = k;
-          const a = await api.attach(k, name);
-          if (a.attached) {
-            return { attached: true, ...(a.attached_at ? { attached_at: a.attached_at } : {}), ...(a.attached_via ? { attached_via: a.attached_via } : {}), canvases_url: canvasesUrl({}, api.viewerBase) };
+          // Already attached: nothing to do (Marty: "If already attached, it's a noop"). The server still mints for an
+          // attached agent, since such a link re-delivers its ring to a browser, so the no-op is decided here, from GET /me.
+          const me = await api.me(k);
+          if (typeof me.attached_at === "string" && me.attached_at) {
+            return { attached: true, attached_at: me.attached_at, ...(me.attached_via ? { attached_via: me.attached_via } : {}), canvases_url: canvasesUrl(me, api.viewerBase) };
           }
-          if (typeof a.url !== "string") throw new Error("fmrl.site answered without a link; try again.");
+          const a = await api.attach(k, name);
+          if (!a || typeof a.url !== "string") throw new Error("fmrl.site answered without a link; try again.");
           let url = a.url;
           try {
             const ring = await keys.ringFor(k);

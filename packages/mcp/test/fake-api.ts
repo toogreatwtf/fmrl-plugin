@@ -443,15 +443,14 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       for (const { prefix, box } of boxes) api.ringBoxes.set(prefix, box);
       return json(res, 200, { stored: boxes.length });
     }
-    // The attach command (markymd #355): a ten-minute link naming the machine and its code; an attached agent's no-op.
+    // The attach command (markymd #355): a ten-minute link naming the machine and its code, attached or not.
     if (method === "POST" && url.pathname === "/api/v1/me/attach") {
       const key = auth();
       if (!key) return unauthorized();
-      if (api.linked.has(key)) return json(res, 200, { attached: true, attached_at: "2026-09-16T12:00:00Z", attached_via: "account" });
       const machine = body && typeof body === "object" && !Array.isArray(body) ? (body as { machine?: unknown }).machine : undefined;
       if (machine !== undefined && typeof machine !== "string") return fail(res, 400, "bad_request", "");
       const cleaned = typeof machine === "string" ? machine.trim().replace(/\s+/g, " ").slice(0, 40) : "";
-      return json(res, 201, { attached: false, url: `https://fmrl.test/c/attachcmd${api.prefixOf(key).slice(5)}`, expires_at: new Date(Date.now() + 600000).toISOString(), code: "K7Q-4MZ", ...(cleaned ? { machine: cleaned } : {}) });
+      return json(res, 201, { url: `https://fmrl.test/c/attachcmd${api.prefixOf(key).slice(5)}`, expires_at: new Date(Date.now() + 600000).toISOString(), code: "K7Q-4MZ", ...(cleaned ? { machine: cleaned } : {}) });
     }
     if (method === "GET" && url.pathname === "/api/v1/me") {
       if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout

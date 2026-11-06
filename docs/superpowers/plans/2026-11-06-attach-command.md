@@ -4,7 +4,7 @@ Marty, 2026-11-06: "`/attach claude code on prodigal` -> replies with a url -> u
 
 ### Task 1
 
-`FmrlApi.attach(key, machine)` posts `{"machine": …}` to `POST /api/v1/me/attach`. A link answer replaces the in-process attach hint for the link's own lifetime (ten minutes, capped at an hour), since the server ends the earlier unspent link; an attached answer clears it.
+`FmrlApi.attach(key, machine)` posts `{"machine": …}` to `POST /api/v1/me/attach`. A link answer replaces the in-process attach hint for the link's own lifetime (ten minutes, capped at an hour), since the server ends the earlier unspent link. The no-op is decided first, from `attached_at` on `GET /api/v1/me`: the server still mints for an attached agent, since such a link re-delivers its ring to a browser.
 
 ### Task 2
 

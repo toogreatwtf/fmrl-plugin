@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { pinnedServer, pluginInstructions as instructions, pluginLine as line, pluginStatus, pluginSurface } from "../src/plugin.js";
+import { pinnedServer, PREFER_THIS_SERVER, pluginInstructions as instructions, pluginLine as line, pluginStatus, pluginSurface, serverInstructions } from "../src/plugin.js";
 
 const pluginInstructions: typeof instructions = (s, a, p, surface = "claude-cli") => instructions(s, a, p, surface);
 const pluginLine: typeof line = (s, a, p, surface = "claude-cli") => line(s, a, p, surface);
@@ -289,4 +289,15 @@ it("detects only explicit launcher evidence and defaults to neutral", () => {
   expect(pluginSurface({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("claude-cli");
   expect(pluginSurface({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toBe("claude-desktop");
   expect(instructions({ installed: "0.3.0", server: "0.13.0", stale: true })).not.toContain("claude plugin");
+});
+
+describe("serverInstructions", () => {
+  it("always says to use this server over another fmrl server, then any plugin notice", () => {
+    expect(serverInstructions(undefined)).toBe(PREFER_THIS_SERVER);
+    expect(serverInstructions({ installed: "0.5.0", server: "0.5.1", stale: false }, undefined, undefined, "claude-cli")).toBe(PREFER_THIS_SERVER);
+    const stale = { installed: "0.3.0", server: "0.13.0", stale: true };
+    expect(serverInstructions(stale, undefined, undefined, "claude-cli")).toBe(`${PREFER_THIS_SERVER}\n\n${instructions(stale, undefined, undefined, "claude-cli")}`);
+    expect(PREFER_THIS_SERVER).toContain("use this server's tools for every fmrl request");
+    expect(PREFER_THIS_SERVER).toContain("hosted fmrl.site connector");
+  });
 });

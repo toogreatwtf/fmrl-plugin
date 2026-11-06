@@ -117,6 +117,12 @@ describe("/fmrl:whoami", () => {
     expect(whoamiSkill).toContain("fingerprint");
     expect(whoamiSkill).not.toContain("Signing in does not back up private-page keys.");
   });
+  it("uses this plugin's tools over another fmrl server's, and says where the canvases are", () => {
+    expect(skillText()).toContain("Use this plugin's own fmrl tools");
+    expect(skillText()).toContain("do not call that server's");
+    expect(skillText()).toContain("`canvases_url`");
+    expect(skillText()).toContain("say so with its date and where its canvases are");
+  });
   it("keeps the link rules /fmrl:share keeps", () => {
     expect(skillText()).toMatch(/Never print the ring on its own/);
     expect(skillText()).toMatch(/Never open the link yourself/);
@@ -144,6 +150,7 @@ describe("/fmrl:status", () => {
     expect(skillText()).toContain("/mcp");
     expect(skillText()).toMatch(/not connected/i);
     expect(skillText()).toMatch(/second fmrl/i);
+    expect(skillText()).toContain("fmrl requests in this session use the plugin's tools");
   });
   it("never mints, updates, or prints a key", () => {
     expect(skillText()).toMatch(/Never mint/i);
@@ -156,6 +163,10 @@ describe("/fmrl:status", () => {
 describe("/fmrl:share and the handoff-review starter", () => {
   const starter = () => read("plugins/fmrl/skills/share/handoff-review.md");
   const share = () => read("plugins/fmrl/skills/share/SKILL.md");
+  it("publishes with this plugin's tools, never another fmrl server's", () => {
+    expect(share()).toContain("Use this plugin's own fmrl tools for everything below");
+    expect(share()).toContain("do not call that server's");
+  });
   it("distributes the share skill from the marketplace plugin source", () => {
     const marketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
     const plugin = marketplace.plugins.find((p: { name: string }) => p.name === "fmrl");

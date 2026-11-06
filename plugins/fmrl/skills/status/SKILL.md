@@ -8,10 +8,10 @@ argument-hint: [verbose]
 
 Argument: "$ARGUMENTS"
 
-1. Call `fmrl_status` once. Pass `verbose: true` only when the argument is `verbose`, `-v`, `--verbose` or `full`; otherwise pass nothing. The default answer is local and immediate; verbose asks fmrl.site and npm, each call bounded, and takes a few seconds at most.
+1. Call this plugin's `fmrl_status` once. Pass `verbose: true` only when the argument is `verbose`, `-v`, `--verbose` or `full`; otherwise pass nothing. The default answer is local and immediate; verbose asks fmrl.site and npm, each call bounded, and takes a few seconds at most.
 2. Relay the result unchanged, as one fenced block, and stop. Add nothing to it, call no other tool, and run no shell command: everything asked for is in the block, and anything more costs the time this command exists to save.
 3. If `fmrl_status` is not available, the fmrl plugin's MCP server is not connected in this session. Say so, and point to `/mcp` to see why and to `/reload-plugins` or a restart to reconnect. In Cursor, Customize shows whether the fmrl server is on, and Developer: Reload Window reconnects it. Do not try `fmrl_whoami` or any other tool instead.
-4. If a second fmrl server is connected too — tools named `fmrl_*` offered by another server, such as the hosted connector — say so in one line after the block, naming it as your harness names it. Do not call it.
+4. If a second fmrl server is connected too — tools named `fmrl_*` offered by another server, such as the hosted connector — say so in one line after the block, naming it as your harness names it, and say that fmrl requests in this session use the plugin's tools, which hold this machine's key and files, while the connector is for apps without the plugin. Do not call it.
 5. If the block says the plugin is out of date, or that a newer plugin or fmrl-mcp is already there, do not act on it: `/fmrl:whoami` is the command that offers the update, with the user's OK.
 
 ## Never

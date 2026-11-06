@@ -18,8 +18,15 @@ export interface AccountVault { pub: string; fingerprint: string }
 export interface RingBoxInput { prefix: string; box: string }
 
 /** Transitional fields stay distinct: linked_at/link_url describe the legacy browser flow.
- * attached_at is when the agent attached to its person, or null. attach_url is optional on GET /me and absent on PATCH. */
-export interface MeResponse { prefix: string; created_at: string; label?: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at?: string | null; linked_at?: string | null; link_url?: string; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
+ * attached_at is when the agent attached to its person, or null. attach_url is optional on GET /me and absent on PATCH.
+ * attached_via (account or browser) says where an attached agent's canvases show; canvases_url opens them. A server
+ * older than both sends neither. */
+export interface MeResponse { prefix: string; created_at: string; label?: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at?: string | null; attached_via?: "account" | "browser"; canvases_url?: string; linked_at?: string | null; link_url?: string; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
+
+/** canvasesUrl is where me's person sees its canvases: the server's link, else the drawer on viewerBase. */
+export function canvasesUrl(me: Pick<MeResponse, "canvases_url">, viewerBase: string): string {
+  return me.canvases_url || `${viewerBase}/?canvases`;
+}
 /** RedeemResponse is POST /api/v1/keys/redeem: the key a key code carries, given once. */
 export interface RedeemResponse { key: string; prefix: string }
 /** RotateResponse is POST /api/v1/me/rotate: the calling key's new secret, given once, under the same prefix. */

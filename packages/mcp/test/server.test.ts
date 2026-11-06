@@ -16,6 +16,7 @@ import { PageStore } from "../src/pages.js";
 import { CONTENT_WRITTEN, createServer, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
+import { PREFER_THIS_SERVER } from "../src/plugin.js";
 import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;
@@ -435,8 +436,9 @@ describe("tools", () => {
   });
   it("fmrl_whoami says whether a browser is linked and always offers a link", async () => {
     const r = await call("fmrl_whoami");
-    expect(text(r)).toContain("This agent is not attached to an identity.");
+    expect(text(r)).toContain("This agent is not attached to an identity, so its canvases don't show on fmrl.site yet.");
     expect(text(r)).toContain("open https://fmrl.test/attach/fresh#r=");
+    expect(text(r)).toMatch(/Once it is attached, its canvases show at http:\/\/127\.0\.0\.1:\d+\/\?canvases, tagged fmrl_\w{4}\.$/m);
     expect(r.structuredContent).toMatchObject({ attached_at: null, attach_url: expect.stringMatching(/^https:\/\/fmrl\.test\/attach\/fresh#r=/) });
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const again = await call("fmrl_whoami");
@@ -695,8 +697,27 @@ describe("tools", () => {
       expect(text(r)).toContain("This agent attached to its identity on 2026-09-16");
       expect(text(r)).not.toContain("browser linked");
       expect(text(r)).not.toContain("No attach link");
-      expect(text(r)).not.toMatch(/https?:\/\//);
+      // The one address is where its canvases are; no attach or link destination is invented.
+      expect(text(r).match(/https?:\/\/\S+/g)).toEqual([`${fake.baseUrl}/?canvases,`]);
+      expect(text(r)).toContain("in the browser it was attached from and any browser signed in to that person's fmrl account");
       expect(text(r)).not.toContain("you are signed in");
+    } finally { await c.close(); }
+  });
+  it.each([
+    ["account", "This agent attached to your fmrl account on 2026-10-18T12:00:00Z.", "Its canvases are in your canvases at https://fmrl.site/?canvases, tagged fmrl_Bsrk, in any browser signed in to that account."],
+    ["browser", "This agent attached on 2026-10-18T12:00:00Z to the browser it was attached from, which has no fmrl account.", "That browser shows its canvases at https://fmrl.site/?canvases, tagged fmrl_Bsrk. To see them on other devices, sign in to fmrl from that browser:"],
+  ] as const)("fmrl_whoami says where an agent attached via its %s sees its canvases", async (via, attached, where) => {
+    const api = new FmrlApi(fake.baseUrl);
+    const original = api.me.bind(api);
+    vi.spyOn(api, "me").mockImplementation(async k => ({ ...await original(k), prefix: "fmrl_Bsrk", attached_at: "2026-10-18T12:00:00Z", attached_via: via, canvases_url: "https://fmrl.site/?canvases", attach_url: undefined }));
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
+      expect(text(r)).toContain(`${attached}\n${where}`);
+      expect(text(r)).not.toContain("No attach link");
+      // Claude Code may hand the model only the structured half: the same facts and sentence are there.
+      expect(r.structuredContent).toMatchObject({ attached_via: via, canvases_url: "https://fmrl.site/?canvases", canvases: expect.stringContaining(where) });
     } finally { await c.close(); }
   });
   it("fmrl_whoami mints the ring, carries it on the link, and names the file to back up", async () => {
@@ -1738,29 +1759,30 @@ describe("plugin freshness", () => {
   it("a stale plugin: the instructions raise it and fmrl_whoami says how to fix it", async () => {
     await withRoot(await root("0.3.0"), async (c) => {
       const instructions = c.getInstructions() ?? "";
+      expect(instructions.startsWith(`${PREFER_THIS_SERVER}\n\n`)).toBe(true);
       expect(instructions).toContain(`installed 0.3, fmrl-mcp is at ${major}.${minor}`);
       expect(instructions).toContain("claude plugin update fmrl@fmrl-plugin");
       expect(await whoami(c)).toContain(`The fmrl plugin is out of date: installed 0.3, fmrl-mcp is at ${major}.${minor}.`);
     });
   });
-  it("a plugin a patch behind: no instructions, and fmrl_whoami says it is up to date", async () => {
+  it("a plugin a patch behind: only the preference, and fmrl_whoami says it is up to date", async () => {
     await withRoot(await root(`${major}.${minor}.0`), async (c) => {
-      expect(c.getInstructions()).toBeUndefined();
+      expect(c.getInstructions()).toBe(PREFER_THIS_SERVER);
       expect(await whoami(c)).toContain(`The fmrl plugin is up to date (plugin ${major}.${minor}.0, fmrl-mcp ${VERSION}).`);
     });
   });
-  it("no CLAUDE_PLUGIN_ROOT: no instructions and no plugin line", async () => {
+  it("no CLAUDE_PLUGIN_ROOT: only the preference and no plugin line", async () => {
     await withRoot(undefined, async (c) => {
-      expect(c.getInstructions()).toBeUndefined();
+      expect(c.getInstructions()).toBe(PREFER_THIS_SERVER);
       expect(await whoami(c)).not.toContain("fmrl plugin");
     });
   });
-  it("a malformed plugin.json: no instructions and no plugin line", async () => {
+  it("a malformed plugin.json: only the preference and no plugin line", async () => {
     const r = await mkdtemp(path.join(tmpdir(), "fmrl-plugin-"));
     await mkdir(path.join(r, ".claude-plugin"));
     await writeFile(path.join(r, ".claude-plugin", "plugin.json"), "{ not json");
     await withRoot(r, async (c) => {
-      expect(c.getInstructions()).toBeUndefined();
+      expect(c.getInstructions()).toBe(PREFER_THIS_SERVER);
       expect(await whoami(c)).not.toContain("fmrl plugin");
     });
   });
@@ -2113,7 +2135,7 @@ describe("fmrl_status", () => {
         const n = fake.requests.length;
         const t = await status(c, { verbose: true });
         expect(fake.requests.slice(n).map((q) => `${q.method} ${q.path}`)).toEqual(["GET /api/v1/me", "GET /api/v1/inbox"]);
-        expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. Agent not attached\. Inbox: empty\.$/m);
+        expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. Agent not attached, so its canvases don't show on fmrl\.site; fmrl_whoami says how to attach it\. Inbox: empty\.$/m);
         expect(t).toContain(`npm: fmrl-mcp 9.9.9 is the latest; this session runs ${VERSION}, so restart the client that started it to pick it up.`);
         expect(asked).toBe(1);
         // The probes are not the user's calls: the last call is still the read.

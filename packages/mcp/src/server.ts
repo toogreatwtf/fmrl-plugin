@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
+import { ApiError, canvasesUrl, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { fileName, fileStem, filesDir, openFilesDir, writeIn } from "./files.js";
 import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
@@ -18,7 +18,7 @@ import { publicRefusal } from "./secrets.js";
 import type { PageStore } from "./pages.js";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { VaultSync, type VaultSyncResult } from "./vault-sync.js";
-import { pinnedServer, pluginInstructions, pluginLine, pluginStatus, type PluginSurface } from "./plugin.js";
+import { pinnedServer, pluginLine, pluginStatus, serverInstructions, type PluginSurface } from "./plugin.js";
 import { latestOnNpm as latestOnNpmDefault } from "./registry.js";
 import { newerCachedLine, newestCachedPlugin, statusText, type ApiCheck, type NpmCheck, type StatusSnapshot } from "./status.js";
 
@@ -329,19 +329,44 @@ function listText(rows: PageRow[]): string {
   return [`${count} on this key, newest first${rows.length >= 50 ? " (the newest 50)" : ""}:`, ...rows.map(listLine)].join("\n");
 }
 export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
-function meText(m: MeResponse, ringLine: string, plugin: string | undefined, notes: string[] = []): string {
-  const q = m.quota.publishes;
-  const linked = m.attached_at !== undefined
-    ? m.attached_at ? `This agent attached to its identity on ${m.attached_at}.` : "This agent is not attached to an identity."
-    : m.linked_at !== undefined
+/**
+ * canvasesLine is where an agent's canvases show on fmrl.site: for an
+ * attached agent, the drawer canvases opens, tagged with the key's prefix,
+ * on its person's account or in the one browser it was attached from; for
+ * an unattached one, where they will show once it is. undefined for a
+ * server that reports no attachment at all.
+ */
+export function canvasesLine(m: Pick<MeResponse, "prefix" | "attached_at" | "attached_via">, canvases: string, viewerBase: string): string | undefined {
+  if (m.attached_at === undefined) return undefined;
+  if (m.attached_at === null) return `Once it is attached, its canvases show at ${canvases}, tagged ${m.prefix}.`;
+  if (m.attached_via === "account") return `Its canvases are in your canvases at ${canvases}, tagged ${m.prefix}, in any browser signed in to that account.`;
+  if (m.attached_via === "browser") return `That browser shows its canvases at ${canvases}, tagged ${m.prefix}. To see them on other devices, sign in to fmrl from that browser: ${viewerBase}/account/signin?next=canvases.`;
+  return `Its canvases show at ${canvases}, tagged ${m.prefix}, in the browser it was attached from and any browser signed in to that person's fmrl account.`;
+}
+
+/** attachedLine is whoami's line on the agent's attachment, by what the server reports. */
+function attachedLine(m: MeResponse): string {
+  if (m.attached_at === undefined) {
+    return m.linked_at !== undefined
       ? m.linked_at ? `A browser linked to this key on ${m.linked_at}.` : "No browser is linked to this key."
       : "This server does not report identity attachment status.";
+  }
+  if (m.attached_at === null) return "This agent is not attached to an identity, so its canvases don't show on fmrl.site yet.";
+  if (m.attached_via === "account") return `This agent attached to your fmrl account on ${m.attached_at}.`;
+  if (m.attached_via === "browser") return `This agent attached on ${m.attached_at} to the browser it was attached from, which has no fmrl account.`;
+  return `This agent attached to its identity on ${m.attached_at}.`;
+}
+
+function meText(m: MeResponse, ringLine: string, plugin: string | undefined, notes: string[] = [], canvases?: string): string {
+  const q = m.quota.publishes;
   const named = m.label ? `Named ${m.label}: the revisions this key makes carry that name.` : UNNAMED_LINE;
-  const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, linked];
+  const lines = [`${m.prefix}…: ${q.used} of ${q.limit} publishes used this month, resets ${q.resets_at}.`, named, attachedLine(m)];
+  if (m.attached_at && canvases) lines.push(canvases);
   if (m.rotated_at) lines.push(`Last rotated ${m.rotated_at}.`);
   if (m.attach_url) lines.push(LINK_HINT(m.attach_url));
   else if (m.link_url && m.attached_at === undefined) lines.push(`Link a browser to this key: open ${m.link_url} in your browser.${ringCarried(m.link_url)}`);
   else if (m.attached_at === null) lines.push("No attach link is available here. A previously supplied link may still be live; this tool does not replace it.");
+  if (m.attached_at === null && canvases) lines.push(canvases);
   return [...lines, ...(ringLine ? [ringLine] : []), ...(plugin ? [plugin] : []), ...notes].join("\n");
 }
 
@@ -439,6 +464,8 @@ const meOutput = {
   prefix: z.string(), created_at: z.string(), label: z.string().optional(),
   quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
   attached_at: z.string().nullable().optional(), linked_at: z.string().nullable().optional(), link_url: z.string().optional(), rotated_at: z.string().optional(), attach_url: z.string().optional(),
+  attached_via: z.enum(["account", "browser"]).optional().describe("Where an attached agent's canvases show: account, in every browser signed in to its person's fmrl account; browser, only in the one browser it was attached from. Absent while unattached or when the server does not say."),
+  canvases_url: z.string().optional().describe("The fmrl.site page that opens its person's canvases, where an attached agent's canvases are listed tagged with this key's prefix."),
 };
 function project<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> {
   const parsed = schema.safeParse(value);
@@ -454,6 +481,7 @@ function project<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> 
  */
 const whoamiOutput = {
   ...meOutput,
+  canvases: z.string().optional().describe("The sentence whoami's text says about where this agent's canvases show on fmrl.site, word for word."),
   ring: z.object({
     kept_in: z.enum(["file", "env", "unsaved"]).describe("file: the key ring is in the credentials file; env: FMRL_RING supplies it; unsaved: it could not be written."),
     file: z.string().optional(),
@@ -565,8 +593,8 @@ export function createServer(deps: ServerDeps): McpServer {
   const plugin = pluginStatus(deps.pluginRoot, VERSION);
   // The facts reach fmrl_whoami whenever they are known; the offer only on
   // the start that makes it, so nobody is asked twice.
-  const instructions = pluginInstructions(plugin, deps.offerAutoUpdate ? deps.autoUpdate : undefined, deps.autoUpdatePass, deps.pluginSurface);
-  const server = new McpServer({ name: "fmrl", version: VERSION }, instructions ? { instructions } : undefined);
+  const instructions = serverInstructions(plugin, deps.offerAutoUpdate ? deps.autoUpdate : undefined, deps.autoUpdatePass, deps.pluginSurface);
+  const server = new McpServer({ name: "fmrl", version: VERSION }, { instructions });
 
   const log = deps.log;
   /** folder is the fmrl folder's real path, made on first use; a bad FMRL_FILES_DIR is reported then, not at startup. */
@@ -1102,7 +1130,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_whoami",
     {
       title: "This fmrl.site key",
-      description: "The key's prefix, how many of this month's free publishes it has used, agent attachment time, an attach link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
+      description: "The key's prefix, how many of this month's free publishes it has used, agent attachment time, where the agent's canvases show on fmrl.site, an attach link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
       inputSchema: { trust_vault: z.string().optional() },
       outputSchema: whoamiOutput,
     },
@@ -1142,16 +1170,19 @@ export function createServer(deps: ServerDeps): McpServer {
             if (output.attach_url) output.attach_url = withRing(output.attach_url, output.prefix, ringValue);
             if (output.link_url) output.link_url = withRing(output.link_url, output.prefix, ringValue);
           }
+          if (output.attached_at !== undefined) output.canvases_url = canvasesUrl(output, api.viewerBase);
           return output;
         }, { replaceRevoked: false });
         const pluginState = await whoamiPlugin();
+        const canvases = m.canvases_url ? canvasesLine(m, m.canvases_url, api.viewerBase) : undefined;
         const out = {
           ...m,
+          ...(canvases ? { canvases } : {}),
           ...(ring ? { ring } : {}),
           ...(pluginState ? { plugin: pluginState } : {}),
           ...(notices.length ? { notes: notices } : {}),
         };
-        return ok(meText(m, ring?.note ?? "", pluginState?.note, notices), out);
+        return ok(meText(m, ring?.note ?? "", pluginState?.note, notices, canvases), out);
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
       }

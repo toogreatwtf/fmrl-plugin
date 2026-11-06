@@ -167,6 +167,30 @@ export function pluginInstructions(s: PluginStatus | undefined, auto?: AutoUpdat
 }
 
 /**
+ * PREFER_THIS_SERVER is the first thing this server's instructions say,
+ * every start: a session can have the hosted fmrl connector connected too,
+ * with tools of the same names, and the model should not pick between them
+ * at random. This server holds this machine's key and key ring, opens and
+ * publishes private pages, and reads and writes files here; the connector
+ * holds a key of its own and handles public pages only. The connector stays
+ * for apps where this server isn't installed.
+ */
+export const PREFER_THIS_SERVER = [
+  "This is the local fmrl server (fmrl-mcp), started by the fmrl plugin or a local MCP config.",
+  "If another server in this session also offers fmrl tools (fmrl_publish, fmrl_whoami and the rest), such as the hosted fmrl.site connector, use this server's tools for every fmrl request and do not call the other server's.",
+  "This server holds this machine's fmrl key and key ring, publishes and opens private pages, and reads and writes files here; the hosted connector has a key of its own and handles public pages only. It is for apps where this server isn't installed.",
+].join(" ");
+
+/**
+ * serverInstructions is what this server sends at initialize: always
+ * PREFER_THIS_SERVER, then pluginInstructions' notice when there is one.
+ */
+export function serverInstructions(s: PluginStatus | undefined, auto?: AutoUpdate, pass?: AutoUpdatePass, surface: PluginSurface = "unknown"): string {
+  const notice = pluginInstructions(s, auto, pass, surface);
+  return notice ? `${PREFER_THIS_SERVER}\n\n${notice}` : PREFER_THIS_SERVER;
+}
+
+/**
  * pluginLine is fmrl_whoami's line about the plugin, whenever there is a
  * status to report. Asked directly, it also says whether anything is
  * keeping the plugin current — which a current plugin does not imply.

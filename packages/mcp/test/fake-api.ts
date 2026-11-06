@@ -43,6 +43,8 @@ export interface FakeApi {
   /** labels holds each key's name (from mint's label or a later PATCH /me), "" until set. */
   labels: Map<string, string>;
   quota: number;
+  /** privacyChanges logs each owner's privacy change the fake took, in order. */
+  privacyChanges: Array<{ id: string; to: "public" | "private" }>;
   mintLimit: number;
   /** watchLimit is the per-key cap on pages watched at once; a PUT past it answers 409 watch_limit. */
   watchLimit: number;
@@ -161,6 +163,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
     keys: new Set(),
     docs: new Map(),
     requests: [],
+    privacyChanges: [],
     publishes: new Map(),
     accountVaults: new Map(),
     ringClaims: new Map(),
@@ -353,12 +356,21 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       const owns = !!d && (d.owner === key || d.managers?.has(key) || (manageTokenSent !== undefined && manageTokenSent === d.manageToken));
       if (!d || !owns) return fail(res, 404, "not_found", "No page with that id.");
       if (d.removed) return fail(res, 404, "not_found", "That page was already removed.");
-      const ub = (body ?? {}) as { format?: string; content?: string; title?: string; encrypted?: unknown; base_rev?: unknown };
+      const ub = (body ?? {}) as { format?: string; content?: string; title?: string; encrypted?: unknown; base_rev?: unknown; change_privacy?: unknown; sealed?: unknown };
       if (ub.format !== undefined && ub.format !== "html" && ub.format !== "md") return fail(res, 400, "bad_request", "format must be html or md, or left out to detect it.");
-      const wasEncrypted = d.encrypted === true;
-      if (ub.encrypted !== undefined && Boolean(ub.encrypted) !== wasEncrypted) {
-        return fail(res, 400, "bad_request", "A page's privacy is fixed when it is published: send encrypted the way the page was published.");
+      let wasEncrypted = d.encrypted === true;
+      // The owner's change of privacy (markymd #346): owner only, never on a kept page, and only to the other privacy.
+      const changing = ub.change_privacy === true;
+      if (changing) {
+        if (d.owner !== key) return fail(res, 403, "forbidden", "Only the page's owner can change who can read it.");
+        if (d.title === "PINNED") return fail(res, 409, "kept", "A kept page can't change who can read it: it has a lasting copy. Publish a new page instead.");
+        if (Boolean(ub.encrypted) === wasEncrypted) return fail(res, 400, "bad_request", "The page already has that privacy.");
+        if (ub.sealed !== undefined && (ub.encrypted !== true || !validSealed(ub.sealed))) return fail(res, 400, "bad_request", "sealed must be an unpadded base64url record of at most 1 KiB, and only on an encrypted page.");
+        api.privacyChanges.push({ id: d.id, to: ub.encrypted === true ? "private" : "public" });
+      } else if (ub.encrypted !== undefined && Boolean(ub.encrypted) !== wasEncrypted) {
+        return fail(res, 400, "bad_request", "An edit keeps the page's privacy: send encrypted the way the page is now, or, as its owner, send change_privacy true to change it.");
       }
+      if (changing) wasEncrypted = ub.encrypted === true;
       if (wasEncrypted && ub.format === "md") return fail(res, 400, "bad_request", "An encrypted page is HTML.");
       if (!ub.content || String(ub.content).trim() === "") return fail(res, 400, "bad_request", "content is required.");
       if (wasEncrypted && !String(ub.content).startsWith("MARKYENC")) return fail(res, 422, "rejected", "That isn't a valid encrypted page: content must be a MARKYENC v2 envelope.");
@@ -381,6 +393,12 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       d.revisions = d.revisions ?? [];
       d.revisions.push(revision);
       d.rev = nextRev;
+      if (changing) {
+        // The other privacy's versions are deleted, as the server does: only the new revision stays.
+        d.encrypted = wasEncrypted;
+        d.sealed = wasEncrypted && typeof ub.sealed === "string" ? ub.sealed : undefined;
+        d.revisions = [revision];
+      }
       d.format = format;
       d.size = size;
       if (ub.title !== undefined) d.title = ub.title;

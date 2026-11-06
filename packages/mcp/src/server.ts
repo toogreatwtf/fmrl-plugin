@@ -506,6 +506,7 @@ const attachOutput = {
   attached_at: z.string().optional(),
   attached_via: z.enum(["account", "browser"]).optional(),
   canvases_url: z.string().optional(),
+  renamed: z.boolean().optional().describe("Already attached: true when this call gave the agent its machine name, so the person's account now shows it; false when that update failed. Absent when the name was already right."),
 };
 
 /** machineName is this machine's name for an attach link: the host name's first label (Prodigal.local is Prodigal), cut to fmrl.site's 40 characters. */
@@ -514,12 +515,22 @@ export function machineName(host = os.hostname()): string {
   return Array.from(first || host.trim()).slice(0, 40).join("");
 }
 
-/** attachText is fmrl_attach's answer, per the attach command mockups (markymd #355): the link, the code to compare and how long it lasts; or, already attached, that there is nothing to do. */
-export function attachText(a: { attached: boolean; machine?: string; attach_url?: string; code?: string; attached_at?: string; canvases_url?: string }, machine: string): string {
+/** sameMachine says two machine names are the same as fmrl.site stores them: whitespace runs as one space, cut at 40. */
+function sameMachine(a: string, b: string): boolean {
+  const clean = (x: string) => Array.from(x.trim().replace(/\s+/g, " ")).slice(0, 40).join("");
+  return clean(a) === clean(b);
+}
+
+/** attachText is fmrl_attach's answer, per the attach command mockups (markymd #355): the link, the code to compare and how long it lasts; or, already attached, that there is nothing to do, or that the account now shows the machine (markymd #358). */
+export function attachText(a: { attached: boolean; machine?: string; attach_url?: string; code?: string; attached_at?: string; canvases_url?: string; renamed?: boolean }, machine: string): string {
   const on = a.machine || machine;
   const who = on ? `this agent on ${on}` : "this agent";
   if (a.attached) {
-    return `${who[0].toUpperCase()}${who.slice(1)} is already attached to your fmrl account${a.attached_at ? ` (since ${a.attached_at})` : ""}. Nothing to do.${a.canvases_url ? ` Its canvases show at ${a.canvases_url}.` : ""}`;
+    const since = a.attached_at ? ` (since ${a.attached_at})` : "";
+    const canvases = a.canvases_url ? ` Its canvases show at ${a.canvases_url}.` : "";
+    if (a.renamed === true) return `This agent is already attached to your fmrl account${since}. Your account now shows it as on ${on}.${canvases}`;
+    if (a.renamed === false) return `This agent is already attached to your fmrl account${since}, but its machine name couldn't be updated just now, so your account may not show ${machine} beside it.${canvases}`;
+    return `${who[0].toUpperCase()}${who.slice(1)} is already attached to your fmrl account${since}. Nothing to do.${canvases}`;
   }
   const lines = [`Open this link to attach ${who} to your fmrl account:`, a.attach_url ?? ""];
   if (a.code) {
@@ -1337,7 +1348,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_attach",
     {
       title: "Attach this agent to a person's fmrl account",
-      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it. Names this machine on the page (machine overrides the host name). When the agent is already attached it says so, asks for no link and changes nothing. Only call this when the user asked to attach the agent. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself.",
+      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it. Names this machine on the page (machine overrides the host name). When the agent is already attached it says so and asks for no link; it only gives the agent its machine name, when it has none yet or the person named another one, so their fmrl account shows it beside the agent. Only call this when the user asked to attach the agent. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself.",
       inputSchema: { machine: z.string().max(40).optional().describe("The machine name to show on the page; defaults to this computer's host name.") },
       outputSchema: attachOutput,
     },
@@ -1347,11 +1358,26 @@ export function createServer(deps: ServerDeps): McpServer {
       try {
         const out = await withKey(async (k) => {
           used = k;
-          // Already attached: nothing to do (Marty: "If already attached, it's a noop"). The server still mints for an
+          // Already attached: no link (Marty: "If already attached, it's a noop"), only the machine name below. The server still mints for an
           // attached agent, since such a link re-delivers its ring to a browser, so the no-op is decided here, from GET /me.
           const me = await api.me(k);
           if (typeof me.attached_at === "string" && me.attached_at) {
-            return { attached: true, attached_at: me.attached_at, ...(me.attached_via ? { attached_via: me.attached_via } : {}), canvases_url: canvasesUrl(me, api.viewerBase) };
+            const done = { attached: true, attached_at: me.attached_at, ...(me.attached_via ? { attached_via: me.attached_via } : {}), canvases_url: canvasesUrl(me, api.viewerBase) };
+            // Attached before it could say where it runs, or the person named another machine: name it, so their
+            // account tells this agent from others of the same name (markymd #358). A name the person didn't give
+            // never replaces one the agent already has.
+            const stored = typeof me.machine === "string" ? me.machine : "";
+            const wanted = machine?.trim() ? sameMachine(stored, name) ? undefined : name : stored ? undefined : name;
+            if (!wanted) return { ...done, ...(stored ? { machine: stored } : {}) };
+            try {
+              const set = await api.setMachine(k, wanted);
+              return { ...done, machine: typeof set?.machine === "string" && set.machine ? set.machine : wanted, renamed: true };
+            } catch (e) {
+              if (isRevoked(e)) throw e;
+              // A server from before #358 has no such route; there, as on any other failure, attached is still the answer.
+              if (e instanceof ApiError && e.status === 404) return { ...done, ...(stored ? { machine: stored } : {}) };
+              return { ...done, ...(stored ? { machine: stored } : {}), renamed: false };
+            }
           }
           const a = await api.attach(k, name);
           if (!a || typeof a.url !== "string") throw new Error("fmrl.site answered without a link; try again.");

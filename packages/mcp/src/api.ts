@@ -20,10 +20,10 @@ export interface RingBoxInput { prefix: string; box: string }
 /** Transitional fields stay distinct: linked_at/link_url describe the legacy browser flow.
  * attached_at is when the agent attached to its person, or null. attach_url is optional on GET /me and absent on PATCH.
  * attached_via (account or browser) says where an attached agent's canvases show; canvases_url opens them. A server
- * older than both sends neither. */
+ * older than both sends neither. machine is the machine the agent runs on, once it has said (markymd #358). */
 /** AttachResponse is POST /me/attach: a link, its expiry, the code the page shows beside it and the machine it names. A server from before markymd #355 answers url and expires_at only. */
 export interface AttachResponse { url: string; expires_at: string; code?: string; machine?: string }
-export interface MeResponse { prefix: string; created_at: string; label?: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at?: string | null; attached_via?: "account" | "browser"; canvases_url?: string; linked_at?: string | null; link_url?: string; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
+export interface MeResponse { prefix: string; created_at: string; label?: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at?: string | null; attached_via?: "account" | "browser"; canvases_url?: string; machine?: string; linked_at?: string | null; link_url?: string; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
 
 /** canvasesUrl is where me's person sees its canvases: the server's link, else the drawer on viewerBase. */
 export function canvasesUrl(me: Pick<MeResponse, "canvases_url">, viewerBase: string): string {
@@ -153,6 +153,10 @@ export class FmrlApi {
       }
       return a;
     });
+  }
+  /** setMachine names the machine an attached agent runs on (markymd #358), so its person's account can tell two agents of one name apart. 409 not_attached for an agent attached to no one; a server from before #358 answers 404. */
+  setMachine(key: string, machine: string): Promise<{ machine: string }> {
+    return this.call<{ machine: string }>("PUT", "/me/machine", key, { machine });
   }
   putRings(key: string, boxes: RingBoxInput[], fingerprint?: string): Promise<{ stored: number }> {
     return this.call<{ stored: number }>("PUT", "/me/rings", key, { boxes, ...(fingerprint === undefined ? {} : { fingerprint }) });

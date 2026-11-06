@@ -42,6 +42,10 @@ export interface FakeApi {
   linked: Set<string>;
   /** labels holds each key's name (from mint's label or a later PATCH /me), "" until set. */
   labels: Map<string, string>;
+  /** machines holds each attached key's machine name (PUT /me/machine); GET /me reports it as machine. */
+  machines: Map<string, string>;
+  /** machineStatus, when set, is what PUT /me/machine answers instead (404 plays a server from before markymd #358). */
+  machineStatus?: number;
   quota: number;
   /** privacyChanges logs each owner's privacy change the fake took, in order. */
   privacyChanges: Array<{ id: string; to: "public" | "private" }>;
@@ -171,6 +175,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
     ringBoxes: new Map(),
     linked: new Set(),
     labels: new Map(),
+    machines: new Map(),
     quota: 25,
     mintLimit: 5,
     watchLimit: 200,
@@ -452,12 +457,24 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       const cleaned = typeof machine === "string" ? machine.trim().replace(/\s+/g, " ").slice(0, 40) : "";
       return json(res, 201, { url: `https://fmrl.test/c/attachcmd${api.prefixOf(key).slice(5)}`, expires_at: new Date(Date.now() + 600000).toISOString(), code: "K7Q-4MZ", ...(cleaned ? { machine: cleaned } : {}) });
     }
+    // Naming an attached agent's machine (markymd #358): cleaned as the attach link's, refused while unattached.
+    if (method === "PUT" && url.pathname === "/api/v1/me/machine") {
+      const key = auth();
+      if (!key) return unauthorized();
+      if (api.machineStatus) return fail(res, api.machineStatus, api.machineStatus === 404 ? "not_found" : "rate_limited", "");
+      const machine = body && typeof body === "object" && !Array.isArray(body) ? (body as { machine?: unknown }).machine : undefined;
+      const cleaned = typeof machine === "string" ? machine.trim().replace(/\s+/g, " ").slice(0, 40) : "";
+      if (!cleaned) return fail(res, 400, "bad_request", "");
+      if (!api.linked.has(key)) return fail(res, 409, "not_attached", "");
+      api.machines.set(key, cleaned);
+      return json(res, 200, { machine: cleaned });
+    }
     if (method === "GET" && url.pathname === "/api/v1/me") {
       if (req.headers["x-fake-hang"] === "1") return; // never respond; test exercises client-side timeout
       const key = auth();
       if (!key) return unauthorized();
       const rotatedAt = api.rotatedAt.get(api.prefixOf(key));
-      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), attach_url: oneLiveAttach ? courtesy(key) : "https://fmrl.test/attach/fresh" });
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(api.machines.has(key) ? { machine: api.machines.get(key) } : {}), ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), attach_url: oneLiveAttach ? courtesy(key) : "https://fmrl.test/attach/fresh" });
     }
     if (method === "POST" && url.pathname === "/api/v1/me/rotate") {
       const key = auth();

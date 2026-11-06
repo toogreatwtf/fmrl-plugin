@@ -341,7 +341,56 @@ describe("tools", () => {
     expect(again.isError).toBeFalsy();
     expect(again.structuredContent).toMatchObject({ attached: true, attached_at: "2026-09-16T12:00:00Z" });
     expect(again.structuredContent?.attach_url).toBeUndefined();
-    expect(text(again)).toContain("is already attached to your fmrl account (since 2026-09-16T12:00:00Z). Nothing to do.");
+    expect(text(again)).toContain("is already attached to your fmrl account (since 2026-09-16T12:00:00Z).");
+  });
+  it("fmrl_attach, already attached with no machine, names this computer and mints nothing", async () => {
+    await call("fmrl_publish", { visibility: "public", content: "# Hi" });
+    const key = keyOf(firstPublish());
+    fake.linked.add(key);
+    const r = await call("fmrl_attach");
+    expect(r.isError).toBeFalsy();
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/attach")).toHaveLength(0);
+    const put = fake.requests.filter((q) => q.path === "/api/v1/me/machine");
+    expect(put.map((q) => q.body)).toEqual([{ machine: machineName() }]);
+    expect(r.structuredContent).toMatchObject({ attached: true, renamed: true, machine: machineName() });
+    expect(text(r)).toContain(`Your account now shows it as on ${machineName()}.`);
+    // Named now, so a second call with no machine changes nothing.
+    const again = await call("fmrl_attach");
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine")).toHaveLength(1);
+    expect(again.structuredContent).toMatchObject({ attached: true, machine: machineName() });
+    expect(again.structuredContent).not.toHaveProperty("renamed");
+    expect(text(again)).toContain("Nothing to do.");
+  });
+  it("fmrl_attach, already attached, renames to a machine the person names but never to the host name over theirs", async () => {
+    await call("fmrl_publish", { visibility: "public", content: "# Hi" });
+    const key = keyOf(firstPublish());
+    fake.linked.add(key);
+    fake.machines.set(key, "Homebase");
+    const kept = await call("fmrl_attach");
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine")).toHaveLength(0);
+    expect(text(kept)).toContain("This agent on Homebase is already attached");
+    const same = await call("fmrl_attach", { machine: "  Homebase " });
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine")).toHaveLength(0);
+    expect(same.structuredContent).not.toHaveProperty("renamed");
+    const r = await call("fmrl_attach", { machine: "Prodigal" });
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine").map((q) => q.body)).toEqual([{ machine: "Prodigal" }]);
+    expect(fake.machines.get(key)).toBe("Prodigal");
+    expect(text(r)).toContain("Your account now shows it as on Prodigal.");
+  });
+  it("fmrl_attach, already attached, stays a quiet no-op on a server without the rename route, and says so when the rename fails", async () => {
+    await call("fmrl_publish", { visibility: "public", content: "# Hi" });
+    fake.linked.add(keyOf(firstPublish()));
+    fake.machineStatus = 404;
+    const old = await call("fmrl_attach", { machine: "Prodigal" });
+    expect(old.isError).toBeFalsy();
+    expect(old.structuredContent).not.toHaveProperty("renamed");
+    expect(text(old)).toContain("Nothing to do.");
+    fake.machineStatus = 429;
+    const r = await call("fmrl_attach", { machine: "Prodigal" });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toMatchObject({ attached: true, renamed: false });
+    expect(text(r)).toContain("its machine name couldn't be updated just now");
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/attach")).toHaveLength(0);
   });
   it("fmrl_attach names this computer when no machine is given", async () => {
     await call("fmrl_attach");

@@ -244,6 +244,13 @@ describe("the Cursor plugin", () => {
     expect(cursorManifest().name).toMatch(kebab);
     expect(cursorManifest().version).toBe(manifest.version);
   });
+  it("has a logo: the plugin's icon, by a relative path inside the plugin", () => {
+    const logo = (cursorManifest() as { logo?: string }).logo!;
+    expect(logo).toBe(".claude-plugin/icon.png");
+    expect(path.isAbsolute(logo)).toBe(false);
+    expect(path.posix.normalize(logo).startsWith("..")).toBe(false);
+    expect(existsSync(path.join(repo, "plugins/fmrl", logo))).toBe(true);
+  });
   it("names every tool, as the Claude manifest does", () => {
     for (const t of ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"]) {
       expect(cursorManifest().description).toContain(t);

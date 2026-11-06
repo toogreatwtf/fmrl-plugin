@@ -21,6 +21,8 @@ export interface RingBoxInput { prefix: string; box: string }
  * attached_at is when the agent attached to its person, or null. attach_url is optional on GET /me and absent on PATCH.
  * attached_via (account or browser) says where an attached agent's canvases show; canvases_url opens them. A server
  * older than both sends neither. */
+/** AttachResponse is POST /me/attach: a link, its expiry, the code the page shows beside it and the machine it names. A server from before markymd #355 answers url and expires_at only. */
+export interface AttachResponse { url: string; expires_at: string; code?: string; machine?: string }
 export interface MeResponse { prefix: string; created_at: string; label?: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at?: string | null; attached_via?: "account" | "browser"; canvases_url?: string; linked_at?: string | null; link_url?: string; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
 
 /** canvasesUrl is where me's person sees its canvases: the server's link, else the drawer on viewerBase. */
@@ -79,7 +81,7 @@ export class FmrlApi {
   // them only in this process, scoped to this API origin and credential. Never
   // persist them, replace them remotely, or renew their one-hour lifetime on reads.
   private readonly attachHints = new Map<string, { url: string; expires: number }>();
-  noteAttachment(key: string, response: { attached_at?: unknown; attach_url?: unknown }, receivedAt = Date.now()): void {
+  noteAttachment(key: string, response: { attached_at?: unknown; attach_url?: unknown }, receivedAt = Date.now(), lifetimeMs = 3600000): void {
     if (typeof response.attached_at === "string" && response.attached_at) {
       this.attachHints.delete(key);
       return;
@@ -90,7 +92,7 @@ export class FmrlApi {
     try { url = new URL(response.attach_url); } catch { return; }
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) return;
     if (this.attachHints.get(key)?.url === response.attach_url) return;
-    this.attachHints.set(key, {url: response.attach_url, expires: receivedAt + 3600000});
+    this.attachHints.set(key, {url: response.attach_url, expires: receivedAt + lifetimeMs});
   }
   attachmentHint(key: string): string | undefined {
     const hint = this.attachHints.get(key);
@@ -139,6 +141,17 @@ export class FmrlApi {
     return this.call<MeResponse>("GET", "/me", key, undefined, undefined, opts).then(me => {
       if (me && typeof me === "object") this.noteAttachment(key, me, started);
       return me;
+    });
+  }
+  /** attach asks for a ten-minute link that attaches key's agent to a person, naming the machine it runs on (markymd #355). The new link ends any earlier unspent one, so it replaces the courtesy hint, for its own lifetime. */
+  attach(key: string, machine?: string): Promise<AttachResponse> {
+    const started = Date.now();
+    return this.call<AttachResponse>("POST", "/me/attach", key, machine ? { machine } : undefined).then(a => {
+      if (a && typeof a === "object" && typeof a.url === "string") {
+        const lifetime = typeof a.expires_at === "string" ? Date.parse(a.expires_at) - started : NaN;
+        this.noteAttachment(key, { attached_at: null, attach_url: a.url }, started, Number.isFinite(lifetime) && lifetime > 0 ? Math.min(lifetime, 3600000) : 600000);
+      }
+      return a;
     });
   }
   putRings(key: string, boxes: RingBoxInput[], fingerprint?: string): Promise<{ stored: number }> {

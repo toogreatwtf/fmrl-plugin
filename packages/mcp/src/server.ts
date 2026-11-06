@@ -497,8 +497,40 @@ const whoamiOutput = {
 };
 const redeemOutput = { prefix: z.string(), file: z.string(), replaced: z.string().optional() };
 const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string(), replaced: z.string().optional() };
+const attachOutput = {
+  attached: z.boolean().describe("True: this agent is already attached and nothing was minted."),
+  machine: z.string().optional().describe("The machine name the link carries, as fmrl.site cleaned it."),
+  attach_url: z.string().optional().describe("The one-time link, with the key ring when available. Relay it unchanged."),
+  code: z.string().optional().describe("The code fmrl.site shows beside the link, for the person to compare."),
+  expires_at: z.string().optional(),
+  attached_at: z.string().optional(),
+  attached_via: z.enum(["account", "browser"]).optional(),
+  canvases_url: z.string().optional(),
+};
 
-/** createServer registers the eleven tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
+/** machineName is this machine's name for an attach link: the host name's first label (Prodigal.local is Prodigal), cut to fmrl.site's 40 characters. */
+export function machineName(host = os.hostname()): string {
+  const first = host.split(".")[0]?.trim() ?? "";
+  return Array.from(first || host.trim()).slice(0, 40).join("");
+}
+
+/** attachText is fmrl_attach's answer, per the attach command mockups (markymd #355): the link, the code to compare and how long it lasts; or, already attached, that there is nothing to do. */
+export function attachText(a: { attached: boolean; machine?: string; attach_url?: string; code?: string; attached_at?: string; canvases_url?: string }, machine: string): string {
+  const on = a.machine || machine;
+  const who = on ? `this agent on ${on}` : "this agent";
+  if (a.attached) {
+    return `${who[0].toUpperCase()}${who.slice(1)} is already attached to your fmrl account${a.attached_at ? ` (since ${a.attached_at})` : ""}. Nothing to do.${a.canvases_url ? ` Its canvases show at ${a.canvases_url}.` : ""}`;
+  }
+  const lines = [`Open this link to attach ${who} to your fmrl account:`, a.attach_url ?? ""];
+  if (a.code) {
+    lines.push(`Code on the page: ${a.code}`, "It works once, for 10 minutes. Check the page shows the same code, then press Attach. Nothing changes until you do.");
+  } else {
+    lines.push("It works once. Nothing changes until you press Attach.");
+  }
+  return lines.join("\n");
+}
+
+/** createServer registers the fourteen tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
@@ -1298,6 +1330,44 @@ export function createServer(deps: ServerDeps): McpServer {
         return ok(`Redeemed the key code for ${r.prefix}…, this machine's key: its new secret is saved to ${keys.file}. Its pages, name, linked browsers and key ring carry over.`, structured);
       }
       return ok(`Redeemed the key code: this machine now uses ${r.prefix}…, saved to ${keys.file}.${replaced ? ` It replaces ${replaced}…, whose key ring stays in that file.` : ""}`, structured);
+    },
+  );
+
+  server.registerTool(
+    "fmrl_attach",
+    {
+      title: "Attach this agent to a person's fmrl account",
+      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it. Names this machine on the page (machine overrides the host name). When the agent is already attached it says so, asks for no link and changes nothing. Only call this when the user asked to attach the agent. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself.",
+      inputSchema: { machine: z.string().max(40).optional().describe("The machine name to show on the page; defaults to this computer's host name.") },
+      outputSchema: attachOutput,
+    },
+    async ({ machine }) => {
+      const name = machine?.trim() || machineName();
+      let used = "";
+      try {
+        const out = await withKey(async (k) => {
+          used = k;
+          // Already attached: nothing to do (Marty: "If already attached, it's a noop"). The server still mints for an
+          // attached agent, since such a link re-delivers its ring to a browser, so the no-op is decided here, from GET /me.
+          const me = await api.me(k);
+          if (typeof me.attached_at === "string" && me.attached_at) {
+            return { attached: true, attached_at: me.attached_at, ...(me.attached_via ? { attached_via: me.attached_via } : {}), canvases_url: canvasesUrl(me, api.viewerBase) };
+          }
+          const a = await api.attach(k, name);
+          if (!a || typeof a.url !== "string") throw new Error("fmrl.site answered without a link; try again.");
+          let url = a.url;
+          try {
+            const ring = await keys.ringFor(k);
+            if (ring) url = withRing(url, await keys.prefixFor(k), ring);
+          } catch {
+            // No ring to carry: the link still attaches; private pages open once the ring is backed up.
+          }
+          return { attached: false, attach_url: url, ...(a.code ? { code: a.code } : {}), ...(a.machine ? { machine: a.machine } : {}), ...(a.expires_at ? { expires_at: a.expires_at } : {}) };
+        }, { replaceRevoked: false });
+        return ok(attachText(out, name), out);
+      } catch (e) {
+        return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
+      }
     },
   );
 

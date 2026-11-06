@@ -27,8 +27,8 @@ describe("the plugin manifest", () => {
       expect(manifest.description).toContain(`${t}`);
       for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme)).toContain(`| \`${t}\` |`);
     }
-    expect(read("README.md")).toContain("Any MCP client gets twelve tools:");
-    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets twelve tools:");
+    expect(read("README.md")).toContain("Any MCP client gets fourteen tools:");
+    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets fourteen tools:");
   });
   it("names all three slash commands, as the READMEs do", () => {
     for (const cmd of ["/fmrl:share", "/fmrl:whoami", "/fmrl:status"]) {
@@ -268,7 +268,7 @@ describe("the Cursor plugin", () => {
   });
   it("has skills Cursor accepts: a name matching the folder, and a description", () => {
     const skills = readdirSync(path.join(repo, "plugins/fmrl/skills"));
-    expect(skills.sort()).toEqual(["share", "status", "whoami"]);
+    expect(skills.sort()).toEqual(["attach", "share", "status", "whoami"]);
     for (const name of skills) {
       const front = /^---\nname: (.+)\ndescription: (.+)\n/.exec(read(`plugins/fmrl/skills/${name}/SKILL.md`));
       expect(front?.[1], name).toBe(name);

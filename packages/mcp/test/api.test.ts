@@ -367,3 +367,15 @@ describe("lastCall", () => {
     expect(dead.lastCall).toMatchObject({ method: "GET", path: "/me", status: 0, code: "network" });
   });
 });
+
+describe("attach hint", () => {
+  it("a commanded link replaces the courtesy hint for its own ten minutes, and an attached answer clears it", () => {
+    const api = new FmrlApi("https://fmrl.test");
+    const t0 = Date.now();
+    api.noteAttachment("k", { attached_at: null, attach_url: "https://fmrl.test/c/courtesy" }, t0);
+    api.noteAttachment("k", { attached_at: null, attach_url: "https://fmrl.test/c/command" }, t0, 600000);
+    expect(api.attachmentHint("k")).toBe("https://fmrl.test/c/command");
+    api.noteAttachment("k", { attached_at: "2026-11-06T13:00:00Z" });
+    expect(api.attachmentHint("k")).toBeUndefined();
+  });
+});

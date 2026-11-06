@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, canvasesUrl, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
+import { ApiError, canvasesUrl, isRevoked, type AttachResponse, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { fileName, fileStem, filesDir, openFilesDir, writeIn } from "./files.js";
 import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
@@ -497,8 +497,40 @@ const whoamiOutput = {
 };
 const redeemOutput = { prefix: z.string(), file: z.string(), replaced: z.string().optional() };
 const rotateOutput = { prefix: z.string(), rotated_at: z.string(), file: z.string(), replaced: z.string().optional() };
+const attachOutput = {
+  attached: z.boolean().describe("True: this agent is already attached and nothing was minted."),
+  machine: z.string().optional().describe("The machine name the link carries, as fmrl.site cleaned it."),
+  attach_url: z.string().optional().describe("The one-time link, with the key ring when available. Relay it unchanged."),
+  code: z.string().optional().describe("The code fmrl.site shows beside the link, for the person to compare."),
+  expires_at: z.string().optional(),
+  attached_at: z.string().optional(),
+  attached_via: z.enum(["account", "browser"]).optional(),
+  canvases_url: z.string().optional(),
+};
 
-/** createServer registers the eleven tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
+/** machineName is this machine's name for an attach link: the host name's first label (Prodigal.local is Prodigal), cut to fmrl.site's 40 characters. */
+export function machineName(host = os.hostname()): string {
+  const first = host.split(".")[0]?.trim() ?? "";
+  return Array.from(first || host.trim()).slice(0, 40).join("");
+}
+
+/** attachText is fmrl_attach's answer, per the attach command mockups (markymd #355): the link, the code to compare and how long it lasts; or, already attached, that there is nothing to do. */
+export function attachText(a: AttachResponse & { attach_url?: string; canvases_url?: string }, machine: string): string {
+  const on = a.machine || machine;
+  const who = on ? `this agent on ${on}` : "this agent";
+  if (a.attached) {
+    return `${who[0].toUpperCase()}${who.slice(1)} is already attached to your fmrl account${a.attached_at ? ` (since ${a.attached_at})` : ""}. Nothing to do.${a.canvases_url ? ` Its canvases show at ${a.canvases_url}.` : ""}`;
+  }
+  const lines = [`Open this link to attach ${who} to your fmrl account:`, a.attach_url ?? ""];
+  if (a.code) {
+    lines.push(`Code on the page: ${a.code}`, "It works once, for 10 minutes. Check the page shows the same code, then press Attach. Nothing changes until you do.");
+  } else {
+    lines.push("It works once. Nothing changes until you press Attach.");
+  }
+  return lines.join("\n");
+}
+
+/** createServer registers the fourteen tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
@@ -1298,6 +1330,41 @@ export function createServer(deps: ServerDeps): McpServer {
         return ok(`Redeemed the key code for ${r.prefix}…, this machine's key: its new secret is saved to ${keys.file}. Its pages, name, linked browsers and key ring carry over.`, structured);
       }
       return ok(`Redeemed the key code: this machine now uses ${r.prefix}…, saved to ${keys.file}.${replaced ? ` It replaces ${replaced}…, whose key ring stays in that file.` : ""}`, structured);
+    },
+  );
+
+  server.registerTool(
+    "fmrl_attach",
+    {
+      title: "Attach this agent to a person's fmrl account",
+      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it. Names this machine on the page (machine overrides the host name). When the agent is already attached it says so and changes nothing. Only call this when the user asked to attach the agent. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself.",
+      inputSchema: { machine: z.string().max(40).optional().describe("The machine name to show on the page; defaults to this computer's host name.") },
+      outputSchema: attachOutput,
+    },
+    async ({ machine }) => {
+      const name = machine?.trim() || machineName();
+      let used = "";
+      try {
+        const out = await withKey(async (k) => {
+          used = k;
+          const a = await api.attach(k, name);
+          if (a.attached) {
+            return { attached: true, ...(a.attached_at ? { attached_at: a.attached_at } : {}), ...(a.attached_via ? { attached_via: a.attached_via } : {}), canvases_url: canvasesUrl({}, api.viewerBase) };
+          }
+          if (typeof a.url !== "string") throw new Error("fmrl.site answered without a link; try again.");
+          let url = a.url;
+          try {
+            const ring = await keys.ringFor(k);
+            if (ring) url = withRing(url, await keys.prefixFor(k), ring);
+          } catch {
+            // No ring to carry: the link still attaches; private pages open once the ring is backed up.
+          }
+          return { attached: false, attach_url: url, ...(a.code ? { code: a.code } : {}), ...(a.machine ? { machine: a.machine } : {}), ...(a.expires_at ? { expires_at: a.expires_at } : {}) };
+        }, { replaceRevoked: false });
+        return ok(attachText(out, name), out);
+      } catch (e) {
+        return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
+      }
     },
   );
 

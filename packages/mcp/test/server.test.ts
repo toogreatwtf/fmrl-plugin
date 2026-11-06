@@ -13,7 +13,7 @@ import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/cryp
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
 import { PageStore } from "../src/pages.js";
-import { CONTENT_WRITTEN, createServer, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
+import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
 import { PREFER_THIS_SERVER } from "../src/plugin.js";
@@ -316,9 +316,35 @@ describe("account vault sync integration", () => {
 });
 
 describe("tools", () => {
-  it("lists exactly the twelve tools", async () => {
+  it("lists exactly the fourteen tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
+    expect(names).toEqual(["fmrl_attach", "fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
+  });
+  it("fmrl_attach answers the link with the ring, the code and the machine, and is a no-op once attached", async () => {
+    const r = await call("fmrl_attach", { machine: "Prodigal" });
+    expect(r.isError).toBeFalsy();
+    const s = r.structuredContent as { attached: boolean; attach_url: string; code: string; machine: string };
+    expect(s.attached).toBe(false);
+    expect(s.code).toBe("K7Q-4MZ");
+    expect(s.machine).toBe("Prodigal");
+    expect(s.attach_url).toMatch(/^https:\/\/fmrl\.test\/c\/attachcmd/);
+    expect(s.attach_url).toMatch(RING_PAIR);
+    const req = fake.requests.filter((q) => q.path === "/api/v1/me/attach").at(-1)!;
+    expect(req.body).toEqual({ machine: "Prodigal" });
+    expect(text(r)).toContain("Open this link to attach this agent on Prodigal to your fmrl account:");
+    expect(text(r)).toContain("Code on the page: K7Q-4MZ");
+    expect(text(r)).toContain("It works once, for 10 minutes.");
+    fake.linked.add(keyOf(req));
+    const again = await call("fmrl_attach");
+    expect(again.isError).toBeFalsy();
+    expect(again.structuredContent).toMatchObject({ attached: true, attached_at: "2026-09-16T12:00:00Z" });
+    expect(again.structuredContent?.attach_url).toBeUndefined();
+    expect(text(again)).toContain("is already attached to your fmrl account (since 2026-09-16T12:00:00Z). Nothing to do.");
+  });
+  it("fmrl_attach names this computer when no machine is given", async () => {
+    await call("fmrl_attach");
+    const req = fake.requests.filter((q) => q.path === "/api/v1/me/attach").at(-1)!;
+    expect(req.body).toEqual({ machine: machineName() });
   });
   it("fmrl_publish mints a key on first use and returns url, expiry, the seven-days line and the manage link", async () => {
     const r = await call("fmrl_publish", { visibility: "public", content: "# Hello", title: "Hello" });
@@ -2185,5 +2211,13 @@ describe("fmrl_status", () => {
         expect(await status(c)).toContain("No API call yet this session.");
       }, new FmrlApi(fake.baseUrl, { fetchImpl: hangingFetch }));
     });
+  });
+});
+
+describe("machineName", () => {
+  it("is the host name's first label, cut to 40 characters", () => {
+    expect(machineName("Prodigal.local")).toBe("Prodigal");
+    expect(machineName("homebase")).toBe("homebase");
+    expect(machineName("a".repeat(50))).toBe("a".repeat(40));
   });
 });

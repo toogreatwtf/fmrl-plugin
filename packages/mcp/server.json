@@ -1,0 +1,53 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.toogreatwtf/fmrl-mcp",
+  "title": "fmrl",
+  "description": "Publish HTML or Markdown from any agent to fmrl.site and get a link back. Private by default.",
+  "websiteUrl": "https://fmrl.site/install",
+  "repository": {
+    "url": "https://github.com/toogreatwtf/fmrl-plugin",
+    "source": "github",
+    "subfolder": "packages/mcp"
+  },
+  "version": "0.17.5",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "fmrl-mcp",
+      "version": "0.17.5",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FMRL_API_KEY",
+          "description": "Optional. An fmrl.site API key; the server mints its own on first publish when unset.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "FMRL_API_URL",
+          "description": "Optional. Another fmrl host, for a preview or a local run. Default https://fmrl.site.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "FMRL_AGENT_NAME",
+          "description": "Optional. Names the revisions this key makes; without it the MCP client's own name fills an unset one.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "FMRL_RING",
+          "description": "Optional. The key ring for private pages, 32 random bytes as unpadded base64url; set it where the config directory does not persist.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

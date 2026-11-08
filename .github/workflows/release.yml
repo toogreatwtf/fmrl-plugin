@@ -219,7 +219,8 @@ jobs:
           "$RUNNER_TEMP/bin/publisher" validate
           for wait in 0 10 20 30 60 60 60 60; do
             sleep "$wait"
-            code="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/fmrl-mcp/${VERSION}")"
+            # A dropped connection prints 000 and must not end the step under bash -e.
+            code="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/fmrl-mcp/${VERSION}" || true)"
             if [ "$code" = 200 ]; then break; fi
             echo "npm answers HTTP ${code} for fmrl-mcp@${VERSION}; waiting for it to show."
           done

@@ -50,16 +50,16 @@
 # logs in with the id-token it already holds for npm. mcp-publisher is
 # built with `go install` at a pinned tag, so its module checksums are
 # checked against the Go checksum database rather than trusting a
-# `latest` download. A version that reached npm before this step existed
-# (0.17.5) is listed by running this workflow by hand on main with
-# `registry_only` ticked; it still waits for the npm-release approval and
-# publishes nothing to npm when npm already has the version. Publishing a
-# version the registry already lists fails that step, and nothing else.
+# `latest` download. npm and the registry are each checked on their own,
+# so a run that reached npm but failed to list the version lists it when
+# re-run (or run by hand on main), instead of finishing green with the
+# version unlisted.
 #
 # The version check runs first, in its own job with no environment and no
 # id-token permission, so a merge that leaves the version alone finishes
-# green without asking anyone to approve anything. Only when npm does not
-# have the version yet does the publish job start and wait in npm-release.
+# green without asking anyone to approve anything. Only when npm or the
+# registry does not have the version yet does the publish job start and
+# wait in npm-release.
 # The check decides only whether to ask; it cannot publish, and the publish
 # job checks npm again itself before it touches anything.
 name: release
@@ -71,11 +71,6 @@ on:
       - packages/mcp/**
       - .github/workflows/release.yml
   workflow_dispatch:
-    inputs:
-      registry_only:
-        description: List this version in the MCP Registry even though npm already has it
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -100,34 +95,45 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       # Published only if npm answers with this exact version; new only on
-      # npm's 404. Anything else (a registry outage) fails the run instead
-      # of guessing either way.
-      - name: is this version already on npm?
+      # npm's 404. Listed only on the registry's 200; missing only on its
+      # 404. Anything else (an outage) fails the run instead of guessing
+      # either way.
+      - name: is this version already on npm and in the MCP Registry?
         id: gate
         run: |
           version="$(node -p "require('./package.json').version")"
+          name="$(node -p "require('./server.json').name")"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           if found="$(npm view "fmrl-mcp@${version}" version 2>npm-view.err)"; then
-            if [ "$found" = "$version" ]; then
-              echo "fmrl-mcp@${version} is already published; nothing to do, no approval needed."
-              echo "publish=false" >> "$GITHUB_OUTPUT"
-              exit 0
+            if [ "$found" != "$version" ]; then
+              echo "npm answered '${found}' for fmrl-mcp@${version}; refusing to guess." >&2
+              exit 1
             fi
-            echo "npm answered '${found}' for fmrl-mcp@${version}; refusing to guess." >&2
+            npm=published
+          elif grep -q "E404" npm-view.err; then
+            npm=new
+          else
+            cat npm-view.err >&2
             exit 1
           fi
-          if grep -q "E404" npm-view.err; then
-            echo "fmrl-mcp@${version} is not on npm yet; the publish job will wait for approval in npm-release."
+          code="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.modelcontextprotocol.io/v0/servers/${name/\//%2F}/versions/${version}")"
+          case "$code" in
+            200) registry=listed ;;
+            404) registry=missing ;;
+            *) echo "the MCP Registry answered HTTP ${code} for ${name}@${version}; refusing to guess." >&2; exit 1 ;;
+          esac
+          if [ "$npm" = published ] && [ "$registry" = listed ]; then
+            echo "fmrl-mcp@${version} is on npm and in the MCP Registry; nothing to do, no approval needed."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "fmrl-mcp@${version}: npm ${npm}, MCP Registry ${registry}; the publish job will wait for approval in npm-release."
             echo "publish=true" >> "$GITHUB_OUTPUT"
-            exit 0
           fi
-          cat npm-view.err >&2
-          exit 1
 
   publish:
     name: publish fmrl-mcp ${{ needs.check.outputs.version }}
     needs: check
-    if: github.ref == 'refs/heads/main' && (needs.check.outputs.publish == 'true' || inputs.registry_only)
+    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
     environment: npm-release
     runs-on: ubuntu-latest
     # One publish at a time, and never cancel one in flight: a cancelled
@@ -153,18 +159,27 @@ jobs:
           cache-dependency-path: packages/mcp/package-lock.json
       - name: npm 11.5.1+ for trusted publishing
         run: npm install -g npm@11.21.1 && npm --version
-      - name: is this version already on npm?
+      - name: is this version already on npm and in the MCP Registry?
         id: gate
         run: |
           version="$(node -p "require('./package.json').version")"
+          name="$(node -p "require('./server.json').name")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           if npm view "fmrl-mcp@${version}" version >/dev/null 2>&1; then
-            echo "fmrl-mcp@${version} is already published; nothing to do."
+            echo "fmrl-mcp@${version} is already on npm; not publishing it there."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "fmrl-mcp@${version} is not on npm yet; publishing."
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.modelcontextprotocol.io/v0/servers/${name/\//%2F}/versions/${version}")"
+          case "$code" in
+            200) echo "${name}@${version} is already in the MCP Registry; not listing it again."
+                 echo "list=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "${name}@${version} is not in the MCP Registry yet; listing it after npm."
+                 echo "list=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "the MCP Registry answered HTTP ${code} for ${name}@${version}; refusing to guess." >&2; exit 1 ;;
+          esac
       - if: steps.gate.outputs.publish == 'true'
         run: npm ci
       # prepublishOnly (package.json) runs the build and the test suite
@@ -173,17 +188,17 @@ jobs:
       - if: steps.gate.outputs.publish == 'true'
         name: publish fmrl-mcp@${{ steps.gate.outputs.version }}
         run: npm publish --access public
-      - if: steps.gate.outputs.publish == 'true' || inputs.registry_only
+      - if: steps.gate.outputs.list == 'true'
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.26'
           cache: false
-      - if: steps.gate.outputs.publish == 'true' || inputs.registry_only
+      - if: steps.gate.outputs.list == 'true'
         name: mcp-publisher v1.8.8
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install github.com/modelcontextprotocol/registry/cmd/publisher@v1.8.8
           "$RUNNER_TEMP/bin/publisher" --help >/dev/null
-      - if: steps.gate.outputs.publish == 'true' || inputs.registry_only
+      - if: steps.gate.outputs.list == 'true'
         name: list fmrl-mcp@${{ steps.gate.outputs.version }} in the MCP Registry
         run: |
           "$RUNNER_TEMP/bin/publisher" validate

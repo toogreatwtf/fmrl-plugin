@@ -207,7 +207,34 @@ jobs:
           "$RUNNER_TEMP/bin/publisher" --help >/dev/null
       - if: steps.gate.outputs.list == 'true'
         name: list fmrl-mcp@${{ steps.gate.outputs.version }} in the MCP Registry
+        # The registry checks the version against npm when it lists it, and
+        # npm can take a few minutes to serve a version it has just taken:
+        # 0.17.6 was refused with a 400 ("NPM package 'fmrl-mcp' ...") seconds
+        # after its publish. So wait until npm's registry answers for this
+        # exact version, then try the listing a few times with backoff. Each
+        # try logs in again, since the OIDC login is short-lived.
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
         run: |
           "$RUNNER_TEMP/bin/publisher" validate
-          "$RUNNER_TEMP/bin/publisher" login github-oidc
-          "$RUNNER_TEMP/bin/publisher" publish
+          for wait in 0 10 20 30 60 60 60 60; do
+            sleep "$wait"
+            code="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/fmrl-mcp/${VERSION}")"
+            if [ "$code" = 200 ]; then break; fi
+            echo "npm answers HTTP ${code} for fmrl-mcp@${VERSION}; waiting for it to show."
+          done
+          if [ "$code" != 200 ]; then
+            echo "npm still does not serve fmrl-mcp@${VERSION}; re-run this job once it does." >&2
+            exit 1
+          fi
+          for attempt in 1 2 3 4 5; do
+            if "$RUNNER_TEMP/bin/publisher" login github-oidc && "$RUNNER_TEMP/bin/publisher" publish; then
+              exit 0
+            fi
+            if [ "$attempt" = 5 ]; then break; fi
+            backoff=$((attempt * 30))
+            echo "listing try ${attempt} failed; trying again in ${backoff}s."
+            sleep "$backoff"
+          done
+          echo "the MCP Registry refused fmrl-mcp@${VERSION} five times; re-run this job to try again." >&2
+          exit 1

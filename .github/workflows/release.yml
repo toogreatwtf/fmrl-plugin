@@ -41,6 +41,21 @@
 # Actions are pinned to commit SHAs and npm to an exact version, because
 # this job holds the one credential that reaches every user's machine.
 #
+# The same approved job then lists the version in the official MCP Registry
+# (registry.modelcontextprotocol.io) under io.github.toogreatwtf/fmrl-mcp,
+# from packages/mcp/server.json. The registry only lets an Owner of the
+# toogreatwtf org publish under that name, and `mcp-publisher login github`
+# from a laptop cannot show an org role; GitHub OIDC from this repository
+# can (the registry grants io.github.<repository_owner>/*), so the job
+# logs in with the id-token it already holds for npm. mcp-publisher is
+# built with `go install` at a pinned tag, so its module checksums are
+# checked against the Go checksum database rather than trusting a
+# `latest` download. A version that reached npm before this step existed
+# (0.17.5) is listed by running this workflow by hand on main with
+# `registry_only` ticked; it still waits for the npm-release approval and
+# publishes nothing to npm when npm already has the version. Publishing a
+# version the registry already lists fails that step, and nothing else.
+#
 # The version check runs first, in its own job with no environment and no
 # id-token permission, so a merge that leaves the version alone finishes
 # green without asking anyone to approve anything. Only when npm does not
@@ -56,6 +71,11 @@ on:
       - packages/mcp/**
       - .github/workflows/release.yml
   workflow_dispatch:
+    inputs:
+      registry_only:
+        description: List this version in the MCP Registry even though npm already has it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -107,7 +127,7 @@ jobs:
   publish:
     name: publish fmrl-mcp ${{ needs.check.outputs.version }}
     needs: check
-    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
+    if: github.ref == 'refs/heads/main' && (needs.check.outputs.publish == 'true' || inputs.registry_only)
     environment: npm-release
     runs-on: ubuntu-latest
     # One publish at a time, and never cancel one in flight: a cancelled
@@ -153,3 +173,19 @@ jobs:
       - if: steps.gate.outputs.publish == 'true'
         name: publish fmrl-mcp@${{ steps.gate.outputs.version }}
         run: npm publish --access public
+      - if: steps.gate.outputs.publish == 'true' || inputs.registry_only
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26'
+          cache: false
+      - if: steps.gate.outputs.publish == 'true' || inputs.registry_only
+        name: mcp-publisher v1.8.8
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/modelcontextprotocol/registry/cmd/publisher@v1.8.8
+          "$RUNNER_TEMP/bin/publisher" --help >/dev/null
+      - if: steps.gate.outputs.publish == 'true' || inputs.registry_only
+        name: list fmrl-mcp@${{ steps.gate.outputs.version }} in the MCP Registry
+        run: |
+          "$RUNNER_TEMP/bin/publisher" validate
+          "$RUNNER_TEMP/bin/publisher" login github-oidc
+          "$RUNNER_TEMP/bin/publisher" publish

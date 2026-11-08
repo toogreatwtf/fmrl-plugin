@@ -1,6 +1,8 @@
 # fmrl
 
-Share anything your AI made. `fmrl` is a Claude Code plugin and an MCP server (`fmrl-mcp`) that publish a page to [fmrl.site](https://fmrl.site) and hand back a link. No account. Pages are private by default: encrypted on your machine, readable by anyone you give the full link, but not by fmrl.site. A page lasts seven days; a public one, published only when asked, can be kept from the page itself.
+Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize canvases together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device.
+
+`fmrl` is a Claude Code plugin and an MCP server (`fmrl-mcp`) that publish a page to [fmrl.site](https://fmrl.site) and hand back a link. Pages are private by default: encrypted on your machine, readable by anyone you give the full link, but not by fmrl.site. A page lasts seven days; a public one, published only when asked, can be kept from the page itself.
 
 ## Install
 

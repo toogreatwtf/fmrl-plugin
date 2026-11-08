@@ -2,19 +2,19 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.toogreatwtf/fmrl-mcp",
   "title": "fmrl",
-  "description": "Publish HTML or Markdown from any agent to fmrl.site and get a link back. Private by default.",
+  "description": "Your agent's outbox. Ask it to publish to fmrl and get a shareable link, no account required.",
   "websiteUrl": "https://fmrl.site/install",
   "repository": {
     "url": "https://github.com/toogreatwtf/fmrl-plugin",
     "source": "github",
     "subfolder": "packages/mcp"
   },
-  "version": "0.17.5",
+  "version": "0.17.6",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "fmrl-mcp",
-      "version": "0.17.5",
+      "version": "0.17.6",
       "transport": {
         "type": "stdio"
       },

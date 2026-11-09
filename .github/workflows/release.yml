@@ -15,9 +15,17 @@
 # publishing needs npm 11.5.1+, which Node 22's bundled npm is not, hence
 # the pinned `npm install -g npm@11.21.1` step.
 #
-# A publish runs only for a commit on main, and only after a maintainer
-# approves it in the npm-release environment, which npm's trusted publisher
-# names. Actions are pinned to commit SHAs and npm to an exact version.
+# One-time setup, on npmjs.com, package fmrl-mcp → Settings → Trusted
+# publisher → GitHub Actions: organization `toogreatwtf`, repository
+# `fmrl-plugin`, workflow filename `release.yml`, environment `npm-release`.
+# Until that is done the publish step fails with 404/E401 and nothing else
+# happens.
+#
+# A publish runs only for a commit on main, and waits in the npm-release
+# environment, which npm's trusted publisher names. Who may approve it is
+# set by that environment's protection rules in the repository settings,
+# not by this file. Actions are pinned to commit SHAs and npm to an exact
+# version.
 #
 # The same approved job then lists the version in the official MCP Registry
 # (registry.modelcontextprotocol.io) under io.github.toogreatwtf/fmrl-mcp,

@@ -437,7 +437,7 @@ const readOutput = {
     sections: z.array(z.object({ id: z.string(), purpose: z.string(), by: z.string(), required: z.boolean() })),
     norms: z.array(z.string()),
   }).optional(),
-  section_map: z.record(z.object({ heading: z.string(), position: z.number() })).optional(),
+  section_map: z.record(z.string(), z.object({ heading: z.string(), position: z.number() })).optional(),
   missing: z.array(z.string()).optional(),
   profile_error: z.string().optional(),
 };

@@ -1,12 +1,11 @@
-# The npm publish is half the deploy: anyone who runs `npx -y fmrl-mcp` from
-# their own MCP config, and any plugin from before 0.17.2, starts whatever is
-# `latest` on npm. Plugins from 0.17.2 on pin an exact version in
-# plugins/fmrl/.mcp.json, so they run a new server only once a later PR moves
-# that pin, which must come after this publish. Until this workflow the
-# publish was a laptop step (`npm login`, `npm publish`), so a fix merged to
-# main stayed unshipped until someone remembered. Now a merge to main whose
-# packages/mcp/package.json names a version npm does not yet have is the
-# release; a merge that leaves the version alone publishes nothing.
+# Publishes fmrl-mcp to npm and lists it in the MCP Registry. Anyone who
+# runs `npx -y fmrl-mcp` from their own MCP config, and any plugin from
+# before 0.17.2, starts whatever is `latest` on npm. Plugins from 0.17.2 on
+# pin an exact version in plugins/fmrl/.mcp.json, so they run a new server
+# only once a later PR moves that pin, which must come after this publish.
+# A merge to main whose packages/mcp/package.json names a version npm does
+# not yet have is the release; a merge that leaves the version alone
+# publishes nothing.
 #
 # Auth is npm Trusted Publishing: the job presents a GitHub OIDC token, npm
 # checks it against the trusted publisher configured on the package
@@ -22,46 +21,29 @@
 # Until that is done the publish step fails with 404/E401 and nothing else
 # happens.
 #
-# Because what this job publishes reaches users' machines, a publish
-# needs three things:
-#   - the commit is on main (the job refuses any other ref, including a
-#     workflow_dispatch pointed at a branch);
-#   - the `npm-release` environment's required reviewer approves the run
-#     (repository Settings → Environments → npm-release: required
-#     reviewers, deployment branches limited to main, and "Prevent
-#     self-review" on);
-#   - npm's trusted publisher names that environment, so an OIDC token from
-#     any other job or branch is refused at npm.
-# So a leaked login with write access that is not a required reviewer
-# cannot ship code to users. What it does not stop: a leaked reviewer login
-# can approve a run someone else started, and approve its own too unless
-# "Prevent self-review" is on with a second reviewer to do the approving;
-# and a leaked admin login can change these settings. Those need 2FA and
-# a second reviewer, not workflow YAML.
-# Actions are pinned to commit SHAs and npm to an exact version, because
-# this job holds the one credential that reaches every user's machine.
+# A publish runs only for a commit on main, and waits in the npm-release
+# environment, which npm's trusted publisher names. Who may approve it is
+# set by that environment's protection rules in the repository settings,
+# not by this file. Actions are pinned to commit SHAs and npm to an exact
+# version.
 #
 # The same approved job then lists the version in the official MCP Registry
 # (registry.modelcontextprotocol.io) under io.github.toogreatwtf/fmrl-mcp,
-# from packages/mcp/server.json. The registry only lets an Owner of the
-# toogreatwtf org publish under that name, and `mcp-publisher login github`
-# from a laptop cannot show an org role; GitHub OIDC from this repository
-# can (the registry grants io.github.<repository_owner>/*), so the job
-# logs in with the id-token it already holds for npm. mcp-publisher is
-# built with `go install` at a pinned tag, so its module checksums are
-# checked against the Go checksum database rather than trusting a
-# `latest` download. npm and the registry are each checked on their own,
-# so a run that reached npm but failed to list the version lists it when
-# re-run (or run by hand on main), instead of finishing green with the
-# version unlisted.
+# from packages/mcp/server.json, logging in with the GitHub OIDC token it
+# already holds for npm. mcp-publisher is built with `go install` at a
+# pinned tag, so its module checksums are checked against the Go checksum
+# database rather than trusting a `latest` download. npm and the registry
+# are each checked on their own, so a run that reached npm but failed to
+# list the version lists it when re-run (or run by hand on main), instead of
+# finishing green with the version unlisted.
 #
 # The version check runs first, in its own job with no environment and no
 # id-token permission, so a merge that leaves the version alone finishes
 # green without asking anyone to approve anything. Only when npm or the
 # registry does not have the version yet does the publish job start and
-# wait in npm-release.
-# The check decides only whether to ask; it cannot publish, and the publish
-# job checks npm again itself before it touches anything.
+# wait for approval. The check decides only whether to ask; it cannot
+# publish, and the publish job checks npm again itself before it touches
+# anything.
 name: release
 
 on:

@@ -118,7 +118,7 @@ function publishTextLines(p: PublishResponse, expiryLine: string): string[] {
 function publishText(p: PublishResponse): string {
   return publishTextLines(p, SEVEN_DAYS).join("\n");
 }
-export const SEVEN_DAYS_PRIVATE = "This page lasts seven days; a private page cannot be kept.";
+export const SEVEN_DAYS_PRIVATE = "This page lasts seven days unless someone keeps it on the page itself; a kept private page stays encrypted.";
 export const PRIVATE_LINE = "This page is private: it was encrypted here before upload, and the key is the part of the link after #p=. fmrl.site cannot read or recover it.";
 
 /** preparePrivate renders (if Markdown) and seals content — under pageKey when one is given (a new revision of a private page), else under a fresh key — returning the request body, the link key, and the title the sealed record carries: the title given, else the first heading for Markdown, else the document's <title> or first heading for HTML. The request body never carries a title. verb names the act in the refusal of a page that renders empty. */
@@ -461,9 +461,14 @@ const inboxOutput = {
   })),
 };
 const meOutput = {
-  prefix: z.string(), created_at: z.string(), label: z.string().optional(),
-  quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }),
-  attached_at: z.string().nullable().optional(), linked_at: z.string().nullable().optional(), link_url: z.string().optional(), rotated_at: z.string().optional(), attach_url: z.string().optional(),
+  prefix: z.string().describe("The key's public prefix, the part safe to show; the secret is never returned."),
+  created_at: z.string(),
+  label: z.string().optional().describe("The key's name, which the revisions it makes carry. Absent while unnamed."),
+  quota: z.object({ publishes: z.object({ used: z.number(), limit: z.number(), resets_at: z.string() }) }).describe("This month's free publishes: how many are used, the monthly limit, and when the count resets."),
+  attached_at: z.string().nullable().optional().describe("When the agent was attached to a person's fmrl account; null while unattached."),
+  linked_at: z.string().nullable().optional(), link_url: z.string().optional(),
+  rotated_at: z.string().optional().describe("When the key's secret was last rotated."),
+  attach_url: z.string().optional().describe("A one-time link that attaches an unattached agent, when one was supplied. Relay it unchanged."),
   attached_via: z.enum(["account", "browser"]).optional().describe("Where an attached agent's canvases show: account, in every browser signed in to its person's fmrl account; browser, only in the one browser it was attached from. Absent while unattached or when the server does not say."),
   canvases_url: z.string().optional().describe("The fmrl.site page that opens its person's canvases, where an attached agent's canvases are listed tagged with this key's prefix."),
 };
@@ -834,14 +839,15 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_publish",
     {
       title: "Publish a page to fmrl.site",
-      description: "Publish HTML or Markdown as a page on fmrl.site and get its link. Pages are private by default: encrypted here first, the key in the link after #p=. Pass visibility: \"public\" only when the person asked for a public page; a public page lasts seven days unless someone keeps it from the page itself. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. Only call this when the user asked to share, send, or get a link for something.",
+      description: "Publish HTML or Markdown as a new page on fmrl.site and answer its link. Each call makes a new page: to change one you already published use fmrl_edit, and to publish a file from disk use fmrl_publish_file. Only call it when the person asked to share, send, or get a link for something. Pages are private by default: encrypted on this machine, with the key only in the link after #p= and in this machine's key ring. Pass visibility: \"public\" only when the person asked for a public page. A page lasts seven days unless someone keeps it from the page itself. Public content or a title carrying a recognizable credential (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. Each publish counts toward this key's monthly free publishes, shown by fmrl_whoami.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       // Strict: an unknown argument (the passphrase of older clients, say) is
       // refused rather than dropped, so nothing meant to be private publishes in the clear.
       inputSchema: z.object({
         content: z.string().min(1).describe("The HTML or Markdown to publish: 2 MiB at most public; private pages are encrypted first, so roughly 1.4 MB fits."),
         format: z.enum(["html", "md"]).optional().describe("html or md; leave out to let the server detect it."),
         title: z.string().optional().describe("Page title; the first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
-        visibility: z.enum(["private", "public"]).optional().describe("private (the default): encrypted here before upload; the link carries the key after #p=, the page has no title or preview on fmrl.site, cannot be kept past seven days, and cannot be recovered without the link. public: anyone with the link can read it, it shows a title and preview, and it can be kept. Pass public only when the person asked for a public page, after showing them what will be shared."),
+        visibility: z.enum(["private", "public"]).optional().describe("private (the default): encrypted here before upload; the link carries the key after #p=, the page has no title or preview on fmrl.site, and opens only with that key. public: anyone with the link can read it, and it shows a title and preview. Either can be kept from the page itself. Pass public only when the person asked for a public page, after showing them what will be shared."),
         private: z.boolean().optional().describe("Older form of visibility: true is private, false is public. Prefer visibility."),
       }).strict(),
       outputSchema: publishOutput,
@@ -853,11 +859,12 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_publish_file",
     {
       title: "Publish a file to fmrl.site",
-      description: "Publish a .html, .htm, .md, .markdown, .mdx or .txt file as a page on fmrl.site (2 MiB at most public, roughly 1.4 MB private, since encryption adds about a third) and get its link. Private by default, encrypted here first; pass visibility: \"public\" only when the person asked for a public page. Public content or a title carrying a recognizable token of a common kind (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. Only call this when the user asked to share the file.",
+      description: "Publish a local .html, .htm, .md, .markdown, .mdx or .txt file as a new page on fmrl.site and answer its link. The file is read here, so its content never passes through the model; for content already in the conversation use fmrl_publish, and to change a page you published use fmrl_edit. Only call it when the person asked to share the file. Private by default, encrypted here first: 2 MiB at most public, roughly 1.4 MB private, since encryption adds about a third. Pass visibility: \"public\" only when the person asked for a public page. Public content or a title carrying a recognizable credential (a private key, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key) is refused. A page lasts seven days unless someone keeps it from the page itself.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       inputSchema: z.object({
         path: z.string().min(1).describe("Absolute path to the file (a leading ~ is expanded)."),
         title: z.string().optional().describe("Page title; the file's first heading is used when left out. For a private page the server stores no title; when the content is rendered from Markdown the encrypted document's own title uses it (falling back to the first heading), and raw HTML is sealed as-is."),
-        visibility: z.enum(["private", "public"]).optional().describe("private (the default): encrypted here before upload; the link carries the key after #p=, the page has no title or preview on fmrl.site, cannot be kept past seven days, and cannot be recovered without the link. public: anyone with the link can read it, it shows a title and preview, and it can be kept. Pass public only when the person asked for a public page, after showing them what will be shared."),
+        visibility: z.enum(["private", "public"]).optional().describe("private (the default): encrypted here before upload; the link carries the key after #p=, the page has no title or preview on fmrl.site, and opens only with that key. public: anyone with the link can read it, and it shows a title and preview. Either can be kept from the page itself. Pass public only when the person asked for a public page, after showing them what will be shared."),
         private: z.boolean().optional().describe("Older form of visibility: true is private, false is public. Prefer visibility."),
       }).strict(),
       outputSchema: publishOutput,
@@ -877,7 +884,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_get",
     {
       title: "Read a fmrl.site page",
-      description: "Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.",
+      description: "Read one fmrl.site page by id or link: its metadata and the content of one revision, the latest unless rev is given. Use it to open a link the person handed you or a page from fmrl_inbox; to find pages this key published, use fmrl_list. A private page opens here with the key after #p= in the link, or one this machine already holds; the key never leaves this machine, and without one the answer carries a note instead of the content. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
@@ -924,7 +932,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_edit",
     {
       title: "Edit a fmrl.site page",
-      description: "Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token); a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
+      description: "Save new content to an existing page as its next revision; earlier revisions stay readable through fmrl_get's rev. To make a new page use fmrl_publish, and to change who can read a page use fmrl_set_visibility. Pass base_rev (the rev you read): if someone saved a newer revision meanwhile, nothing is saved and the answer gives latest_rev to read first. Works on pages this key owns and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token). A private page stays private under its same key, so every existing link keeps opening it; public content carrying a recognizable credential is refused. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
         manage_token: z.string().optional().describe("A 22-character recovery token or /c/<token> link for this page. It grants management, not deletion, and is used only with the edit."),
@@ -1014,7 +1023,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_set_visibility",
     {
       title: "Make a fmrl.site page public or private",
-      description: "Change who can read a page you own, keeping its id. Going public answers a preview first and changes nothing: show it to the person, and call again with confirm: true and the preview's rev only after they say yes; content that carries a key or token is refused. Going private encrypts the page here under a new key and answers its new link (after #p=); the server deletes the page's earlier public versions, title and preview, so only do it when the person asked. A kept page can't change either way. Only the page's owner key can change it.",
+      description: "Change who can read a page this key owns, keeping its id; to change its content use fmrl_edit. Going public takes two calls: the first answers a preview and changes nothing, so show it to the person and call again with confirm: true and the preview's rev only after they say yes. Content that carries a key or token is refused. Going private encrypts the page here under a new key and answers its new link (after #p=); the server deletes the page's earlier public versions, title and preview, so only do it when the person asked. A kept page can't change either way.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL; a private page going public needs its key (#p=) in the link, or one this machine already holds."),
         visibility: z.enum(["public", "private"]).describe("Who can read the page after the change: public (anyone with the link) or private (only links that carry the new key)."),
@@ -1086,7 +1096,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_watch",
     {
       title: "Watch a fmrl.site page",
-      description: "Watch a page so revisions other editors make show up in fmrl_inbox. Pass the link you were handed; its key stays on this machine. For a page you read and do not edit: pages you publish or edit are watched already.",
+      description: "Watch a page you read but don't edit, so revisions other editors make show up in fmrl_inbox. Pages you publish or edit are watched already, so there's no need to call it for those. Pass the link you were handed; a private page's key stays on this machine. Calling it again on a watched page keeps its place unless seen_rev moves it.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         id: z.string().min(1).describe("A page id or any fmrl.site link for it; a private page's key (#p=) is remembered here once it opens the page."),
         seen_rev: z.number().int().min(0).optional().describe("The revision you have read through; later ones show up in fmrl_inbox. Leave out to start from the latest (or keep where an existing watch is)."),
@@ -1126,7 +1137,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_inbox",
     {
       title: "Pages revised since you read them",
-      description: "Pages you watch that someone else has revised since you last read them, newest first. Read each with fmrl_get (which marks it seen). A page that was removed or expired appears once.",
+      description: "List the pages you watch that someone else has revised since you last read them, newest first, with who made each new revision. Read each with fmrl_get, which marks it seen; the inbox itself marks nothing. A page that was removed or expired appears once, and an empty inbox says nothing is new. For the pages this key published, use fmrl_list.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {},
       outputSchema: inboxOutput,
     },
@@ -1140,7 +1152,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_list",
     {
       title: "List this key's fmrl.site pages",
-      description: "List the pages this key owns, newest first (50 at most): published through it, or otherwise owned by this agent. A private page comes back with its title and its link with the key after #p= when this machine holds the key ring. Use it when the user asks for a page they shared earlier.",
+      description: "List the pages this key owns, newest first (50 at most): published through it, or otherwise owned by this agent, each with its link, status and expiry. Use it when the person asks for a page they shared earlier. A private page comes back with its title and its link with the key after #p= when this machine holds the key ring. Pages others shared with you aren't listed: open those with fmrl_get, and find their new revisions with fmrl_inbox.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {},
       outputSchema: listOutput,
     },
@@ -1154,8 +1167,9 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_delete",
     {
       title: "Remove a fmrl.site page",
-      description: "Remove a page this key published, by id or URL. The page answers 410 from then on. Only call this when the user asked to remove it.",
-      inputSchema: { id: z.string().min(1).describe("A document id or any fmrl.site URL for it.") },
+      description: "Remove a page this key published, by id or any fmrl.site link. Only call it when the person asked to remove the page; to hide it instead, fmrl_set_visibility can make it private. There is no undo tool: the page answers 410 from then on. A page this key doesn't own fails and stays as it is.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      inputSchema: { id: z.string().min(1).describe("The page id, or any fmrl.site link to the page.") },
       outputSchema: { id: z.string(), url: z.string(), removed: z.boolean() },
     },
     async ({ id }) => {
@@ -1172,9 +1186,10 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "fmrl_whoami",
     {
-      title: "This fmrl.site key",
-      description: "The key's prefix, how many of this month's free publishes it has used, agent attachment time, where the agent's canvases show on fmrl.site, an attach link when supplied (with the key ring when available), where the key ring is kept, and, when the installed plugin manifest is available, whether that plugin is up to date.",
-      inputSchema: { trust_vault: z.string().optional() },
+      title: "Check this machine's fmrl key and account",
+      description: "Show this machine's fmrl key: its prefix and name, this month's free publishes used and when they reset, whether the agent is attached to a person's fmrl account and where its canvases show, where the key ring is kept, and whether the installed plugin is current. Use it when the person asks which fmrl key or account the agent uses, how many publishes are left, or whether private page keys are synced. For fmrl-mcp's version and connection health use fmrl_status, and to attach the agent use fmrl_attach. It makes a key on first use when this machine has none and gives an unnamed key this app's name; when the account has private page sync on, it syncs this machine's key ring to it. A revoked key is reported, not replaced.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      inputSchema: { trust_vault: z.string().optional().describe("Only after this tool said the account's vault fingerprint changed: the new fingerprint, exactly as fmrl.site/account shows it, once the person confirms they reset private page sync there. Trusting it lets this machine's key rings sync to that vault again. Leave out otherwise.") },
       outputSchema: whoamiOutput,
     },
     async ({ trust_vault }) => {
@@ -1300,7 +1315,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_status",
     {
       title: "This fmrl-mcp's status",
-      description: "How this fmrl-mcp is doing, from memory and local files alone: its version and uptime, what launched it, the installed plugin and whether it is current, the key and key ring on this machine, and the last API call. verbose adds the network checks: whether fmrl.site answers and how fast, this month's quota, the inbox, and the newest fmrl-mcp on npm. It never mints a key, writes a file or changes anything.",
+      description: "Report how this fmrl-mcp is running: its version and uptime, what launched it, the installed plugin and whether it is current, the key and key ring on this machine, and the last API call. Use it to troubleshoot or check versions; for the key's quota and account, use fmrl_whoami. It answers from memory and local files alone; verbose adds bounded network checks: whether fmrl.site answers and how fast, this month's quota, the inbox, and the newest fmrl-mcp on npm. It never mints a key, writes a file or changes anything.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: { verbose: z.boolean().optional().describe("Add the network checks: reachability, quota, inbox and npm. Each is bounded, so the answer takes a few seconds at most.") },
     },
     async ({ verbose }) => {
@@ -1313,7 +1329,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_redeem",
     {
       title: "Redeem a fmrl.site key code",
-      description: "Trade a key code for the key it carries and make that this machine's fmrl key. A key rotated from the fmrl.site keys page reaches its agent as a key code: 26 letters and digits in groups of four, like K7QX-M2PA-…, which works once, for 10 minutes. Use it when the user says \"Redeem my fmrl key code …\".",
+      description: "Trade a key code for the fmrl key it carries and make that this machine's key, saved in its credentials file. A key rotated from the fmrl.site keys page reaches its agent as a key code: 26 letters and digits in groups of four, like K7QX-M2PA-…, which works once, for 10 minutes. Use it only when the person gives you such a code, as in \"Redeem my fmrl key code …\"; to replace this machine's own secret, use fmrl_rotate. A replaced key's ring stays in the file. A spent or expired code fails and the current key is kept, and when FMRL_API_KEY sets the key nothing is redeemed.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: { code: z.string().min(1).describe("The key code, as given; dashes, spaces and case don't matter.") },
       outputSchema: redeemOutput,
     },
@@ -1348,7 +1365,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_attach",
     {
       title: "Attach this agent to a person's fmrl account",
-      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it. Names this machine on the page (machine overrides the host name). When the agent is already attached it says so and asks for no link; it only gives the agent its machine name, when it has none yet or the person named another one, so their fmrl account shows it beside the agent. Only call this when the user asked to attach the agent. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself.",
+      description: "Get a one-time link, good for 10 minutes, that attaches this machine's fmrl agent to the person who opens it and presses Attach, with a short code the page shows beside it for them to compare. Only call it when the person asked to attach the agent; to check whether it is attached, use fmrl_whoami. Relay the link unchanged, with its #r= fragment, and the code; never open the link yourself. The page names this machine by its host name unless machine is given. When the agent is already attached, no link is made: the answer says so, and the call only gives the agent its machine name when it has none yet or the person named another, so their fmrl account shows it beside the agent.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       inputSchema: { machine: z.string().max(40).optional().describe("The machine name to show on the page; defaults to this computer's host name.") },
       outputSchema: attachOutput,
     },
@@ -1401,7 +1419,8 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_rotate",
     {
       title: "Rotate this fmrl.site key",
-      description: "Replace this machine's fmrl key's secret and save the new one here. The old secret stops working at once; the key's prefix, pages, name, quota, linked browsers, connected apps and key ring stay. Only call this when the user asked to rotate the key.",
+      description: "Replace this machine's fmrl key secret with a new one and save it here. Only call it when the person asked to rotate the key. The old secret stops working at once, wherever it was used; the key's prefix, pages, name, quota, linked browsers, connected apps and key ring stay. To take up a key rotated on fmrl.site, use fmrl_redeem with its code instead. It changes nothing when this machine has no key yet or FMRL_API_KEY sets the key.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: {},
       outputSchema: rotateOutput,
     },

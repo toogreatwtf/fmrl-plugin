@@ -14,7 +14,7 @@ const manifest = JSON.parse(read("plugins/fmrl/.claude-plugin/plugin.json")) as 
 const pkg = JSON.parse(read("packages/mcp/package.json")) as { version: string };
 const majorMinor = (v: string) => v.split(".").slice(0, 2).join(".");
 // The exact fmrl-mcp the plugin starts. A release publishes a version to
-// npm first; a later PR moves this pin to it (README, Development).
+// npm first; a later PR moves this pin to it (RELEASING.md).
 const pin = pinnedServer(path.join(repo, "plugins/fmrl"))!;
 
 describe("the plugin manifest", () => {

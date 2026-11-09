@@ -2,125 +2,80 @@
 
 Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize canvases together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device.
 
-`fmrl` is a Claude Code plugin and an MCP server (`fmrl-mcp`) that publish a page to [fmrl.site](https://fmrl.site) and hand back a link. Pages are private by default: encrypted on your machine, readable by anyone you give the full link, but not by fmrl.site. A page lasts seven days; a public one, published only when asked, can be kept from the page itself.
+This repository holds the fmrl plugin for Claude Code and Cursor, and `fmrl-mcp`, the MCP server behind it that works in any MCP client.
 
 ## Install
 
-Claude Code:
+**Claude Code**
 
 ```
 /plugin marketplace add toogreatwtf/fmrl-plugin
 /plugin install fmrl@fmrl-plugin
 ```
 
-Keep it current: auto-update is your switch — no marketplace can set it for you. The plugin offers once to turn it on; you can flip it yourself in /plugin → Marketplaces → fmrl-plugin → Enable auto-update. In the Claude desktop app the switch does nothing: update by hand, or when the plugin says it is out of date. By hand: claude plugin marketplace update fmrl-plugin, then claude plugin update fmrl@fmrl-plugin, and restart Claude Code.
+Keep it current: auto-update is your switch, under /plugin → Marketplaces → fmrl-plugin → Enable auto-update, and the plugin offers once to turn it on. In the Claude desktop app the switch does nothing: update by hand, or when the plugin says it is out of date. By hand, run `claude plugin marketplace update fmrl-plugin`, then `claude plugin update fmrl@fmrl-plugin`, and restart Claude Code.
 
-Cursor: open Customize, then Plugins, choose Add and Import Marketplace, paste `https://github.com/toogreatwtf/fmrl-plugin` as the repository (the full address; Cursor rejects the short `owner/repo` form), and add fmrl. It brings the share, whoami, attach and status skills and the same fourteen tools. The plugin runs the fmrl-mcp version it names, so the tools and skills both stay at the version Cursor installed until you update the plugin there.
+**Cursor**
 
-Any MCP client (Claude Desktop, Cursor, Codex, Windsurf, and the rest):
+Open Customize, then Plugins, choose Add and Import Marketplace, paste `https://github.com/toogreatwtf/fmrl-plugin` as the repository (the full address, not `owner/repo`), and add fmrl.
+
+**Any MCP client** (Claude Desktop, Codex, Windsurf and the rest)
 
 ```json
 { "mcpServers": { "fmrl": { "command": "npx", "args": ["-y", "fmrl-mcp"] } } }
 ```
 
-No key step. The server mints a key the first time it publishes and keeps it in the user's config directory. `FMRL_API_KEY` overrides it; `FMRL_API_URL` points the server at a preview or a local `make dev` (default `https://fmrl.site`); `FMRL_AGENT_NAME` names the revisions this key makes, replacing any name already set (without it, the MCP client's own name fills an unset one).
+There's no sign-up or key to paste. The server makes a key the first time it publishes.
 
-curl, for people who want neither:
+## Use it
 
-```
-curl -sX POST https://fmrl.site/api/v1/keys
-curl -sX POST https://fmrl.site/api/v1/publish \
-  -H "Authorization: Bearer fmrl_…" -H "Content-Type: application/json" \
-  -d '{"format":"md","content":"# hello"}'
-```
+Ask your agent to share something: "publish this report to fmrl". You get back a link, when the page expires, and a manage link for editing it later.
 
-## What you get
+Pages are private by default: encrypted on your machine, readable by anyone you give the full link, but not by fmrl.site. A page lasts seven days, and a public one can be kept from the page itself.
 
-In Claude Code, `/fmrl:share` publishes what is at hand — a file you named or something the agent composed — and replies with the link, the expiry, and a recovery link that grants management and editing, never deletion. Before publishing a canvas that hands work to someone else to review, it offers the `handoff-review` starter — eight sections and a `fmrl-profile` block recording their shape, readable at [fmrl.site/h4ndrv](https://fmrl.site/h4ndrv). `/fmrl:whoami` shows the key, this month's quota, where the key ring is kept, and whether the plugin is up to date. `/fmrl:status` answers at once from local state — fmrl-mcp and plugin versions, what launched the server, the key and ring on this machine, the last API call — and `/fmrl:status verbose` adds the network checks: whether fmrl.site answers, quota, inbox, and the newest fmrl-mcp on npm.
+In Claude Code and Cursor, the plugin adds four skills:
+
+- `/fmrl:share`: publish a file or something the agent wrote, and reply with the link.
+- `/fmrl:attach`: connect this agent to your fmrl account, so its pages show up in your canvases.
+- `/fmrl:whoami`: your key, this month's publishes, and whether the plugin is up to date.
+- `/fmrl:status`: a quick health check; `/fmrl:status verbose` also checks fmrl.site and npm.
+
+## Tools
 
 Any MCP client gets fourteen tools:
 
 | Tool | Does |
 |---|---|
-| `fmrl_publish` | `content`, optional `format` (`html` or `md`; detected when left out), optional `title`, optional `visibility` (`private`, the default, encrypts the page here before upload and the link carries the key after `#p=`; `public` publishes it in the clear and is refused when the content or title carries a recognizable token of a common kind (a private key block, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key; a backstop, not a full secret scan); the older `private` flag still works) → the page's URL, expiry and manage link, plus an optional attach link carrying the key ring after `#r=` while the agent is unattached |
-| `fmrl_publish_file` | `path` to a `.html`, `.htm`, `.md`, `.markdown`, `.mdx` or `.txt` file (2 MiB at most public, roughly 1.4 MB private), optional `title`, optional `visibility` (`private`, the default, encrypts the page here before upload and the link carries the key after `#p=`; `public` publishes it in the clear and is refused when the content or title carries a recognizable token of a common kind (a private key block, or an AWS, GitHub, Slack, Anthropic, OpenAI, Google, Stripe, GitLab, npm, Hugging Face or fmrl key; a backstop, not a full secret scan); the older `private` flag still works) → the same as `fmrl_publish` |
-| `fmrl_get` | an id or any fmrl.site link (may carry a page key after `#p=`), optional `rev` (the latest when left out), optional `to_file` (`true` writes the content to `<id>.md` or `<id>.html`, mode 0600, in the fmrl folder and answers with that file's path instead of the content, for a large page or one you will edit from a file; it replaces an earlier copy of the same page, in either format) → status, format, size, expiry, whether it was kept, plus that revision's content and who made it; a private page opens with the key in the link or one already held here. Reading a revision of a page you watch marks it seen. A page carrying a `fmrl-profile` block also returns its parsed profile and which heading holds each section |
-| `fmrl_edit` | page id or URL, separate optional `manage_token` (token or `/c/` link), `content` or `content_file` (the page's own file in the fmrl folder, `<id>.md` or `<id>.html` as `to_file` wrote it, by name or full path, to read the new content from, so a large page never passes through the model; its extension gives the format; any other file, another page's included, or a link or hard link, is refused), optional `format`, `title`, `base_rev` (the revision you read from; the edit fails if someone saved a newer one) → the new revision's number and link, and whether the page is now watched (an edit watches it, so replies show up in `fmrl_inbox`). Works on pages this key owns and on any page whose manage link you were given; a private page stays under its same key |
-| `fmrl_watch` | id or link → watches the page so revisions other editors make show up in `fmrl_inbox`; a private page's key is remembered here once it opens the page. For a page you read and do not edit: pages you publish or edit are watched already |
-| `fmrl_inbox` | nothing → pages you watch that someone else has revised since you last read them, newest first; read each with `fmrl_get`, which marks it seen |
-| `fmrl_list` | nothing → every page this key owns, newest first (50 at most); a private page with its title and keyed link when this machine holds the key ring |
-| `fmrl_set_visibility` | page id or URL (a private page's with its `#p=` key, or one this machine holds), `visibility` (`public` or `private`), optional `confirm` and `rev` → going public answers a preview of the text anyone with the link would read, with its revision, and changes nothing until it is called again with `confirm: true` and that `rev`, after the person says yes; if the page was saved since the preview, nothing is made public; content carrying a key or token is refused. Going private encrypts the page here under a new key and answers its new link; the server deletes its earlier public versions, title and preview. The page keeps its id. Only the owner key can change it, and never on a kept page |
-| `fmrl_delete` | an id or a viewer URL → removes a page this key published |
-| `fmrl_attach` | optional `machine` (this computer's host name when left out) → a one-time link, good for 10 minutes, that attaches this agent to the person who opens it and presses Attach, carrying the key ring after `#r=` when available, and the short code the page shows beside it to compare; when the agent is already attached, says so and mints nothing, and gives the agent its machine name when it has none yet or `machine` names another |
-| `fmrl_whoami` | optional `trust_vault` (the exact grouped vault fingerprint the person explicitly confirmed on `/account`) → the key's prefix, this month's quota, whether it is named and by what, whether this agent is attached to an identity and an attach link supplied by the server or retained in this process while unattached; on legacy servers, browser-link status and a browser link when supplied (either kind of link carries the key ring after `#r=` when available), when its secret was last rotated, where the key ring is kept, and, when the Claude Code plugin launched it and its manifest reads, whether that plugin is up to date; supplied account-vault sync and fingerprint notices. A revoked key is reported, not replaced, with how to get a new one |
-| `fmrl_status` | optional `verbose` → this server's version and uptime, what launched it, the installed plugin and whether it is current (and whether a newer one is already installed beside it, waiting for a restart), the key and key ring on this machine, and the last API call — from memory and local files, at once, minting and writing nothing. `verbose` adds whether fmrl.site answers and how fast, this month's quota, the inbox, and the newest fmrl-mcp on npm, each call bounded to a few seconds |
-| `fmrl_redeem` | `code`, a key code from the fmrl.site keys page (26 letters and digits in groups of four; dashes, spaces and case don't matter) → trades it for the key it carries, once, and saves that as this machine's key. A key rotated from a browser reaches its agent this way; say "Redeem my fmrl key code …" |
-| `fmrl_rotate` | nothing → replaces the key's secret and saves the new one; the old secret stops working at once, and the prefix, pages, name, quota, linked browsers, connected apps and key ring stay |
+| `fmrl_publish` | Publish content as a page and return its link. |
+| `fmrl_publish_file` | Publish an HTML, Markdown or text file from disk. |
+| `fmrl_get` | Read a page, or one revision of it. |
+| `fmrl_edit` | Save a new revision of a page you own or were given a manage link for. |
+| `fmrl_watch` | Follow a page so other people's edits show up in your inbox. |
+| `fmrl_inbox` | List watched pages that someone else has changed. |
+| `fmrl_list` | List the pages this key published. |
+| `fmrl_set_visibility` | Make a page public or private, with a preview before anything goes public. |
+| `fmrl_delete` | Delete a page this key published. |
+| `fmrl_attach` | Get a one-time link that connects this agent to your fmrl account. |
+| `fmrl_whoami` | Show the key, this month's quota and attachment state. |
+| `fmrl_status` | Show versions, the key on this machine and the last API call. |
+| `fmrl_redeem` | Trade a key code from fmrl.site for its key. |
+| `fmrl_rotate` | Replace the key's secret. |
+
+Arguments and edge cases for each tool are in [docs/tools.md](https://github.com/toogreatwtf/fmrl-plugin/blob/main/docs/tools.md).
 
 ## Keys and limits
 
-`fmrl_get`'s `to_file` writes, and `fmrl_edit`'s `content_file` reads, only in one folder: `~/fmrl` (`%USERPROFILE%\fmrl` on Windows), made with mode 0700 on first use, or the absolute folder `FMRL_FILES_DIR` names; a folder that already exists must be yours and writable by no one else. `content_file` reads only the edited page's own file there. So a page, or an instruction planted in one, can't get a note from elsewhere on the machine uploaded, can't publish one page's opened private copy under another page, and can't have page content written over a file outside the folder.
+Your key and key ring live in `~/.config/fmrl/credentials.json` (`%APPDATA%\fmrl\credentials.json` on Windows). Back that file up: it holds the keys to every private page you've published.
 
-The server mints a key on first use and stores it in `~/.config/fmrl/credentials.json` (`$XDG_CONFIG_HOME/fmrl/credentials.json`; `%APPDATA%\fmrl\credentials.json` on Windows), one key per API base URL, file mode 0600. `FMRL_API_KEY` overrides the file, and then `fmrl_redeem` and `fmrl_rotate` refuse rather than store a key it would shadow. A stored key that stops working is replaced with a fresh one on the next call, except that `fmrl_whoami` reports a revoked key first; a rotated key keeps its prefix, so its key ring still applies. A private page's key travels with it, sealed under a key ring kept in the same file (`FMRL_RING` overrides it) and handed to a browser only inside the link, so fmrl.site stores the sealed record and cannot open it; back up that file to keep every page's key. In a container that sets `FMRL_API_KEY` on a filesystem that does not persist, set `FMRL_RING` too — 32 random bytes as unpadded base64url, e.g. `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` — or every restart starts a new ring. `FMRL_AGENT_NAME` names the revisions this key makes on fmrl.site (so other editors know who made them); without it, the MCP client's own name fills a key that has none. Beside `credentials.json`, `pages.json` (same directory, same protections) remembers, per page this machine has opened or edited, its content key (private pages only) and any manage token that worked — so a page's link or manage link needs pasting only once. 25 publishes a month per key, 5 keys a day per network, 2 MiB per page — a private page's cap is on the sealed envelope, so roughly 1.4 MB of HTML fits. Content is subject to fmrl.site's [acceptable use policy](https://fmrl.site/aup). Full API reference: [fmrl.site/api](https://fmrl.site/api).
+Each key gets 25 publishes a month, and a page can be up to 2 MiB (about 1.4 MB for a private page). Content follows fmrl.site's [acceptable use policy](https://fmrl.site/aup).
 
-## Account vault ring sync
+## More
 
-Sharing requires no account. When a key belongs to an account with private-page sync enabled, the local MCP server seals credential-file rings to the advertised account vault. Every successful public or private `fmrl_publish` or `fmrl_publish_file` makes a fresh `GET /api/v1/me` after publishing; every `fmrl_whoami` uses its own fresh response and syncs too. Nothing about the vault goes through the hosted `/mcp` endpoint.
-
-The server validates the vault public key and recomputes its fingerprint before pinning it on first use (TOFU). Pins are stored per viewer origin in `credentials.json`, still version 1, with additive `vault_pins` alongside existing keys and rings. Historical slots now also record `ring_origins`, a locally established origin for each ring. A changed fingerprint stops uploads until the person explicitly confirms the fingerprint on `/account` and supplies that exact grouped value through `fmrl_whoami`'s optional `trust_vault`. The agent must never trust a changed fingerprint automatically.
-
-Only rings with local provenance for the configured origin are eligible: stored keys under that origin (including URL aliases), and historical slots whose `ring_origins` entry names it. Legacy history with no origin stays on disk and is excluded unless its exact prefix/ring pair matches a same-origin stored key. A server advertising a matching prefix cannot authorize exporting another origin's ring. This reduces recovery coverage for unscoped legacy rings; they require the original backup until an explicit migration is available.
-
-The actual active ring, if eligible and stored in the credentials file, goes first in its own request. Superseded variants under that active prefix remain local and are not uploaded, preventing them from exhausting the budget or overwriting the active box. Other eligible prefixes retain numeric historical order with stored-key variants last. The vault retains one box per prefix, so it cannot recover every historical variant.
-
-Each `PUT /api/v1/me/rings` contains at most 50 boxes and no repeated prefix. Requests share the edit budget (`API_EDITS_PER_HOUR`, default 60/hour), not the publish quota. Only on atomic HTTP 400 `ring_ownership` rejection, the client tries each member of a multi-row batch once separately and continues other prefixes; a refused singleton is not retried. The active request costs one edit; isolating a refused N-row batch costs up to 1+N requests. Each pass is capped at 10 PUT attempts and stops immediately on 429 or any other operational failure. Each call can consume 10 shared edit tokens; repeated calls still consume the hourly budget. The next authorized tool call starts afresh; there is no throttle, boxed-ring cache or background timer. HTTP 403/409 refusals remain silent; 409 always leaves status unknown. Credential recovery preserves the moved-aside file and emits only a fixed warning. Refused, unfinished or partially uploaded requested scope is unknown and produces no synced/not-synced claim. Malformed vault data, persistence failures and network/5xx failures preserve the original tool success and log a fixed non-secret diagnostic. A primary whoami `/me` failure retains its normal error/revocation behavior.
-
-`FMRL_RING` is never added to the file snapshot. An environment-only or different override excludes stale file variants for the active prefix and omits a sync-status claim based on those uploads. An unavailable vault may still report the approved not-synced status. An override identical to an eligible stored active-prefix ring can qualify for the approved synced line after successful upload. An empty collection sends no PUT and cannot establish synced status. Keep backing up the credentials file and any `FMRL_RING` value: unknown-origin history, superseded variants and unclaimed keys may still require the original backup, a keyed link or a browser that already holds the ring.
-
-Production code only seals ring boxes; it has no vault opener or vault private-key input. The server receives sealed boxes, never plaintext rings, vault private keys, recovery codes or PRF outputs. Local tool output omits account IDs and vault material, while retaining approved grouped fingerprint notices and the existing browser `#r=` and private-page `#p=` links.
-
-Ring uploads include the validated, pinned fingerprint used to seal every box. A server key change returns `409 vault_changed`; the client never automatically retries. `400 bad_request` stops the pass without isolation. `account_vault: null` preserves whoami identity/quota/link data but leaves vault sync unknown with a fixed diagnostic.
+- [Configuration, keys and files](https://github.com/toogreatwtf/fmrl-plugin/blob/main/docs/configuration.md): environment variables, where things are stored, and using the API with curl.
+- [Account vault ring sync](https://github.com/toogreatwtf/fmrl-plugin/blob/main/docs/vault-sync.md): how key rings are backed up to your fmrl account.
+- [API reference](https://fmrl.site/api) on fmrl.site.
+- [Contributing](https://github.com/toogreatwtf/fmrl-plugin/blob/main/CONTRIBUTING.md) and [releasing](https://github.com/toogreatwtf/fmrl-plugin/blob/main/RELEASING.md).
 
 ## License
 
 MIT, Too Great LLC.
-
-### Identity-server compatibility release hold
-
-The approved sequence is to ship the compatibility bridge before the identity-server cutover. The bridge supports both server contracts so clients can update while the legacy server is still running. Package release is not yet approved: merge, version bump, package publication and production cutover each remain behind their applicable approval gates. A new package version merged to main publishes automatically; this documentation is not authorization to do so.
-
-For editing someone else's page, supply its page ID or URL as `id` and its recovery token or `/c/<token>` link separately as `manage_token`. A recovery link does not identify the page: ask its sender for the page URL too. The plugin never opens or spends a recovery link to discover the page. Recovery grants management and editing, never deletion. Private page keys remain in the page URL's `#p=` fragment and on this machine.
-
-
-### Transitional server compatibility
-
-The compatibility bridge accepts both legacy browser-link fields (`linked_at`,
-`link_url`, and older editor `name`) and identity fields (`attached_at`,
-`attach_url`, `label`/`display_name`, and publish `recovery`). Linking a browser is
-not reported as attaching an identity. A missing recovery state is unknown;
-spent or revoked links are not advertised as usable or saved for later edits.
-Legacy management links keep their existing local token handling. The bridge
-never opens a recovery link to find a page or replaces an attach link automatically.
-
-Courtesy attach links seen during setup, status probes, or vault checks stay in
-process memory per API origin and credential for at most one hour. Publish and
-whoami can show that previously supplied link with the local ring fragment. A
-reported attachment clears it. Restarting loses this cache; another process or a
-replacement link can also make a cached link unusable. No capability is persisted
-or minted to repair that situation.
-
-HTTP responses are projected onto closed MCP schemas; declared fields still
-validate. A successful publish with an invalid response, or a timeout with an
-uncertain outcome, must not be automatically republished. Use `fmrl_list` and the
-saved page information to reconcile first. Publish idempotency remains absent:
-this client sends no `Idempotency-Key`.
-
-Before cutover, obtain the separate bridge release approval, publish the approved
-version, and have clients update and restart/reconnect. Verify the running
-`fmrl_status` version, not just the installed package: publishing does not replace
-an already running MCP process or its cached schemas. Only then assess the
-cutover readiness gates and seek the separate cutover approval. This order does
-not prove that every client has updated. An old process can still reject a
-new-server response after a write succeeds; reconcile rather than automatically
-republishing. Passing tests or implementation review does not authorize a merge,
-package release, deployment or cutover.

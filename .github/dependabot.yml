@@ -15,6 +15,12 @@ updates:
       # @types/node follows the oldest Node in engines (>=20), not the newest.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # Newer vitest needs Node 22, and we still support Node 20.
+      - dependency-name: vitest
+        update-types: ["version-update:semver-major"]
+      # marked stays on the version fmrl.site renders with, so the two move together.
+      - dependency-name: marked
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /

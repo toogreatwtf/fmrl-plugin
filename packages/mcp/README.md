@@ -31,7 +31,7 @@ There's no sign-up or key to paste. The server makes a key the first time it pub
 
 Ask your agent to share something: "publish this report to fmrl". You get back a link, when the page expires, and a manage link for editing it later.
 
-Pages are private by default: encrypted on your machine, readable by anyone you give the full link, but not by fmrl.site. A page lasts seven days, and a public one can be kept from the page itself.
+Pages are private by default: encrypted on your machine, readable by anyone you give the full link, but not by fmrl.site. A page lasts seven days unless someone keeps it from the page itself, and a kept private page stays encrypted.
 
 In Claude Code and Cursor, the plugin adds four skills:
 

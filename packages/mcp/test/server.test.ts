@@ -616,8 +616,7 @@ describe("tools", () => {
     const t = text(r);
     expect(t).toContain(`Published: ${url}`);
     expect(t).toContain("private");
-    expect(t).toContain("This page lasts seven days; a private page cannot be kept.");
-    expect(t).not.toContain("keeps it");
+    expect(t).toContain("This page lasts seven days unless someone keeps it on the page itself; a kept private page stays encrypted.");
     expect((r.structuredContent as { manage_url: string }).manage_url).not.toContain("#p=");
 
     const titled = await call("fmrl_publish", { content: "# Quiet\n\nhello", private: true, title: "Custom Title" });
@@ -992,7 +991,7 @@ describe("fmrl_get reads the page", () => {
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_get")!;
-    expect(tool.description).toBe("Read a page by id or link: its metadata and, for revision `rev` (default the latest), its content. A private page opens here with the key after #p= in the link you were handed, or one this machine already holds; the key never leaves this machine. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.");
+    expect(tool.description).toBe("Read one fmrl.site page by id or link: its metadata and the content of one revision, the latest unless rev is given. Use it to open a link the person handed you or a page from fmrl_inbox; to find pages this key published, use fmrl_list. A private page opens here with the key after #p= in the link, or one this machine already holds; the key never leaves this machine, and without one the answer carries a note instead of the content. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.");
   });
   it("reads a public Markdown page's latest revision: its source, its format, and who wrote it", async () => {
     const pub = await call("fmrl_publish", { visibility: "public", content: "# Hello\n\nworld", format: "md" });
@@ -1142,7 +1141,7 @@ describe("fmrl_edit", () => {
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_edit")!;
-    expect(tool.description).toBe("Replace a page's content with a new revision. Pass base_rev (the rev you read) so an edit made meanwhile is not overwritten. Works on your own pages and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token); a private page stays private under its same key, so every existing link keeps opening it. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
+    expect(tool.description).toBe("Save new content to an existing page as its next revision; earlier revisions stay readable through fmrl_get's rev. To make a new page use fmrl_publish, and to change who can read a page use fmrl_set_visibility. Pass base_rev (the rev you read): if someone saved a newer revision meanwhile, nothing is saved and the answer gives latest_rev to read first. Works on pages this key owns and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token). A private page stays private under its same key, so every existing link keeps opening it; public content carrying a recognizable credential is refused. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
   });
   it("publishing remembers the page's manage token, and a private page's key", async () => {
     const pub = await call("fmrl_publish", { visibility: "public", content: "# Open" });
@@ -1657,11 +1656,28 @@ const plantKey = (label: string) => {
 };
 const patches = () => fake.requests.filter((q) => q.method === "PATCH" && q.path === "/api/v1/me");
 
+describe("tool definitions", () => {
+  it("declare their behavior hints and describe every input", async () => {
+    const tools = (await client.listTools()).tools;
+    expect(tools).toHaveLength(14);
+    const hints = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
+    for (const t of tools) {
+      expect(t.annotations, t.name).toMatchObject({ readOnlyHint: expect.any(Boolean), destructiveHint: expect.any(Boolean), idempotentHint: expect.any(Boolean), openWorldHint: true });
+      for (const [param, schema] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) {
+        expect(schema.description, `${t.name}.${param}`).toBeTruthy();
+      }
+    }
+    // Read-only only where nothing changes: fmrl_get marks a revision seen and can write a file, so it is not.
+    expect(tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort()).toEqual(["fmrl_inbox", "fmrl_list", "fmrl_status"]);
+    for (const n of ["fmrl_delete", "fmrl_rotate", "fmrl_set_visibility", "fmrl_redeem"]) expect(hints[n]?.destructiveHint, n).toBe(true);
+  });
+});
+
 describe("fmrl_watch and fmrl_inbox", () => {
   it("describe the tools as the brief words them", async () => {
     const tools = (await client.listTools()).tools;
-    expect(tools.find((t) => t.name === "fmrl_watch")!.description).toBe("Watch a page so revisions other editors make show up in fmrl_inbox. Pass the link you were handed; its key stays on this machine. For a page you read and do not edit: pages you publish or edit are watched already.");
-    expect(tools.find((t) => t.name === "fmrl_inbox")!.description).toBe("Pages you watch that someone else has revised since you last read them, newest first. Read each with fmrl_get (which marks it seen). A page that was removed or expired appears once.");
+    expect(tools.find((t) => t.name === "fmrl_watch")!.description).toBe("Watch a page you read but don't edit, so revisions other editors make show up in fmrl_inbox. Pages you publish or edit are watched already, so there's no need to call it for those. Pass the link you were handed; a private page's key stays on this machine. Calling it again on a watched page keeps its place unless seen_rev moves it.");
+    expect(tools.find((t) => t.name === "fmrl_inbox")!.description).toBe("List the pages you watch that someone else has revised since you last read them, newest first, with who made each new revision. Read each with fmrl_get, which marks it seen; the inbox itself marks nothing. A page that was removed or expired appears once, and an empty inbox says nothing is new. For the pages this key published, use fmrl_list.");
   });
   it("watching through a link with #p= remembers the key once it opens the page, and says it can open it", async () => {
     const priv = await call("fmrl_publish", { content: "# Plan", private: true });

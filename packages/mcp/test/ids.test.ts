@@ -119,7 +119,7 @@ describe("parsePageRef and a reserved slug", () => {
       "https://fmrl.site/about",
       "https://fmrl.site/",
       "https://example.com/h4ndrv", // a slug is word-shaped: another host's word is not a page
-      "https://example.com/marty",
+      "https://example.com/someone",
       "https://github.com/toogreatwtf/fmrl-plugin",
       "not a url or id",
     ]) {

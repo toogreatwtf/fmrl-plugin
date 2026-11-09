@@ -1358,7 +1358,7 @@ export function createServer(deps: ServerDeps): McpServer {
       try {
         const out = await withKey(async (k) => {
           used = k;
-          // Already attached: no link (Marty: "If already attached, it's a noop"), only the machine name below. The server still mints for an
+          // Already attached: no link (nothing to do), only the machine name below. The server still mints for an
           // attached agent, since such a link re-delivers its ring to a browser, so the no-op is decided here, from GET /me.
           const me = await api.me(k);
           if (typeof me.attached_at === "string" && me.attached_at) {

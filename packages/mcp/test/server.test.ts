@@ -365,11 +365,11 @@ describe("tools", () => {
     await call("fmrl_publish", { visibility: "public", content: "# Hi" });
     const key = keyOf(firstPublish());
     fake.linked.add(key);
-    fake.machines.set(key, "Homebase");
+    fake.machines.set(key, "Desk");
     const kept = await call("fmrl_attach");
     expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine")).toHaveLength(0);
-    expect(text(kept)).toContain("This agent on Homebase is already attached");
-    const same = await call("fmrl_attach", { machine: "  Homebase " });
+    expect(text(kept)).toContain("This agent on Desk is already attached");
+    const same = await call("fmrl_attach", { machine: "  Desk " });
     expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine")).toHaveLength(0);
     expect(same.structuredContent).not.toHaveProperty("renamed");
     const r = await call("fmrl_attach", { machine: "Studio" });
@@ -2268,7 +2268,7 @@ describe("fmrl_status", () => {
 describe("machineName", () => {
   it("is the host name's first label, cut to 40 characters", () => {
     expect(machineName("Studio.local")).toBe("Studio");
-    expect(machineName("homebase")).toBe("homebase");
+    expect(machineName("desk")).toBe("desk");
     expect(machineName("a".repeat(50))).toBe("a".repeat(40));
   });
 });

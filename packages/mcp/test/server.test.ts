@@ -321,17 +321,17 @@ describe("tools", () => {
     expect(names).toEqual(["fmrl_attach", "fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
   });
   it("fmrl_attach answers the link with the ring, the code and the machine, and is a no-op once attached", async () => {
-    const r = await call("fmrl_attach", { machine: "Prodigal" });
+    const r = await call("fmrl_attach", { machine: "Studio" });
     expect(r.isError).toBeFalsy();
     const s = r.structuredContent as { attached: boolean; attach_url: string; code: string; machine: string };
     expect(s.attached).toBe(false);
     expect(s.code).toBe("K7Q-4MZ");
-    expect(s.machine).toBe("Prodigal");
+    expect(s.machine).toBe("Studio");
     expect(s.attach_url).toMatch(/^https:\/\/fmrl\.test\/c\/attachcmd/);
     expect(s.attach_url).toMatch(RING_PAIR);
     const req = fake.requests.filter((q) => q.path === "/api/v1/me/attach").at(-1)!;
-    expect(req.body).toEqual({ machine: "Prodigal" });
-    expect(text(r)).toContain("Open this link to attach this agent on Prodigal to your fmrl account:");
+    expect(req.body).toEqual({ machine: "Studio" });
+    expect(text(r)).toContain("Open this link to attach this agent on Studio to your fmrl account:");
     expect(text(r)).toContain("Code on the page: K7Q-4MZ");
     expect(text(r)).toContain("It works once, for 10 minutes.");
     fake.linked.add(keyOf(req));
@@ -372,21 +372,21 @@ describe("tools", () => {
     const same = await call("fmrl_attach", { machine: "  Homebase " });
     expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine")).toHaveLength(0);
     expect(same.structuredContent).not.toHaveProperty("renamed");
-    const r = await call("fmrl_attach", { machine: "Prodigal" });
-    expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine").map((q) => q.body)).toEqual([{ machine: "Prodigal" }]);
-    expect(fake.machines.get(key)).toBe("Prodigal");
-    expect(text(r)).toContain("Your account now shows it as on Prodigal.");
+    const r = await call("fmrl_attach", { machine: "Studio" });
+    expect(fake.requests.filter((q) => q.path === "/api/v1/me/machine").map((q) => q.body)).toEqual([{ machine: "Studio" }]);
+    expect(fake.machines.get(key)).toBe("Studio");
+    expect(text(r)).toContain("Your account now shows it as on Studio.");
   });
   it("fmrl_attach, already attached, stays a quiet no-op on a server without the rename route, and says so when the rename fails", async () => {
     await call("fmrl_publish", { visibility: "public", content: "# Hi" });
     fake.linked.add(keyOf(firstPublish()));
     fake.machineStatus = 404;
-    const old = await call("fmrl_attach", { machine: "Prodigal" });
+    const old = await call("fmrl_attach", { machine: "Studio" });
     expect(old.isError).toBeFalsy();
     expect(old.structuredContent).not.toHaveProperty("renamed");
     expect(text(old)).toContain("Nothing to do.");
     fake.machineStatus = 429;
-    const r = await call("fmrl_attach", { machine: "Prodigal" });
+    const r = await call("fmrl_attach", { machine: "Studio" });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toMatchObject({ attached: true, renamed: false });
     expect(text(r)).toContain("its machine name couldn't be updated just now");
@@ -2267,7 +2267,7 @@ describe("fmrl_status", () => {
 
 describe("machineName", () => {
   it("is the host name's first label, cut to 40 characters", () => {
-    expect(machineName("Prodigal.local")).toBe("Prodigal");
+    expect(machineName("Studio.local")).toBe("Studio");
     expect(machineName("homebase")).toBe("homebase");
     expect(machineName("a".repeat(50))).toBe("a".repeat(40));
   });

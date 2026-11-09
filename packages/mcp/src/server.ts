@@ -509,7 +509,7 @@ const attachOutput = {
   renamed: z.boolean().optional().describe("Already attached: true when this call gave the agent its machine name, so the person's account now shows it; false when that update failed. Absent when the name was already right."),
 };
 
-/** machineName is this machine's name for an attach link: the host name's first label (Prodigal.local is Prodigal), cut to fmrl.site's 40 characters. */
+/** machineName is this machine's name for an attach link: the host name's first label (Studio.local is Studio), cut to fmrl.site's 40 characters. */
 export function machineName(host = os.hostname()): string {
   const first = host.split(".")[0]?.trim() ?? "";
   return Array.from(first || host.trim()).slice(0, 40).join("");

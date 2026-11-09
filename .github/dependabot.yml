@@ -1,0 +1,25 @@
+# Weekly dependency updates. Security updates are switched on in the repo's
+# settings and arrive on their own, whatever the schedule here.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /packages/mcp
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Minor and patch bumps land together; a major bump gets its own PR.
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # @types/node follows the oldest Node in engines (>=20), not the newest.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

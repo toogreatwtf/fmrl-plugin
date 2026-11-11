@@ -4,11 +4,14 @@ import path from "node:path";
 import type { AutoUpdate, AutoUpdatePass } from "./autoupdate.js";
 import { MARKETPLACE } from "./autoupdate.js";
 
-export type PluginSurface = "claude-cli" | "claude-desktop" | "codex" | "unknown";
+export type PluginSurface = "claude-cli" | "claude-desktop" | "codex" | "cursor" | "unknown";
 
 /** A shared plugin manifest/root identifies an installation, not its launcher. */
 export function pluginSurface(env: NodeJS.ProcessEnv): PluginSurface {
   if (env.CODEX_THREAD_ID) return "codex";
+  // Set by the Cursor plugin's own mcp.json, so a Claude Code CLI started
+  // in Cursor's terminal still counts as the CLI.
+  if (env.FMRL_MCP_APP === "cursor") return "cursor";
   if (env.CLAUDE_CODE_ENTRYPOINT === "claude-desktop") return "claude-desktop";
   if (env.CLAUDE_CODE_ENTRYPOINT === "cli") return "claude-cli";
   return "unknown";
@@ -24,7 +27,7 @@ function otherSurfaceLine(s: PluginStatus, surface: PluginSurface): string {
     ? `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}.`
     : `The fmrl plugin is up to date (plugin ${s.installed}, fmrl-mcp ${s.server}).`;
   if (!s.stale) return status;
-  return `${status} Check for plugin updates in ${surface === "claude-desktop" ? "the Claude desktop app's plugin settings" : surface === "codex" ? "Codex's plugin settings" : "the client that installed it"}.`;
+  return `${status} Check for plugin updates in ${surface === "claude-desktop" ? "the Claude desktop app's plugin settings" : surface === "codex" ? "Codex's plugin settings" : surface === "cursor" ? "Cursor's plugin settings" : "the client that installed it"}.`;
 }
 
 /**

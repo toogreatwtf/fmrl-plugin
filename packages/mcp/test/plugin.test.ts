@@ -288,6 +288,7 @@ it("detects only explicit launcher evidence and defaults to neutral", () => {
   expect(pluginSurface({ CODEX_THREAD_ID: "test", CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("codex");
   expect(pluginSurface({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("claude-cli");
   expect(pluginSurface({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toBe("claude-desktop");
+  expect(pluginSurface({ FMRL_MCP_APP: "cursor", CLAUDE_PLUGIN_ROOT: "/shared" })).toBe("cursor");
   expect(instructions({ installed: "0.3.0", server: "0.13.0", stale: true })).not.toContain("claude plugin");
 });
 
@@ -295,6 +296,7 @@ it("names its version and the app it runs in to fmrl.site", () => {
   expect(userAgent("1.2.3", "claude-cli")).toBe("fmrl-mcp/1.2.3 (claude-cli)");
   expect(userAgent("1.2.3", "claude-desktop")).toBe("fmrl-mcp/1.2.3 (claude-desktop)");
   expect(userAgent("1.2.3", "codex")).toBe("fmrl-mcp/1.2.3 (codex)");
+  expect(userAgent("1.2.3", "cursor")).toBe("fmrl-mcp/1.2.3 (cursor)");
   expect(userAgent("1.2.3", "unknown")).toBe("fmrl-mcp/1.2.3 (unknown)");
 });
 

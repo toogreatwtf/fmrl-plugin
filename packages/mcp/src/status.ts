@@ -95,8 +95,8 @@ export async function newestCachedPlugin(root: string, installed: string): Promi
   return best?.name;
 }
 
-const SURFACE_NAME: Record<PluginSurface, string | undefined> = { "claude-cli": "Claude Code CLI", "claude-desktop": "the Claude desktop app", codex: "Codex", unknown: undefined };
-const restart = (surface: PluginSurface) => (surface === "codex" ? "restart Codex" : surface === "unknown" ? "restart the client that started it" : "restart Claude Code");
+const SURFACE_NAME: Record<PluginSurface, string | undefined> = { "claude-cli": "Claude Code CLI", "claude-desktop": "the Claude desktop app", codex: "Codex", cursor: "Cursor", unknown: undefined };
+const restart = (surface: PluginSurface) => (surface === "codex" ? "restart Codex" : surface === "cursor" ? "restart Cursor" : surface === "unknown" ? "restart the client that started it" : "restart Claude Code");
 const plural = (n: number, noun: string) => (n === 1 ? `1 ${noun}` : `${n} ${noun}s`);
 
 function serverLine(s: StatusSnapshot): string {

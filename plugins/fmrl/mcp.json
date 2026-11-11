@@ -3,7 +3,7 @@
     "fmrl": {
       "command": "npx",
       "args": ["-y", "fmrl-mcp@0.17.8"],
-      "env": { "CLAUDE_PLUGIN_ROOT": "${CURSOR_PLUGIN_ROOT}" }
+      "env": { "CLAUDE_PLUGIN_ROOT": "${CURSOR_PLUGIN_ROOT}", "FMRL_MCP_APP": "cursor" }
     }
   }
 }

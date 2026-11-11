@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 import { toHTML } from "../src/markdown.js";
-import { pinnedServer, pluginInstructions, pluginStatus } from "../src/plugin.js";
+import { pinnedServer, pluginInstructions, pluginStatus, pluginSurface } from "../src/plugin.js";
 import { readProfile } from "../src/profile.js";
 
 // The plugin's own files, read from the repo: the manifest, its skills, and
@@ -262,8 +262,10 @@ describe("the Cursor plugin", () => {
     expect(cursor.command).toBe(claude.command);
     expect(cursor.args).toEqual(claude.args);
     // Cursor expands CURSOR_PLUGIN_ROOT in env values; fmrl-mcp reads the
-    // plugin's version from CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json.
-    expect(cursor.env).toEqual({ CLAUDE_PLUGIN_ROOT: "${CURSOR_PLUGIN_ROOT}" });
+    // plugin's version from CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json,
+    // and FMRL_MCP_APP tells it the app is Cursor.
+    expect(cursor.env).toEqual({ CLAUDE_PLUGIN_ROOT: "${CURSOR_PLUGIN_ROOT}", FMRL_MCP_APP: "cursor" });
+    expect(pluginSurface(cursor.env)).toBe("cursor");
     expect(pluginStatus(path.join(repo, "plugins/fmrl"), pin)).toEqual({ installed: manifest.version, server: pin, stale: false });
   });
   it("has skills Cursor accepts: a name matching the folder, and a description", () => {

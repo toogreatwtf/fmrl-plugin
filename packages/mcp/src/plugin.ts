@@ -14,6 +14,11 @@ export function pluginSurface(env: NodeJS.ProcessEnv): PluginSurface {
   return "unknown";
 }
 
+/** userAgent is how fmrl-mcp introduces itself to fmrl.site: its version and the app it runs in. */
+export function userAgent(version: string, surface: PluginSurface): string {
+  return `fmrl-mcp/${version} (${surface})`;
+}
+
 function otherSurfaceLine(s: PluginStatus, surface: PluginSurface): string {
   const status = s.stale
     ? `The fmrl plugin is out of date: installed ${short(s.installed)}, fmrl-mcp is at ${short(s.server)}.`

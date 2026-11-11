@@ -7,7 +7,7 @@ import { credentialsPath } from "./credentials.js";
 import { KeyStore } from "./keys.js";
 import { exitWithClient, processAlive } from "./lifecycle.js";
 import { PageStore, pagesPath } from "./pages.js";
-import { pluginStatus, pluginSurface } from "./plugin.js";
+import { pluginStatus, pluginSurface, userAgent } from "./plugin.js";
 import { createServer, VERSION } from "./server.js";
 
 // stdout is the JSON-RPC channel; everything we say goes to stderr.
@@ -15,13 +15,13 @@ const log = (line: string) => process.stderr.write(line + "\n");
 
 async function main(): Promise<void> {
   const cfg = loadConfig(process.env, log);
-  const api = new FmrlApi(cfg.baseUrl);
+  const surface = pluginSurface(process.env);
+  const api = new FmrlApi(cfg.baseUrl, { headers: { "User-Agent": userAgent(VERSION, surface) } });
   const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, ringFromEnv: cfg.ring, file: credentialsPath(), log });
   const pages = new PageStore(cfg.baseUrl, pagesPath());
   // Whether anything is keeping the plugin current. Read once at startup,
   // as the plugin manifest is: neither changes without a restart.
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  const surface = pluginSurface(process.env);
   const autoUpdate = pluginRoot && surface === "claude-cli" ? await autoUpdateState() : undefined;
   // Whether the CLI's auto-update pass can run at all: the desktop app and a
   // CLI with the auto-updater disabled inherit that to us in the environment.

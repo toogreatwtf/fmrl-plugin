@@ -1,0 +1,105 @@
+# Tags a published fmrl-mcp version as v<version> and writes its GitHub
+# Release, with notes from .github/scripts/release-notes.sh (the PRs that
+# touched packages/mcp since the previous version).
+#
+# release.yml calls this after an approved publish, so each new version gets
+# its tag and release on its own. It can also be run by hand from the
+# Actions tab with a version, to tag one that was published before this
+# workflow existed.
+#
+# The tag goes on the commit npm recorded for that publish (the version's
+# gitHead), not on whatever main is now, so a tag always names the code that
+# was shipped. A version that already has a release is left alone, and an
+# existing tag is never moved.
+name: tag release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: fmrl-mcp version to tag, e.g. 0.17.9
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: fmrl-mcp version to tag, e.g. 0.17.9
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: tag fmrl-mcp ${{ inputs.version }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: tag-release-${{ inputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: tag v${{ inputs.version }} and write its release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "'${VERSION}' is not a version like 1.2.3." >&2
+            exit 1
+          fi
+          tag="v${VERSION}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "${tag} already has a release; nothing to do."
+            exit 0
+          fi
+
+          packument="$(curl -fsS https://registry.npmjs.org/fmrl-mcp)"
+          if ! jq -e --arg v "$VERSION" '.versions[$v]' <<<"$packument" >/dev/null; then
+            echo "npm has no fmrl-mcp@${VERSION}; not tagging." >&2
+            exit 1
+          fi
+          sha="$(jq -r --arg v "$VERSION" '.versions[$v].gitHead // empty' <<<"$packument")"
+          existing="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}" || true)"
+
+          if [ -n "$existing" ] && [ -n "$sha" ] && [ "$existing" != "$sha" ]; then
+            echo "${tag} already points at ${existing}, but npm says ${VERSION} came from ${sha}; leaving the tag and not writing a release." >&2
+            exit 1
+          fi
+          # An early version published by hand may have no commit on npm;
+          # an existing tag for it is the record then.
+          sha="${sha:-$existing}"
+          if [ -z "$sha" ]; then
+            echo "npm recorded no commit for fmrl-mcp@${VERSION} and there is no ${tag} tag; not tagging." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "fmrl-mcp@${VERSION} was published from ${sha}, which is not on main; not tagging." >&2
+            exit 1
+          fi
+
+          .github/scripts/release-notes.sh "$VERSION" "$sha" > "$RUNNER_TEMP/notes.md"
+
+          # Only the highest version on npm is marked latest, so tagging an
+          # old version by hand doesn't push the newest one down the list.
+          highest="$(jq -r '.versions | keys[]' <<<"$packument" | sort -V | tail -n1)"
+          latest=false
+          if [ "$highest" = "$VERSION" ]; then latest=true; fi
+
+          gh release create "$tag" \
+            --target "$sha" \
+            --title "fmrl-mcp ${VERSION}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest="$latest"
+
+          {
+            echo "Tagged ${tag} on ${sha} and wrote its release."
+            echo
+            cat "$RUNNER_TEMP/notes.md"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -117,11 +117,11 @@ describe("/fmrl:whoami", () => {
     expect(whoamiSkill).toContain("fingerprint");
     expect(whoamiSkill).not.toContain("Signing in does not back up private-page keys.");
   });
-  it("uses this plugin's tools over another fmrl server's, and says where the canvases are", () => {
+  it("uses this plugin's tools over another fmrl server's, and says where the pages are", () => {
     expect(skillText()).toContain("Use this plugin's own fmrl tools");
     expect(skillText()).toContain("do not call that server's");
     expect(skillText()).toContain("`canvases_url`");
-    expect(skillText()).toContain("say so with its date and where its canvases are");
+    expect(skillText()).toContain("say so with its date and where its pages are");
   });
   it("keeps the link rules /fmrl:share keeps", () => {
     expect(skillText()).toMatch(/Never print the ring on its own/);
@@ -207,7 +207,7 @@ describe("/fmrl:share and the handoff-review starter", () => {
     expect(r.profile?.norms).toContain("evidence is a results table, not a transcript");
     expect(r.missing).toEqual([]);
   });
-  it("offers it when a handoff canvas starts, and names the house page", () => {
+  it("offers it when a handoff page starts, and names the house page", () => {
     expect(share()).toContain("handoff-review.md");
     expect(share()).toContain("https://fmrl.site/h4ndrv");
     expect(share()).toMatch(/fmrl-profile/);

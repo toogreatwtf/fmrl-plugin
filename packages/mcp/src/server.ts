@@ -330,18 +330,18 @@ function listText(rows: PageRow[]): string {
 }
 export const UNNAMED_LINE = "Unnamed: set FMRL_AGENT_NAME to name the revisions this key makes.";
 /**
- * canvasesLine is where an agent's canvases show on fmrl.site: for an
- * attached agent, the drawer canvases opens, tagged with the key's prefix,
+ * canvasesLine is where an agent's pages show on fmrl.site: for an
+ * attached agent, the Pages drawer that canvases opens, tagged with the key's prefix,
  * on its person's account or in the one browser it was attached from; for
  * an unattached one, where they will show once it is. undefined for a
  * server that reports no attachment at all.
  */
 export function canvasesLine(m: Pick<MeResponse, "prefix" | "attached_at" | "attached_via">, canvases: string, viewerBase: string): string | undefined {
   if (m.attached_at === undefined) return undefined;
-  if (m.attached_at === null) return `Once it is attached, its canvases show at ${canvases}, tagged ${m.prefix}.`;
-  if (m.attached_via === "account") return `Its canvases are in your canvases at ${canvases}, tagged ${m.prefix}, in any browser signed in to that account.`;
-  if (m.attached_via === "browser") return `That browser shows its canvases at ${canvases}, tagged ${m.prefix}. To see them on other devices, sign in to fmrl from that browser: ${viewerBase}/account/signin?next=canvases.`;
-  return `Its canvases show at ${canvases}, tagged ${m.prefix}, in the browser it was attached from and any browser signed in to that person's fmrl account.`;
+  if (m.attached_at === null) return `Once it is attached, its pages show at ${canvases}, tagged ${m.prefix}.`;
+  if (m.attached_via === "account") return `Its pages show under Pages at ${canvases}, tagged ${m.prefix}, in any browser signed in to that account.`;
+  if (m.attached_via === "browser") return `That browser shows its pages at ${canvases}, tagged ${m.prefix}. To see them on other devices, sign in to fmrl from that browser: ${viewerBase}/account/signin?next=canvases.`;
+  return `Its pages show at ${canvases}, tagged ${m.prefix}, in the browser it was attached from and any browser signed in to that person's fmrl account.`;
 }
 
 /** attachedLine is whoami's line on the agent's attachment, by what the server reports. */
@@ -351,7 +351,7 @@ function attachedLine(m: MeResponse): string {
       ? m.linked_at ? `A browser linked to this key on ${m.linked_at}.` : "No browser is linked to this key."
       : "This server does not report identity attachment status.";
   }
-  if (m.attached_at === null) return "This agent is not attached to an identity, so its canvases don't show on fmrl.site yet.";
+  if (m.attached_at === null) return "This agent is not attached to an identity, so its pages don't show on fmrl.site yet.";
   if (m.attached_via === "account") return `This agent attached to your fmrl account on ${m.attached_at}.`;
   if (m.attached_via === "browser") return `This agent attached on ${m.attached_at} to the browser it was attached from, which has no fmrl account.`;
   return `This agent attached to its identity on ${m.attached_at}.`;
@@ -469,8 +469,8 @@ const meOutput = {
   linked_at: z.string().nullable().optional(), link_url: z.string().optional(),
   rotated_at: z.string().optional().describe("When the key's secret was last rotated."),
   attach_url: z.string().optional().describe("A one-time link that attaches an unattached agent, when one was supplied. Relay it unchanged."),
-  attached_via: z.enum(["account", "browser"]).optional().describe("Where an attached agent's canvases show: account, in every browser signed in to its person's fmrl account; browser, only in the one browser it was attached from. Absent while unattached or when the server does not say."),
-  canvases_url: z.string().optional().describe("The fmrl.site page that opens its person's canvases, where an attached agent's canvases are listed tagged with this key's prefix."),
+  attached_via: z.enum(["account", "browser"]).optional().describe("Where an attached agent's pages show: account, in every browser signed in to its person's fmrl account; browser, only in the one browser it was attached from. Absent while unattached or when the server does not say."),
+  canvases_url: z.string().optional().describe("The fmrl.site link that opens its person's Pages list, where an attached agent's pages are listed tagged with this key's prefix."),
 };
 function project<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> {
   const parsed = schema.safeParse(value);
@@ -486,7 +486,7 @@ function project<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> 
  */
 const whoamiOutput = {
   ...meOutput,
-  canvases: z.string().optional().describe("The sentence whoami's text says about where this agent's canvases show on fmrl.site, word for word."),
+  canvases: z.string().optional().describe("The sentence whoami's text says about where this agent's pages show on fmrl.site, word for word."),
   ring: z.object({
     kept_in: z.enum(["file", "env", "unsaved"]).describe("file: the key ring is in the credentials file; env: FMRL_RING supplies it; unsaved: it could not be written."),
     file: z.string().optional(),
@@ -532,7 +532,7 @@ export function attachText(a: { attached: boolean; machine?: string; attach_url?
   const who = on ? `this agent on ${on}` : "this agent";
   if (a.attached) {
     const since = a.attached_at ? ` (since ${a.attached_at})` : "";
-    const canvases = a.canvases_url ? ` Its canvases show at ${a.canvases_url}.` : "";
+    const canvases = a.canvases_url ? ` Its pages show at ${a.canvases_url}.` : "";
     if (a.renamed === true) return `This agent is already attached to your fmrl account${since}. Your account now shows it as on ${on}.${canvases}`;
     if (a.renamed === false) return `This agent is already attached to your fmrl account${since}, but its machine name couldn't be updated just now, so your account may not show ${machine} beside it.${canvases}`;
     return `${who[0].toUpperCase()}${who.slice(1)} is already attached to your fmrl account${since}. Nothing to do.${canvases}`;
@@ -1187,7 +1187,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_whoami",
     {
       title: "Check this machine's fmrl key and account",
-      description: "Show this machine's fmrl key: its prefix and name, this month's free publishes used and when they reset, whether the agent is attached to a person's fmrl account and where its canvases show, where the key ring is kept, and whether the installed plugin is current. Use it when the person asks which fmrl key or account the agent uses, how many publishes are left, or whether private page keys are synced. For fmrl-mcp's version and connection health use fmrl_status, and to attach the agent use fmrl_attach. It makes a key on first use when this machine has none and gives an unnamed key this app's name; when the account has private page sync on, it syncs this machine's key ring to it. A revoked key is reported, not replaced.",
+      description: "Show this machine's fmrl key: its prefix and name, this month's free publishes used and when they reset, whether the agent is attached to a person's fmrl account and where its pages show, where the key ring is kept, and whether the installed plugin is current. Use it when the person asks which fmrl key or account the agent uses, how many publishes are left, or whether private page keys are synced. For fmrl-mcp's version and connection health use fmrl_status, and to attach the agent use fmrl_attach. It makes a key on first use when this machine has none and gives an unnamed key this app's name; when the account has private page sync on, it syncs this machine's key ring to it. A revoked key is reported, not replaced.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: { trust_vault: z.string().optional().describe("Only after this tool said the account's vault fingerprint changed: the new fingerprint, exactly as fmrl.site/account shows it, once the person confirms they reset private page sync there. Trusting it lets this machine's key rings sync to that vault again. Leave out otherwise.") },
       outputSchema: whoamiOutput,

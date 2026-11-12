@@ -150,7 +150,7 @@ function apiLine(s: StatusSnapshot, a: ApiCheck): string {
       const where = a.me.attached_via === "account" ? " to your fmrl account" : a.me.attached_via === "browser" ? " to one browser, no account" : "";
       const canvases = a.me.canvases_url || `${s.baseUrl}/?canvases`;
       const linked = a.me.attached_at !== undefined
-        ? a.me.attached_at ? `Agent attached${where} on ${a.me.attached_at}; canvases at ${canvases} (tag ${a.me.prefix}).` : "Agent not attached, so its canvases don't show on fmrl.site; fmrl_whoami says how to attach it."
+        ? a.me.attached_at ? `Agent attached${where} on ${a.me.attached_at}; pages at ${canvases} (tag ${a.me.prefix}).` : "Agent not attached, so its pages don't show on fmrl.site; fmrl_whoami says how to attach it."
         : a.me.linked_at !== undefined
           ? a.me.linked_at ? `Browser linked on ${a.me.linked_at}.` : "Browser not linked."
           : "Identity attachment status not reported.";

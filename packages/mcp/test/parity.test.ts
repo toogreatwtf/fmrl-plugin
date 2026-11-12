@@ -18,7 +18,7 @@ function canonical(source: string): string {
   return serialize(root).replace(/&quot;/g, '"').trim();
 }
 const cases = JSON.parse(readFileSync(new URL('./fixtures/canvas-parity.json', import.meta.url), 'utf8'));
-describe('the three-renderer canvas contract', () => {
+describe('the three-renderer page contract', () => {
   for (const c of cases) it(c.name, () => {
     expect(c.assertions).toEqual(['structure','token-spans','profile-script','copy-hooks']);
     const body = toHTML(c.md);

@@ -2,7 +2,7 @@ import { Marked, type Tokens } from "marked";
 import { PROFILE_TYPE, decodeEntities, scriptBlocks, slug, stripTags } from "./markdown.js";
 
 /**
- * A canvas profile is a page's agreed section shape, carried in the page
+ * A page profile is a page's agreed section shape, carried in the page
  * itself as an inert fmrl-profile block: a ```fmrl-profile fence in Markdown,
  * which renders as <script type="application/fmrl-profile+json">. The server
  * never reads it (a private page's is sealed); this reads it here, after

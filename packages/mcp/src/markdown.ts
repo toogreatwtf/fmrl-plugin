@@ -15,7 +15,7 @@ function escapeHTML(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** PROFILE_TYPE is the script type a canvas profile rides in: an inert data block (fmrl.site's api.md, "Profiles"). */
+/** PROFILE_TYPE is the script type a page profile rides in: an inert data block (fmrl.site's api.md, "Profiles"). */
 export const PROFILE_TYPE = "application/fmrl-profile+json";
 
 /**

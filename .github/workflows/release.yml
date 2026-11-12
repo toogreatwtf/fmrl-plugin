@@ -37,6 +37,12 @@
 # list the version lists it when re-run (or run by hand on main), instead of
 # finishing green with the version unlisted.
 #
+# After a successful publish, the tag job (tag-release.yml) tags the version
+# as v<version> on the commit npm recorded for it and writes a GitHub
+# Release with the PRs since the previous version. The check job puts the
+# same notes on the run's summary page, so they're there to read when the
+# publish waits for approval.
+#
 # The version check runs first, in its own job with no environment and no
 # id-token permission, so a merge that leaves the version alone finishes
 # green without asking anyone to approve anything. Only when npm or the
@@ -52,6 +58,8 @@ on:
     paths:
       - packages/mcp/**
       - .github/workflows/release.yml
+      - .github/workflows/tag-release.yml
+      - .github/scripts/release-notes.sh
   workflow_dispatch:
 
 permissions:
@@ -72,6 +80,8 @@ jobs:
         working-directory: packages/mcp
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -111,6 +121,15 @@ jobs:
             echo "fmrl-mcp@${version}: npm ${npm}, MCP Registry ${registry}; the publish job will wait for approval in npm-release."
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
+      # The notes for this version, on the run's summary page, which is where
+      # the approval is given. The same notes go on the GitHub Release once
+      # the publish is through.
+      - name: release notes
+        if: steps.gate.outputs.publish == 'true'
+        working-directory: .
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: .github/scripts/release-notes.sh "$VERSION" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: publish fmrl-mcp ${{ needs.check.outputs.version }}
@@ -221,3 +240,16 @@ jobs:
           done
           echo "the MCP Registry refused fmrl-mcp@${VERSION} five times; re-run this job to try again." >&2
           exit 1
+
+  # Once the approved publish is through, tag the version and write its
+  # GitHub Release (tag-release.yml). This job only touches git tags and
+  # releases; it has no id-token and cannot publish.
+  tag:
+    name: tag fmrl-mcp ${{ needs.check.outputs.version }}
+    needs: [check, publish]
+    if: github.ref == 'refs/heads/main' && needs.publish.result == 'success'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/tag-release.yml
+    with:
+      version: ${{ needs.check.outputs.version }}

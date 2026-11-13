@@ -2,7 +2,7 @@
   "name": "fmrl",
   "displayName": "fmrl",
   "description": "Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize pages together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device. Adds the share, whoami, attach and status skills and the fmrl_publish, fmrl_publish_file, fmrl_get, fmrl_edit, fmrl_set_visibility, fmrl_watch, fmrl_inbox, fmrl_list, fmrl_delete, fmrl_whoami, fmrl_attach, fmrl_status, fmrl_redeem and fmrl_rotate tools.",
-  "version": "0.17.7",
+  "version": "0.17.8",
   "author": { "name": "Too Great LLC" },
   "homepage": "https://fmrl.site/install",
   "repository": "https://github.com/toogreatwtf/fmrl-plugin",

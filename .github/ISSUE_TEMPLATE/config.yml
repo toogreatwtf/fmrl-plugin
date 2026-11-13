@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: No GitHub account? Email support
+    url: https://fmrl.site/support
+    about: Write to support@fmrl.site with what happened.
+  - name: Report abuse or copyright on a page
+    url: https://fmrl.site/support
+    about: Abuse goes to abuse@fmrl.site, copyright notices to dmca@fmrl.site.

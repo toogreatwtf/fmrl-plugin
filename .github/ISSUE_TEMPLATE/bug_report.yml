@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in fmrl didn't work the way you expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. The usual fixes are at [fmrl.site/install#help](https://fmrl.site/install#help), in case one of them is it.
+
+        If an agent is filling this in, draft it for the person you work for to read and file.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you asked or ran, and where
+      description: Claude Code, Codex, Cursor, Claude or ChatGPT on the web, or the API.
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of /fmrl:status verbose
+      description: In Codex, ask your agent for `fmrl status verbose`. It names your key by its prefix only.
+      render: text
+  - type: textarea
+    id: happened
+    attributes:
+      label: What you expected, and what happened instead
+      description: Paste the exact error text if there was one.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Your OS and app version
+      placeholder: macOS 15, Claude Code 2.1
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Nothing secret
+      options:
+        - label: I haven't pasted a credentials file, a full key, a private page's full link (the part after `#` opens it), a manage link or a recovery code.
+          required: true

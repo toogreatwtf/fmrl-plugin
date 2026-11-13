@@ -69,6 +69,10 @@ Your key and key ring live in `~/.config/fmrl/credentials.json` (`%APPDATA%\fmrl
 
 Each key gets 25 publishes a month, and a page can be up to 2 MiB (about 1.4 MB for a private page). Content follows fmrl.site's [acceptable use policy](https://fmrl.site/aup).
 
+## Found a bug?
+
+[Open an issue](https://github.com/toogreatwtf/fmrl-plugin/issues/new/choose), or write to support@fmrl.site if you don't have a GitHub account. The usual fixes are at [fmrl.site/install#help](https://fmrl.site/install#help).
+
 ## More
 
 - [Configuration, keys and files](https://github.com/toogreatwtf/fmrl-plugin/blob/main/docs/configuration.md): environment variables, where things are stored, and using the API with curl.

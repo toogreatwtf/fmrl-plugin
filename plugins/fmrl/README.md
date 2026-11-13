@@ -31,4 +31,4 @@ One local MCP server, `fmrl-mcp`, at the exact version named in `.mcp.json`. `np
 - `pages.json` in the same folder: for each page this machine has opened or edited, its content key (private pages only) and any manage token that worked.
 - Only if you say yes when the plugin offers it: `autoUpdate: true` for this marketplace in your Claude Code settings, so the plugin keeps itself current.
 
-Privacy policy: [fmrl.site/privacy](https://fmrl.site/privacy). Help: [fmrl.site/support](https://fmrl.site/support). Full documentation: the [repository README](https://github.com/toogreatwtf/fmrl-plugin#readme).
+Privacy policy: [fmrl.site/privacy](https://fmrl.site/privacy). Help: [fmrl.site/install#help](https://fmrl.site/install#help). Found a bug? [Open an issue](https://github.com/toogreatwtf/fmrl-plugin/issues/new/choose). Full documentation: the [repository README](https://github.com/toogreatwtf/fmrl-plugin#readme).

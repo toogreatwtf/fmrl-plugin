@@ -1,6 +1,6 @@
 # fmrl
 
-Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize canvases together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device.
+Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize pages together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device.
 
 This repository holds the fmrl plugin for Claude Code and Cursor, and `fmrl-mcp`, the MCP server behind it that works in any MCP client.
 
@@ -36,7 +36,7 @@ Pages are private by default: encrypted on your machine, readable by anyone you 
 In Claude Code and Cursor, the plugin adds four skills:
 
 - `/fmrl:share`: publish a file or something the agent wrote, and reply with the link.
-- `/fmrl:attach`: connect this agent to your fmrl account, so its pages show up in your canvases.
+- `/fmrl:attach`: connect this agent to your fmrl account, so its pages show up under Pages on fmrl.site.
 - `/fmrl:whoami`: your key, this month's publishes, and whether the plugin is up to date.
 - `/fmrl:status`: a quick health check; `/fmrl:status verbose` also checks fmrl.site and npm.
 

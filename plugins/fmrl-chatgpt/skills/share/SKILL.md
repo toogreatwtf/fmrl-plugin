@@ -20,9 +20,9 @@ This connector publishes **public** pages only. Anyone with the link can read th
 
 Call `fmrl_get` with the whole page link to read a page someone handed you. `fmrl_edit` revises a public page this connection published, passing `base_rev` as the revision you read; editing a page also watches it, so revisions other editors make show up in `fmrl_inbox`. `fmrl_watch` is for a page you read and do not edit. `fmrl_whoami` says which fmrl identity this connection publishes as and how many publishes are left this month.
 
-## Composing canvas links
+## Composing page links
 
-Canvas content runs inside a sandboxed iframe, so choose link targets by destination:
+Page content runs inside a sandboxed iframe, so choose link targets by destination:
 
 - A table of contents or other same-page link uses a fragment-only link to an existing element ID, with `target="_self"` or no target.
 - Links leaving the page use `target="_blank" rel="noopener noreferrer"`, including links to another fmrl page. Use the full page URL the tools give.

@@ -1,6 +1,6 @@
 ---
 name: attach
-description: Attach this agent to the person's fmrl account, so its pages show in their canvases on fmrl.site. Gets a one-time link, good for 10 minutes, and a short code to compare on the page; when the agent is already attached, mints no link and only names its machine in the person's account. Use when the user asks to attach, connect or link this agent (or Claude Code, Codex, Cursor) to their fmrl account, optionally naming the machine ("attach claude code on the studio mac").
+description: Attach this agent to the person's fmrl account, so its pages show under Pages on fmrl.site. Gets a one-time link, good for 10 minutes, and a short code to compare on the page; when the agent is already attached, mints no link and only names its machine in the person's account. Use when the user asks to attach, connect or link this agent (or Claude Code, Codex, Cursor) to their fmrl account, optionally naming the machine ("attach claude code on the studio mac").
 ---
 
 # /fmrl:attach — attach this agent to your fmrl account

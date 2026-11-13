@@ -9,12 +9,12 @@
     "source": "github",
     "subfolder": "packages/mcp"
   },
-  "version": "0.17.9",
+  "version": "0.17.10",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "fmrl-mcp",
-      "version": "0.17.9",
+      "version": "0.17.10",
       "transport": {
         "type": "stdio"
       },

@@ -513,9 +513,9 @@ describe("tools", () => {
   });
   it("fmrl_whoami says whether a browser is linked and always offers a link", async () => {
     const r = await call("fmrl_whoami");
-    expect(text(r)).toContain("This agent is not attached to an identity, so its canvases don't show on fmrl.site yet.");
+    expect(text(r)).toContain("This agent is not attached to an identity, so its pages don't show on fmrl.site yet.");
     expect(text(r)).toContain("open https://fmrl.test/attach/fresh#r=");
-    expect(text(r)).toMatch(/Once it is attached, its canvases show at http:\/\/127\.0\.0\.1:\d+\/\?canvases, tagged fmrl_\w{4}\.$/m);
+    expect(text(r)).toMatch(/Once it is attached, its pages show at http:\/\/127\.0\.0\.1:\d+\/\?canvases, tagged fmrl_\w{4}\.$/m);
     expect(r.structuredContent).toMatchObject({ attached_at: null, attach_url: expect.stringMatching(/^https:\/\/fmrl\.test\/attach\/fresh#r=/) });
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const again = await call("fmrl_whoami");
@@ -773,16 +773,16 @@ describe("tools", () => {
       expect(text(r)).toContain("This agent attached to its identity on 2026-09-16");
       expect(text(r)).not.toContain("browser linked");
       expect(text(r)).not.toContain("No attach link");
-      // The one address is where its canvases are; no attach or link destination is invented.
+      // The one address is where its pages are; no attach or link destination is invented.
       expect(text(r).match(/https?:\/\/\S+/g)).toEqual([`${fake.baseUrl}/?canvases,`]);
       expect(text(r)).toContain("in the browser it was attached from and any browser signed in to that person's fmrl account");
       expect(text(r)).not.toContain("you are signed in");
     } finally { await c.close(); }
   });
   it.each([
-    ["account", "This agent attached to your fmrl account on 2026-10-18T12:00:00Z.", "Its canvases are in your canvases at https://fmrl.site/?canvases, tagged fmrl_Bsrk, in any browser signed in to that account."],
-    ["browser", "This agent attached on 2026-10-18T12:00:00Z to the browser it was attached from, which has no fmrl account.", "That browser shows its canvases at https://fmrl.site/?canvases, tagged fmrl_Bsrk. To see them on other devices, sign in to fmrl from that browser:"],
-  ] as const)("fmrl_whoami says where an agent attached via its %s sees its canvases", async (via, attached, where) => {
+    ["account", "This agent attached to your fmrl account on 2026-10-18T12:00:00Z.", "Its pages show under Pages at https://fmrl.site/?canvases, tagged fmrl_Bsrk, in any browser signed in to that account."],
+    ["browser", "This agent attached on 2026-10-18T12:00:00Z to the browser it was attached from, which has no fmrl account.", "That browser shows its pages at https://fmrl.site/?canvases, tagged fmrl_Bsrk. To see them on other devices, sign in to fmrl from that browser:"],
+  ] as const)("fmrl_whoami says where an agent attached via its %s sees its pages", async (via, attached, where) => {
     const api = new FmrlApi(fake.baseUrl);
     const original = api.me.bind(api);
     vi.spyOn(api, "me").mockImplementation(async k => ({ ...await original(k), prefix: "fmrl_Bsrk", attached_at: "2026-10-18T12:00:00Z", attached_via: via, canvases_url: "https://fmrl.site/?canvases", attach_url: undefined }));
@@ -2228,7 +2228,7 @@ describe("fmrl_status", () => {
         const n = fake.requests.length;
         const t = await status(c, { verbose: true });
         expect(fake.requests.slice(n).map((q) => `${q.method} ${q.path}`)).toEqual(["GET /api/v1/me", "GET /api/v1/inbox"]);
-        expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. Agent not attached, so its canvases don't show on fmrl\.site; fmrl_whoami says how to attach it\. Inbox: empty\.$/m);
+        expect(t).toMatch(/^fmrl\.site|^http:\/\/127\.0\.0\.1:\d+: reachable, \d+ ms\. Quota: 1 of 25 publishes used this month, resets 2026-10-01T00:00:00Z\. Agent not attached, so its pages don't show on fmrl\.site; fmrl_whoami says how to attach it\. Inbox: empty\.$/m);
         expect(t).toContain(`npm: fmrl-mcp 9.9.9 is the latest; this session runs ${VERSION}, so restart the client that started it to pick it up.`);
         expect(asked).toBe(1);
         // The probes are not the user's calls: the last call is still the read.

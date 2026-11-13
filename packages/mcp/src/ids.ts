@@ -5,7 +5,7 @@ const ID = /^[0-9abcdefghjkmnpqrstvwxyz]{12}$/;
 /**
  * SLUG is a house page's id — the pages fmrl.site carries in the binary and
  * serves at short ids, like h4ndrv (the handoff-review starter profile) or
- * q7m2xk (the demo canvas): 4 to 11 characters of the same alphabet. A minted
+ * q7m2xk (the demo page): 4 to 11 characters of the same alphabet. A minted
  * id is always 12, so the two namespaces never meet (markymd internal/reserved).
  */
 const SLUG = /^[0-9abcdefghjkmnpqrstvwxyz]{4,11}$/;

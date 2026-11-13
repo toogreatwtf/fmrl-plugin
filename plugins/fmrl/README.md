@@ -1,6 +1,6 @@
 # fmrl
 
-Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize canvases together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device.
+Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize pages together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device.
 
 This plugin publishes a page to [fmrl.site](https://fmrl.site) and hands back a link. Pages are private unless you ask for a public one: encrypted on your machine, with the key in the link. A page lasts seven days, and a public one can be kept.
 

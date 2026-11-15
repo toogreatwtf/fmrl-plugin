@@ -17,6 +17,10 @@ export interface FakeDoc {
   managers?: Set<string>;
   /** watchers maps a watching key to the revision it last saw. */
   watchers?: Map<string, number>;
+  /** readers are agent keys the page's person is attached to: they see the page in their list and get its sealed record, under ring. */
+  readers?: Set<string>;
+  /** ring is the ring id the server names beside sealed for a reader: the person's ring the record is sealed under. */
+  ring?: string;
 }
 /** hangingFetch never answers, but honours the request's AbortSignal as fetch does: when the signal fires it rejects with a TimeoutError. A fake that ignored the signal would hide a timeout that works. */
 export const hangingFetch = ((_url: unknown, init?: RequestInit) => new Promise<Response>((_, reject) => {
@@ -56,6 +60,15 @@ export interface FakeApi {
   revoked: Set<string>;
   /** rotatedAt holds, by prefix, when a key's secret was last replaced; GET /me reports it as rotated_at. */
   rotatedAt: Map<string, string>;
+  /** lends holds each attached key's lend link state (POST and GET /me/lend); lendAnswer plays the person answering it. */
+  lends: Map<string, { status: "pending" | "lent" | "declined" | "expired"; url: string; expires_at: string }>;
+  /** lentRings holds what GET /me/lent serves each key: ring ids and their boxes, sealed under the key's own ring. */
+  lentRings: Map<string, Array<{ ring: string; box: string }>>;
+  /** lendRefusal, when set, is what POST /me/lend answers instead. */
+  lendRefusal?: { status: number; code: string; message?: string };
+  /** noLend plays a server from before lending: every /me/lend and /me/lent route answers 404. */
+  noLend?: boolean;
+  lendAnswer(key: string, status: "lent" | "declined" | "expired"): void;
   /** handoff rotates key as the account page does and returns its key code, grouped in fours; POST /keys/redeem trades it for the new key once. */
   handoff(key: string): string;
   /** prefixOf is a key's prefix as the server reports it: the record's, which a rotation keeps while the secret is minted afresh. */
@@ -117,7 +130,8 @@ function docRow(d: FakeDoc, caller: string): Record<string, unknown> {
     id: d.id, url: `https://fmrl.test/${d.id}`, status: d.status ?? "live", format: d.format, size: d.size, rev: d.rev ?? 1,
     private: d.encrypted === true,
     owned: d.owner === caller,
-    ...(d.sealed && d.owner === caller ? { sealed: d.sealed } : {}),
+    ...(d.sealed && (d.owner === caller || d.readers?.has(caller)) ? { sealed: d.sealed } : {}),
+    ...(d.sealed && d.ring && d.owner !== caller && d.readers?.has(caller) ? { ring: d.ring } : {}),
     expires_at: pinned ? null : "2026-09-15T12:00:00Z",
     pinned,
     ...(pinned ? { cid: "bafytest" } : {}),
@@ -181,6 +195,13 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
     watchLimit: 200,
     revoked: new Set(),
     rotatedAt: new Map(),
+    lends: new Map(),
+    lentRings: new Map(),
+    lendAnswer: (key, status) => {
+      const l = api.lends.get(key);
+      if (l) l.status = status;
+      else api.lends.set(key, { status, url: "", expires_at: "" });
+    },
     handoff: () => "",
     prefixOf: (key) => prefixes.get(key) ?? key.slice(0, 9),
     close: async () => {},
@@ -334,7 +355,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
     if (method === "GET" && url.pathname === "/api/v1/docs") {
       const key = auth();
       if (!key) return unauthorized();
-      const docs = [...api.docs.values()].filter((d) => d.owner === key && !d.removed).reverse().slice(0, 50).map((d) => docRow(d, key));
+      const docs = [...api.docs.values()].filter((d) => (d.owner === key || d.readers?.has(key)) && !d.removed).reverse().slice(0, 50).map((d) => docRow(d, key));
       return json(res, 200, { docs });
     }
     const m = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)$/);
@@ -447,6 +468,28 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       api.ringBatches.push(boxes);
       for (const { prefix, box } of boxes) api.ringBoxes.set(prefix, box);
       return json(res, 200, { stored: boxes.length });
+    }
+    // Lending (markymd #405): a ten-minute link the person opens to lend this agent their rings, its state, and the rings lent.
+    if (url.pathname === "/api/v1/me/lend" || url.pathname === "/api/v1/me/lent") {
+      const key = auth();
+      if (!key) return unauthorized();
+      if (api.noLend) return fail(res, 404, "not_found", "");
+      // As fmrl.site does, the reads answer an agent attached to no one plainly; only minting a link refuses it.
+      if (method === "GET" && url.pathname === "/api/v1/me/lent") return json(res, 200, { rings: api.lentRings.get(key) ?? [] });
+      if (method === "GET") {
+        const l = api.lends.get(key);
+        return json(res, 200, { status: l?.status ?? "none", lent: (api.lentRings.get(key) ?? []).length > 0 });
+      }
+      if (method === "POST" && url.pathname === "/api/v1/me/lend") {
+        if (!api.linked.has(key)) return fail(res, 403, "not_claimed", "This agent isn't attached to anyone.");
+        if (api.lendRefusal) return fail(res, api.lendRefusal.status, api.lendRefusal.code, api.lendRefusal.message ?? "");
+        if (!api.accountVaults.get(key)) return fail(res, 409, "no_vault", "Your person needs to turn on private pages in their fmrl account first.");
+        if (!api.ringBoxes.has(api.prefixOf(key))) return fail(res, 409, "ring_missing", "Upload this key's ring first.");
+        const n = (api.requests.filter((q) => q.method === "POST" && q.path === "/api/v1/me/lend").length);
+        const link = { status: "pending" as const, url: `https://fmrl.test/lend/l${n}${api.prefixOf(key).slice(5)}`, expires_at: new Date(Date.now() + 600000).toISOString() };
+        api.lends.set(key, link);
+        return json(res, 201, { url: link.url, expires_at: link.expires_at });
+      }
     }
     // The attach command (markymd #355): a ten-minute link naming the machine and its code, attached or not.
     if (method === "POST" && url.pathname === "/api/v1/me/attach") {

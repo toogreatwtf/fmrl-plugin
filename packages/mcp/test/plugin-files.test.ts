@@ -22,13 +22,13 @@ describe("the plugin manifest", () => {
     expect(majorMinor(manifest.version)).toBe(majorMinor(pin));
   });
   it("names every tool, as the READMEs' tables do", () => {
-    const tools = ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"];
+    const tools = ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate", "fmrl_lend"];
     for (const t of tools) {
       expect(manifest.description).toContain(`${t}`);
       for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme)).toContain(`| \`${t}\` |`);
     }
-    expect(read("README.md")).toContain("Any MCP client gets fourteen tools:");
-    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets fourteen tools:");
+    expect(read("README.md")).toContain("Any MCP client gets fifteen tools:");
+    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets fifteen tools:");
   });
   it("names all three slash commands, as the READMEs do", () => {
     for (const cmd of ["/fmrl:share", "/fmrl:whoami", "/fmrl:status"]) {
@@ -61,7 +61,7 @@ describe("what the directory checks in the plugin folder", () => {
   });
   it("names every tool and skill in its README, as the manifest does", () => {
     const text = read("plugins/fmrl/README.md");
-    for (const t of ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"]) expect(text).toContain(`\`${t}\``);
+    for (const t of ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate", "fmrl_lend"]) expect(text).toContain(`\`${t}\``);
     for (const cmd of ["/fmrl:share", "/fmrl:whoami", "/fmrl:status"]) expect(text).toContain(`\`${cmd}\``);
   });
 });
@@ -252,7 +252,7 @@ describe("the Cursor plugin", () => {
     expect(existsSync(path.join(repo, "plugins/fmrl", logo))).toBe(true);
   });
   it("names every tool, as the Claude manifest does", () => {
-    for (const t of ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate"]) {
+    for (const t of ["fmrl_publish", "fmrl_publish_file", "fmrl_get", "fmrl_edit", "fmrl_watch", "fmrl_inbox", "fmrl_list", "fmrl_delete", "fmrl_whoami", "fmrl_status", "fmrl_redeem", "fmrl_rotate", "fmrl_lend"]) {
       expect(cursorManifest().description).toContain(t);
     }
   });

@@ -108,7 +108,8 @@ export interface LenderOptions {
  */
 export class Lender {
   private readonly links = new Map<string, LendLink>();
-  private readonly attachment = new Map<string, { at: number; attached: boolean }>();
+  private readonly attachment = new Map<string, number>();
+  private readonly minting = new Map<string, Promise<LendAsk>>();
   private readonly now: () => number;
 
   constructor(private readonly o: LenderOptions) {
@@ -116,13 +117,14 @@ export class Lender {
   }
 
   /**
-   * attached is whether key is attached to a person, from GET /me, kept a
-   * minute: an agent attached to no one has nobody to ask. Undefined when
+   * attached is whether key is attached to a person, from GET /me: an agent
+   * attached to no one has nobody to ask. Only a yes is kept, for a minute;
+   * the person may attach it any moment, from their browser. Undefined when
    * that can't be told, and then the lend routes decide.
    */
   private async attached(key: string): Promise<boolean | undefined> {
-    const hit = this.attachment.get(key);
-    if (hit && this.now() - hit.at < 60_000) return hit.attached;
+    const at0 = this.attachment.get(key);
+    if (at0 !== undefined && this.now() - at0 < 60_000) return true;
     let at: unknown;
     try {
       at = (await this.o.api.me(key))?.attached_at;
@@ -132,7 +134,8 @@ export class Lender {
     }
     if (at === undefined) return undefined;
     const attached = typeof at === "string" && at !== "";
-    this.attachment.set(key, { at: this.now(), attached });
+    if (attached) this.attachment.set(key, this.now());
+    else this.attachment.delete(key);
     return attached;
   }
 
@@ -161,6 +164,15 @@ export class Lender {
     if (!opts.force && state?.status === "declined") return { kind: "declined" };
     const live = this.live(key, state);
     if (live) return { kind: "link", ...live };
+    // A link replaces the one before it, so asks that overlap share one mint rather than each spending a link.
+    const pending = this.minting.get(key);
+    if (pending) return pending;
+    const mint = this.mint(key).finally(() => this.minting.delete(key));
+    this.minting.set(key, mint);
+    return mint;
+  }
+
+  private async mint(key: string): Promise<LendAsk> {
     let synced = false;
     for (;;) {
       try {
@@ -170,7 +182,7 @@ export class Lender {
         return { kind: "link", url: link.url, expires_at: link.expires_at };
       } catch (e) {
         if (!(e instanceof ApiError)) throw e;
-        if (e.code === "not_claimed") this.attachment.set(key, { at: this.now(), attached: false });
+        if (e.code === "not_claimed") this.attachment.delete(key);
         // The person's account needs this key's ring before their browser can seal under it: send it once, then ask again.
         if (e.code === "ring_missing" && !synced) {
           synced = true;

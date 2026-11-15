@@ -297,6 +297,29 @@ describe("LentRings and Lender", () => {
     expect(states).toBe(0);
   });
 
+  it("rechecks attachment each time while unattached, so attaching takes effect at once", async () => {
+    let attachedAt: string | null = null; let mes = 0;
+    const api = { me: async () => { mes++; return { attached_at: attachedAt }; }, lendState: async () => ({ status: "none", lent: false }) } as unknown as FmrlApi;
+    const lender = new Lender({ api, syncRings: async () => true });
+    expect(await lender.state("k")).toBeUndefined();
+    attachedAt = "2026-11-15T12:00:00Z";
+    expect(await lender.state("k")).toEqual({ status: "none", lent: false });
+    await lender.state("k");
+    expect(mes).toBe(2);
+  });
+
+  it("shares one mint between asks that overlap", async () => {
+    let mints = 0;
+    const api = fakeApi({
+      lendState: async () => ({ status: "none", lent: false }),
+      lend: async () => { mints++; await new Promise((r) => setTimeout(r, 10)); return { url: `https://fmrl.test/lend/${mints}`, expires_at: new Date(Date.now() + 600_000).toISOString() }; },
+    });
+    const lender = new Lender({ api, syncRings: async () => true });
+    const [a, b] = await Promise.all([lender.ask("k"), lender.ask("k", { force: true })]);
+    expect(mints).toBe(1);
+    expect(a).toEqual(b);
+  });
+
   it("rethrows a revoked key and honours Not now unless forced", async () => {
     const api = fakeApi({
       lendState: async () => ({ status: "declined", lent: false }),

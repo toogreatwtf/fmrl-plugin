@@ -316,9 +316,9 @@ describe("account vault sync integration", () => {
 });
 
 describe("tools", () => {
-  it("lists exactly the fourteen tools", async () => {
+  it("lists exactly the fifteen tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["fmrl_attach", "fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
+    expect(names).toEqual(["fmrl_attach", "fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_lend", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
   });
   it("fmrl_attach answers the link with the ring, the code and the machine, and is a no-op once attached", async () => {
     const r = await call("fmrl_attach", { machine: "Studio" });
@@ -991,7 +991,7 @@ describe("fmrl_get reads the page", () => {
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_get")!;
-    expect(tool.description).toBe("Read one fmrl.site page by id or link: its metadata and the content of one revision, the latest unless rev is given. Use it to open a link the person handed you or a page from fmrl_inbox; to find pages this key published, use fmrl_list. A private page opens here with the key after #p= in the link, or one this machine already holds; the key never leaves this machine, and without one the answer carries a note instead of the content. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.");
+    expect(tool.description).toBe("Read one fmrl.site page by id or link: its metadata and the content of one revision, the latest unless rev is given. Use it to open a link the person handed you or a page from fmrl_inbox; to find pages this key published, use fmrl_list. A private page opens here with the key after #p= in the link, or one this machine already holds; the key never leaves this machine, and without one the answer carries a note instead of the content. An agent attached to a person gets, in that note, a one-time link for them to let it read their private pages: show it to them as it is. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.");
   });
   it("reads a public Markdown page's latest revision: its source, its format, and who wrote it", async () => {
     const pub = await call("fmrl_publish", { visibility: "public", content: "# Hello\n\nworld", format: "md" });
@@ -1659,7 +1659,7 @@ const patches = () => fake.requests.filter((q) => q.method === "PATCH" && q.path
 describe("tool definitions", () => {
   it("declare their behavior hints and describe every input", async () => {
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(15);
     const hints = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
     for (const t of tools) {
       expect(t.annotations, t.name).toMatchObject({ readOnlyHint: expect.any(Boolean), destructiveHint: expect.any(Boolean), idempotentHint: expect.any(Boolean), openWorldHint: true });

@@ -5,13 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ApiError, canvasesUrl, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
+import { ApiError, canvasesUrl, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type LendState, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
 import { fileName, fileStem, filesDir, openFilesDir, writeIn } from "./files.js";
 import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, sourceBlock, toHTML, wrapDocument } from "./markdown.js";
+import { LentRings, Lender, type LendAsk } from "./lent.js";
 import { openPrivatePage } from "./opener.js";
 import { readProfile, type ProfileRead } from "./profile.js";
 import { publicRefusal } from "./secrets.js";
@@ -53,6 +54,8 @@ export interface ServerDeps {
   probeTimeoutMs?: number;
   /** filesDir is the fmrl folder for to_file and content_file (files.filesDir); tests give their own. */
   filesDir?: string;
+  /** lendWait paces fmrl_lend's wait: how often it asks and for how long; tests shorten it. */
+  lendWait?: { intervalMs: number; timeoutMs: number };
 }
 
 export const SEVEN_DAYS = "This page lasts seven days unless someone keeps it on the page itself.";
@@ -230,9 +233,22 @@ function docText(r: PageRow): string {
 type PageRead = PageRow & ProfileRead & {
   rev: number; latest_rev: number; editor: Editor;
   content?: string; content_format?: "html" | "md"; content_note?: string;
+  lend_url?: string; lend_expires_at?: string;
 };
 
 export const PRIVATE_NOTE = "private: pass the link with #p=<key> to read it";
+/** LEND_ASK is what fmrl_get and fmrl_lend say with a lend link: the agent shows it to its person, then waits. */
+export const LEND_ASK = (url: string, expires: string) => `Show your person this link as it is: ${url} — it works once, until ${expires}. Opened in a browser signed in to their fmrl account, it takes one tap, and lets you read their private pages, the ones shared with them included. Then call fmrl_lend with wait: true, and read the page again once it says they did. Never open the link yourself.`;
+export const LEND_NOTE = (url: string, expires: string) => `This page is private, and your person hasn't let you read their private pages yet. ${LEND_ASK(url, expires)}`;
+export const LEND_DECLINED = "This page is private, and your person chose Not now when you last asked to read their private pages. Don't ask again unless they bring it up; if they do, fmrl_lend makes a new link.";
+export const LEND_RING_UNSAVED = "This machine's key ring couldn't be saved to your person's fmrl account, so they can't lend you their private pages yet. Try again in a little while.";
+/** lendRefusal says why no lend link could be made, in the server's words where it has some. */
+function lendRefusal(a: Extract<LendAsk, { kind: "refused" }>): string {
+  if (a.code === "ring_missing") return LEND_RING_UNSAVED;
+  if (a.code === "not_claimed") return "This agent isn't attached to a person's fmrl account, so there's nobody to lend it private pages. If the person wants that, attach it with fmrl_attach first.";
+  if (a.code === "not_found") return "fmrl.site doesn't offer lending private pages to agents here.";
+  return a.message || "fmrl.site couldn't make a link just now; try again.";
+}
 
 function editorText(e: Editor): string {
   const key = e.key ? `${e.key}…` : undefined;
@@ -431,6 +447,8 @@ const readOutput = {
   rev: z.number(), latest_rev: z.number(),
   editor: editorOutput,
   content: z.string().optional(), content_format: z.enum(["html", "md"]).optional(), content_note: z.string().optional(),
+  // A private page the agent's person can lend it: the link to show them, and when it runs out.
+  lend_url: z.string().optional(), lend_expires_at: z.string().optional(),
   content_file: z.object({ path: z.string(), bytes: z.number() }).strict().optional(),
   profile: z.object({
     profile: z.string(), v: z.number(),
@@ -460,6 +478,22 @@ const inboxOutput = {
     can_open: z.boolean(),
   })),
 };
+const lendOutput = {
+  status: z.enum(["none", "pending", "lent", "declined", "expired"]), lent: z.boolean().optional(),
+  lend_url: z.string().optional(), expires_at: z.string().optional(),
+};
+type LendResult = { status: "none" | "pending" | "lent" | "declined" | "expired"; lent?: boolean; lend_url?: string; expires_at?: string };
+
+function lendText(v: LendResult): string {
+  if (v.lend_url) return LEND_ASK(v.lend_url, v.expires_at ?? "it runs out");
+  switch (v.status) {
+    case "lent": return "Your person let you read their private pages. Read the page again.";
+    case "declined": return "Your person chose Not now. Don't ask again unless they bring it up.";
+    case "expired": return "The link ran out before your person used it. Ask them whether they want a new one; fmrl_lend makes it.";
+    case "none": return v.lent ? "No link is out, and your person has already let you read their private pages." : "No link is out: fmrl_lend without wait makes one.";
+    default: return "Your person hasn't answered yet. Call fmrl_lend with wait: true again to keep waiting.";
+  }
+}
 const meOutput = {
   prefix: z.string().describe("The key's public prefix, the part safe to show; the secret is never returned."),
   created_at: z.string(),
@@ -546,7 +580,7 @@ export function attachText(a: { attached: boolean; machine?: string; attach_url?
   return lines.join("\n");
 }
 
-/** createServer registers the fourteen tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
+/** createServer registers the fifteen tools on an McpServer. deps.keys owns the key; deps.api speaks HTTP. */
 export function createServer(deps: ServerDeps): McpServer {
   const { api, keys, pages } = deps;
   const open = deps.open ?? fsOpen;
@@ -648,6 +682,35 @@ export function createServer(deps: ServerDeps): McpServer {
   /** folder is the fmrl folder's real path, made on first use; a bad FMRL_FILES_DIR is reported then, not at startup. */
   const folder = async (): Promise<string> => openFilesDir(deps.filesDir ?? filesDir());
   const vault = new VaultSync({ api, keys, log });
+  const lentRings = new LentRings({ api, ownRings: (k) => keys.ringsFor(k), log });
+  const lender = new Lender({ api, syncRings: async (k) => {
+    const r = await vault.sync(k);
+    return r.state === "synced" || r.state === "unknown";
+  } });
+  /** opener is what openPrivatePage tries for d under key k: the link and the page store, then this key's rings, then the rings its person lent it, d's own first. */
+  const opener = (k: string, d: Pick<DocResponse, "ring">) => ({ pages, rings: () => keys.ringsFor(k), lent: () => lentRings.ringsFor(k, d.ring), log });
+  /**
+   * askToLend is what fmrl_get says about a private page no key here opens,
+   * when this agent's person may hold its key: a link that asks them for
+   * their private pages, the "Not now" they gave, or why no link could be
+   * made. Undefined when lending has nothing to do with it: the agent's own
+   * page, an agent attached to no one, a server without lending, or a page
+   * missing from its person's pages after a lend.
+   */
+  const askToLend = async (k: string, d: DocResponse, state: LendState | undefined): Promise<Pick<PageRead, "content_note" | "lend_url" | "lend_expires_at"> | undefined> => {
+    if (d.owned === true || !state) return undefined;
+    if (state.status === "declined") return { content_note: LEND_DECLINED };
+    if (state.lent) {
+      // Lent already, and this page still doesn't open: ask again only for one of the person's pages (one shared
+      // with them since, say), never for a page that is someone else's alone.
+      const { docs } = await api.list(k).catch(() => ({ docs: [] as DocResponse[] }));
+      if (!docs.some((x) => x.id === d.id)) return undefined;
+    }
+    const a = await lender.ask(k, { state });
+    if (a.kind === "declined") return { content_note: LEND_DECLINED };
+    if (a.kind === "refused") return { content_note: `This page is private. ${lendRefusal(a)}` };
+    return { content_note: LEND_NOTE(a.url, a.expires_at), lend_url: a.url, lend_expires_at: a.expires_at };
+  };
 
   /** whoamiPlugin is the installed plugin's state for fmrl_whoami, as facts and as the line the text carries; undefined with no readable manifest. */
   const whoamiPlugin = async () => {
@@ -884,7 +947,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_get",
     {
       title: "Read a fmrl.site page",
-      description: "Read one fmrl.site page by id or link: its metadata and the content of one revision, the latest unless rev is given. Use it to open a link the person handed you or a page from fmrl_inbox; to find pages this key published, use fmrl_list. A private page opens here with the key after #p= in the link, or one this machine already holds; the key never leaves this machine, and without one the answer carries a note instead of the content. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.",
+      description: "Read one fmrl.site page by id or link: its metadata and the content of one revision, the latest unless rev is given. Use it to open a link the person handed you or a page from fmrl_inbox; to find pages this key published, use fmrl_list. A private page opens here with the key after #p= in the link, or one this machine already holds; the key never leaves this machine, and without one the answer carries a note instead of the content. An agent attached to a person gets, in that note, a one-time link for them to let it read their private pages: show it to them as it is. Reading a revision of a page you watch marks it seen. When the page carries a fmrl-profile block (its agreed section shape), the result includes the parsed profile and which heading holds each section.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
@@ -908,8 +971,17 @@ export function createServer(deps: ServerDeps): McpServer {
         let v: PageRead;
         if (!d.private) v = withContent(read(pageRow(d, undefined)), r.content, r.format);
         else {
-          const opened = await openPrivatePage(ref, r.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
-          if (!opened) return { ...read(pageRow(d, undefined)), content_note: PRIVATE_NOTE };
+          let opened = await openPrivatePage(ref, r.content, d.sealed, opener(k, d));
+          let state: LendState | undefined;
+          if (!opened && !ref.key && d.owned !== true) {
+            state = await lender.state(k).catch(() => undefined);
+            // Lent since this process last read its lend: read it again before asking anew.
+            if (state?.lent && d.sealed) {
+              lentRings.forget(k);
+              opened = await openPrivatePage(ref, r.content, d.sealed, opener(k, d));
+            }
+          }
+          if (!opened) return { ...read(pageRow(d, undefined)), ...(ref.key ? undefined : await askToLend(k, d, state)) ?? { content_note: PRIVATE_NOTE } };
           const row = read(pageRow(d, { key: opened.key, title: opened.title ?? documentTitle(opened.html) }));
           const src = readSource(opened.html);
           v = src ? withContent(row, src.source, src.format) : withContent(row, opened.html, "html");
@@ -984,8 +1056,12 @@ export function createServer(deps: ServerDeps): McpServer {
             // the revisions between base_rev and latest that were never read.
             const current = await api.getRevision(k, ref.id, base_rev ?? d.rev ?? 1);
             // The link's manage token is left out here: it is remembered only once an edit made with it is accepted.
-            const opened = await openPrivatePage({ id: ref.id, key: ref.key }, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
-            if (!opened) throw new Error(PRIVATE_NEEDS_KEY);
+            const opened = await openPrivatePage({ id: ref.id, key: ref.key }, current.content, d.sealed, opener(k, d));
+            if (!opened) {
+              // An agent attached to someone can ask them for the key: fmrl_get does that.
+              const asks = d.owned !== true && !ref.key && await lender.state(k).catch(() => undefined) !== undefined;
+              throw new Error(asks ? `${PRIVATE_NEEDS_KEY} If it is one of your person's pages, read it with fmrl_get first: that asks them for it.` : PRIVATE_NEEDS_KEY);
+            }
             pageKey = opened.key;
             body = { ...(await preparePrivate(content, format, title, pageKey, "save")).body, base_rev };
           }
@@ -1058,7 +1134,7 @@ export function createServer(deps: ServerDeps): McpServer {
             }
           };
           if (visibility === "public") {
-            const opened = await openPrivatePage(ref, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log });
+            const opened = await openPrivatePage(ref, current.content, d.sealed, opener(k, d));
             if (!opened) throw new Error(PRIVATE_NEEDS_KEY);
             // The page as it reads, as fmrl_get answers it: the Markdown a private page was made from, else its HTML.
             const src = readSource(opened.html);
@@ -1115,7 +1191,7 @@ export function createServer(deps: ServerDeps): McpServer {
           // Proving the key means reading a revision, and reading one marks it
           // seen; the watch is put back where it was when that moved it.
           const current = await api.getRevision(k, ref.id, w.rev);
-          key = (await openPrivatePage(ref, current.content, d.sealed, { pages, rings: () => keys.ringsFor(k), log }))?.key;
+          key = (await openPrivatePage(ref, current.content, d.sealed, opener(k, d)))?.key;
           if (w.seen_rev < w.rev) w = await api.watch(k, ref.id, w.seen_rev);
         }
         return { ...w, url: key ? `${w.url}#p=${key}` : w.url, can_open: !w.private || key !== undefined };
@@ -1159,7 +1235,17 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     async () => run<{ docs: PageRow[] }>(async (k) => {
       const [{ docs }, rings] = await Promise.all([api.list(k), keys.ringsFor(k)]);
-      return { docs: await Promise.all(docs.map(async (d) => pageRow(d, d.private ? await unseal(rings, d.sealed) : undefined))) };
+      // A record this key's rings don't open may open under a ring its person lent it, read once for the whole list.
+      let lent: Promise<Map<string, string>> | undefined;
+      const lentFor = async (d: DocResponse): Promise<string[]> => {
+        const all = await (lent ??= lentRings.get(k).catch(() => new Map<string, string>()));
+        const first = d.ring ? all.get(d.ring) : undefined;
+        return first ? [first] : [...all.values()];
+      };
+      return { docs: await Promise.all(docs.map(async (d) => {
+        if (!d.private) return pageRow(d, undefined);
+        return pageRow(d, await unseal(rings, d.sealed) ?? (d.sealed ? await unseal(await lentFor(d), d.sealed) : undefined));
+      })) };
     }, (v) => listText(v.docs)),
   );
 
@@ -1411,6 +1497,45 @@ export function createServer(deps: ServerDeps): McpServer {
         return ok(attachText(out, name), out);
       } catch (e) {
         return fail(isRevoked(e) ? revokedText(await keys.prefixFor(used), keys) : errorText(e));
+      }
+    },
+  );
+
+  server.registerTool(
+    "fmrl_lend",
+    {
+      title: "Ask your person for their private pages",
+      description: "Ask the person this agent is attached to for their private pages, the ones shared with them included: a one-time link, good for 10 minutes, that they open signed in to fmrl and confirm with one tap. fmrl_get already makes this link when it meets one of their private pages it can't open, so call this only when the person asks you to, or to wait: with wait: true it waits until they've answered (or about a minute, then call it again) and says what they chose. Show the link as it is; never open it yourself. If they chose Not now, don't ask again unless they bring it up.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      inputSchema: { wait: z.boolean().optional().describe("true: don't make a link; wait for the person's answer to the one already out.") },
+      outputSchema: lendOutput,
+    },
+    async ({ wait }) => {
+      try {
+        const out = await withKey(async (k): Promise<LendResult> => {
+          if (!wait) {
+            const a = await lender.ask(k, { force: true });
+            if (a.kind === "refused") throw new Error(lendRefusal(a));
+            if (a.kind === "declined") throw new Error(LEND_DECLINED);
+            return { status: "pending", lend_url: a.url, expires_at: a.expires_at };
+          }
+          const pace = deps.lendWait ?? { intervalMs: 2000, timeoutMs: 50000 };
+          const until = Date.now() + pace.timeoutMs;
+          for (;;) {
+            const st = await lender.state(k);
+            if (!st) throw new Error("This agent isn't attached to a person's fmrl account, so there's no lend to wait for.");
+            if (st.status !== "pending") {
+              lender.forget(k);
+              if (st.status === "lent" || st.lent) lentRings.forget(k);
+              return { status: st.status, lent: st.lent };
+            }
+            if (Date.now() + pace.intervalMs > until) return { status: "pending", lent: st.lent };
+            await new Promise((r) => setTimeout(r, pace.intervalMs));
+          }
+        });
+        return ok(lendText(out), out);
+      } catch (e) {
+        return fail(errorText(e));
       }
     },
   );

@@ -4,7 +4,7 @@ Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your 
 
 This plugin publishes a page to [fmrl.site](https://fmrl.site) and hands back a link. Pages are private unless you ask for a public one: encrypted on your machine, with the key in the link. A page lasts seven days, and a public one can be kept.
 
-It adds four skills, `/fmrl:share`, `/fmrl:whoami`, `/fmrl:attach` and `/fmrl:status`, and fourteen tools: `fmrl_publish`, `fmrl_publish_file`, `fmrl_get`, `fmrl_edit`, `fmrl_set_visibility`, `fmrl_watch`, `fmrl_inbox`, `fmrl_list`, `fmrl_delete`, `fmrl_whoami`, `fmrl_attach`, `fmrl_status`, `fmrl_redeem` and `fmrl_rotate`.
+It adds four skills, `/fmrl:share`, `/fmrl:whoami`, `/fmrl:attach` and `/fmrl:status`, and fifteen tools: `fmrl_publish`, `fmrl_publish_file`, `fmrl_get`, `fmrl_edit`, `fmrl_set_visibility`, `fmrl_watch`, `fmrl_inbox`, `fmrl_list`, `fmrl_delete`, `fmrl_whoami`, `fmrl_attach`, `fmrl_lend`, `fmrl_status`, `fmrl_redeem` and `fmrl_rotate`.
 
 ## Install
 

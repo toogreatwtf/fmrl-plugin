@@ -11,7 +11,8 @@ export interface PublishResponse { id: string; url: string; raw_url: string; man
  * only to the key that owns the page. owned is true when the calling key is
  * the page's owner key (always, on a GET /api/v1/docs row).
  */
-export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string; rev?: number; private?: boolean; sealed?: string; owned?: boolean }
+/** ring, beside sealed, names the ring the record opens under: this key's prefix, or the id of a ring its person lent it (GET /me/lent). */
+export interface DocResponse { id: string; url: string; status: string; format: string; size: number; expires_at: string | null; pinned: boolean; cid?: string; rev?: number; private?: boolean; sealed?: string; owned?: boolean; ring?: string }
 /** DocsResponse is GET /api/v1/docs: this key's pages, newest first, 50 at most, removed and expired left out. */
 export interface DocsResponse { docs: DocResponse[] }
 export interface AccountVault { pub: string; fingerprint: string }
@@ -22,6 +23,12 @@ export interface RingBoxInput { prefix: string; box: string }
  * attached_via (account or browser) says where an attached agent's canvases show; canvases_url opens them. A server
  * older than both sends neither. machine is the machine the agent runs on, once it has said (markymd #358). */
 /** AttachResponse is POST /me/attach: a link, its expiry, the code the page shows beside it and the machine it names. A server from before markymd #355 answers url and expires_at only. */
+/** LendLink is a one-time link, good for ten minutes, that asks the person this key's agent is attached to for their private pages. */
+export interface LendLink { url: string; expires_at: string }
+/** LendState is where the agent's lend link stands; lent is whether the person has lent to it since its current attachment, whatever the link's state. */
+export interface LendState { status: "none" | "pending" | "lent" | "declined" | "expired"; lent: boolean }
+/** LentRing is one ring the person lent: its id, and the ring sealed under this key's own ring as a record {k: ring, t: ring id}. */
+export interface LentRing { ring: string; box: string }
 export interface AttachResponse { url: string; expires_at: string; code?: string; machine?: string }
 export interface MeResponse { prefix: string; created_at: string; label?: string; quota: { publishes: { used: number; limit: number; resets_at: string } }; attached_at?: string | null; attached_via?: "account" | "browser"; canvases_url?: string; machine?: string; linked_at?: string | null; link_url?: string; rotated_at?: string; attach_url?: string; account_vault?: AccountVault | null }
 
@@ -160,6 +167,18 @@ export class FmrlApi {
   }
   putRings(key: string, boxes: RingBoxInput[], fingerprint?: string): Promise<{ stored: number }> {
     return this.call<{ stored: number }>("PUT", "/me/rings", key, { boxes, ...(fingerprint === undefined ? {} : { fingerprint }) });
+  }
+  /** lend mints the agent's lend link, replacing its earlier one: 409 no_vault, ring_missing or rings_incomplete when the person's account can't take it yet, 403 not_claimed for an agent attached to no account. */
+  lend(key: string): Promise<LendLink> {
+    return this.call<LendLink>("POST", "/me/lend", key);
+  }
+  /** lendState is the agent's lend link's state, to wait on. */
+  lendState(key: string): Promise<LendState> {
+    return this.call<LendState>("GET", "/me/lend", key);
+  }
+  /** lent lists the rings the agent's person lent it, each sealed under the agent's own ring. */
+  lent(key: string): Promise<{ rings: LentRing[] }> {
+    return this.call<{ rings: LentRing[] }>("GET", "/me/lent", key);
   }
   setLabel(key: string, label: string): Promise<MeResponse> {
     return this.call<MeResponse>("PATCH", "/me", key, { label });

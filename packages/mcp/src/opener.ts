@@ -2,8 +2,8 @@ import { openEnvelope, openRecord } from "./crypto.js";
 import type { PageRef } from "./ids.js";
 import type { PageSecrets, PageStore } from "./pages.js";
 
-/** KeyFrom says where the key that opened a private page came from: the link the caller was handed, this machine's page store, or the page's sealed record under one of this key's rings. */
-export type KeyFrom = "link" | "stored" | "ring";
+/** KeyFrom says where the key that opened a private page came from: the link the caller was handed, this machine's page store, the page's sealed record under one of this key's rings, or under a ring its person lent it. */
+export type KeyFrom = "link" | "stored" | "ring" | "lent";
 
 /** OpenedPage is a private page opened here: the content key that did it, where that key came from, the decrypted document, and the title its sealed record carries when the ring opened it. */
 export interface OpenedPage { key: string; from: KeyFrom; html: string; title?: string }
@@ -12,6 +12,8 @@ export interface OpenerDeps {
   pages: PageStore;
   /** rings is this API key's rings, newest first; asked for only when neither the link nor the store opens the page. */
   rings: () => Promise<string[]>;
+  /** lent is the rings this key's person lent it, tried after its own; asked for only when none of those opens the record. */
+  lent?: () => Promise<string[]>;
   log?: (line: string) => void;
 }
 
@@ -26,7 +28,8 @@ async function tryOpen(envelope: string, key: string): Promise<string | undefine
 /**
  * openPrivatePage finds a key that opens a private page's envelope: the
  * link's #p= key, else the key this machine's page store holds for the page,
- * else the key in the page's sealed record under one of this key's rings.
+ * else the key in the page's sealed record under one of this key's rings,
+ * else under one of the rings its person lent it.
  * Each candidate is proved by actually opening envelope, never taken on its
  * shape. A link key that opens it is remembered with the link's manage
  * token (a stored manage token is never replaced by one from a link, which
@@ -61,15 +64,30 @@ export async function openPrivatePage(ref: PageRef, envelope: string, sealed: st
   }
 
   if (sealed) {
-    for (const ring of await deps.rings()) {
-      let record;
+    const tried = new Set<string>();
+    for (const source of [deps.rings, deps.lent]) {
+      if (!source) continue;
+      let rings: string[];
       try {
-        record = await openRecord(ring, sealed);
-      } catch {
-        continue; // Not this ring.
+        rings = await source();
+      } catch (e) {
+        // A lend that couldn't be read leaves the page unopened, not the read failed.
+        if (source === deps.rings) throw e;
+        deps.log?.(`fmrl-mcp: couldn't read lent rings: ${e instanceof Error ? e.message : String(e)}`);
+        continue;
       }
-      const html = await tryOpen(envelope, record.key);
-      if (html !== undefined) return { key: record.key, from: "ring", html, title: record.title };
+      for (const ring of rings) {
+        if (tried.has(ring)) continue;
+        tried.add(ring);
+        let record;
+        try {
+          record = await openRecord(ring, sealed);
+        } catch {
+          continue; // Not this ring.
+        }
+        const html = await tryOpen(envelope, record.key);
+        if (html !== undefined) return { key: record.key, from: source === deps.rings ? "ring" : "lent", html, title: record.title };
+      }
     }
   }
   return undefined;

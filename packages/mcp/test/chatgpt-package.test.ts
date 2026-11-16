@@ -17,7 +17,7 @@ const mcp = JSON.parse(read("mcp.json"));
 // The hosted server's tools (markymd internal/handler/mcp_tools.go). The
 // local-only ones are named so the package never promises them.
 const hosted = ["fmrl_publish", "fmrl_get", "fmrl_watch", "fmrl_inbox", "fmrl_edit", "fmrl_list", "fmrl_whoami", "fmrl_delete"];
-const localOnly = ["fmrl_publish_file", "fmrl_status", "fmrl_redeem", "fmrl_rotate", "manage_token", "#p="];
+const localOnly = ["fmrl_publish_file", "fmrl_status", "fmrl_redeem", "fmrl_rotate", "fmrl_lend", "manage_token", "#p="];
 
 const files = (d: string): string[] =>
   readdirSync(d).flatMap((f) => (statSync(path.join(d, f)).isDirectory() ? files(path.join(d, f)) : [path.join(d, f)]));

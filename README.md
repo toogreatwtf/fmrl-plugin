@@ -42,7 +42,7 @@ In Claude Code and Cursor, the plugin adds four skills:
 
 ## Tools
 
-Any MCP client gets fourteen tools:
+Any MCP client gets fifteen tools:
 
 | Tool | Does |
 |---|---|
@@ -56,6 +56,7 @@ Any MCP client gets fourteen tools:
 | `fmrl_set_visibility` | Make a page public or private, with a preview before anything goes public. |
 | `fmrl_delete` | Delete a page this key published. |
 | `fmrl_attach` | Get a one-time link that connects this agent to your fmrl account. |
+| `fmrl_lend` | Ask you, with a one-time link, to let an attached agent read your private pages. |
 | `fmrl_whoami` | Show the key, this month's quota and attachment state. |
 | `fmrl_status` | Show versions, the key on this machine and the last API call. |
 | `fmrl_redeem` | Trade a key code from fmrl.site for its key. |

@@ -21,7 +21,13 @@ export interface FakeDoc {
   readers?: Set<string>;
   /** ring is the ring id the server names beside sealed for a reader: the person's ring the record is sealed under. */
   ring?: string;
+  /** notes are the page's comments as the server stores them: the payload as written (JSON on a public page, sealed on a private one). */
+  notes?: FakeNote[];
+  /** newComments is what the inbox reports as new_comments to a key watching the page, even with no new revision. */
+  newComments?: number;
 }
+/** FakeNote is one stored comment or reply. */
+export interface FakeNote { id: string; thread?: string; payload: string; name: string; agent: boolean; author: string; resolved: boolean; rev: number }
 /** hangingFetch never answers, but honours the request's AbortSignal as fetch does: when the signal fires it rejects with a TimeoutError. A fake that ignored the signal would hide a timeout that works. */
 export const hangingFetch = ((_url: unknown, init?: RequestInit) => new Promise<Response>((_, reject) => {
   init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })));
@@ -552,6 +558,61 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       api.labels.set(key, label);
       return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label, quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null });
     }
+    const notesMatch = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)\/notes(?:\/([^/]+)\/resolve)?$/);
+    if (notesMatch && (method === "GET" || method === "POST")) {
+      const key = auth();
+      if (!key) return unauthorized();
+      const d = api.docs.get(notesMatch[1]);
+      if (!d || d.removed) return fail(res, 404, "not_found", "No page with that id.");
+      if (d.owner !== key && !d.readers?.has(key)) return fail(res, 403, "forbidden", "Only people and agents who may edit a page see its comments, and this key may not edit that page.");
+      if (!d.encrypted && d.format !== "md") return fail(res, 422, "not_markdown", "Comments work on Markdown pages only, and this page is HTML.");
+      d.notes = d.notes ?? [];
+      const url_ = `https://fmrl.test/${d.id}`;
+      const rev = d.rev ?? 1;
+      const sealedNote = (x: unknown) => typeof x === "string" && /^s1\.[A-Za-z0-9_-]{40,}$/.test(x);
+      if (method === "GET") {
+        const all = url.searchParams.get("include_resolved") === "true";
+        const view = (n: FakeNote) => {
+          const p = d.encrypted ? {} : (JSON.parse(n.payload) as { anchor?: { quote: string }; body?: string });
+          return { id: n.id, body: p.body ?? "", ...(d.encrypted ? { payload: n.payload } : {}), name: n.name, agent: n.agent, mine: n.author === key, quote: p.anchor?.quote ?? "", rev: n.rev, resolved: n.resolved, anchored: !!p.anchor };
+        };
+        const threads = d.notes.filter((n) => !n.thread && (all || !n.resolved)).map((n) => {
+          const v = view(n);
+          return {
+            id: v.id, quote: v.quote, heading: "", status: d.encrypted ? "sealed" : v.anchored ? "on_text" : "page", rev: v.rev, body: v.body,
+            ...(v.payload ? { payload: v.payload } : {}), name: v.name, agent: v.agent, mine: v.mine, resolved: v.resolved,
+            replies: d.notes!.filter((r) => r.thread === n.id).map((r) => { const rv = view(r); return { id: rv.id, body: rv.body, ...(rv.payload ? { payload: rv.payload } : {}), name: rv.name, agent: rv.agent, mine: rv.mine }; }),
+          };
+        });
+        return json(res, 200, { id: d.id, url: url_, rev, ...(d.encrypted ? { private: true } : {}), threads });
+      }
+      if (notesMatch[2]) {
+        const t = d.notes.find((n) => n.id === notesMatch[2] && !n.thread);
+        if (!t) return fail(res, 404, "no_thread", "No comment thread with that id on this page.");
+        t.resolved = (body as { resolved?: boolean } | undefined)?.resolved !== false;
+        return json(res, 200, { thread: t.id, url: url_, resolved: t.resolved });
+      }
+      const b = (body ?? {}) as { thread?: string; quote?: string; body?: string; payload?: string; base_rev?: number };
+      const note: FakeNote = { id: newId(), payload: "", name: api.labels.get(key) || "an agent", agent: true, author: key, resolved: false, rev };
+      if (b.thread) {
+        if (!d.notes.some((n) => n.id === b.thread && !n.thread)) return fail(res, 404, "no_thread", "No comment thread with that id on this page.");
+        note.thread = b.thread;
+      }
+      if (d.encrypted) {
+        if (b.quote !== undefined || b.body !== undefined) return fail(res, 400, "bad_request", "On a private page a comment is sealed.");
+        if (!sealedNote(b.payload)) return fail(res, 400, "bad_request", "payload is not a sealed comment.");
+        if (!b.thread && !b.base_rev) return fail(res, 400, "bad_request", "base_rev is required on a private page.");
+        note.payload = b.payload!;
+      } else {
+        if (b.payload !== undefined) return fail(res, 400, "bad_request", "payload is for a private page's sealed comment.");
+        note.payload = JSON.stringify(b.thread ? { body: b.body } : { anchor: { quote: b.quote, prefix: "", suffix: "", start: 0 }, body: b.body });
+      }
+      if (b.base_rev && b.base_rev !== rev) return fail(res, 409, "conflict", "The page changed since base_rev.", { rev });
+      d.notes.push(note);
+      const watching = d.watchers?.has(key) || watchCount(api, key) < api.watchLimit;
+      if (watching && !d.watchers?.has(key)) (d.watchers ??= new Map()).set(key, rev);
+      return json(res, 201, b.thread ? { id: note.id, thread: b.thread, url: url_, watching } : { id: note.id, url: url_, quote: d.encrypted ? "" : b.quote, heading: "", rev, watching });
+    }
     if (method === "GET" && url.pathname === "/api/v1/inbox") {
       const key = auth();
       if (!key) return unauthorized();
@@ -561,12 +622,12 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
         const seenRev = d.watchers?.get(key);
         if (seenRev === undefined) continue;
         const rev = d.rev ?? 1;
-        if (rev <= seenRev) continue;
         const revisions = (d.revisions ?? [])
           .filter((r) => r.rev > seenRev && r.editor.key !== api.prefixOf(key))
           .map((r) => ({ rev: r.rev, at: r.at, editor: r.editor }));
-        if (revisions.length === 0) continue;
-        items.push({ id: d.id, url: `https://fmrl.test/${d.id}`, private: d.encrypted === true, status: d.status ?? "live", rev, seen_rev: seenRev, revisions });
+        if (revisions.length === 0 && !d.newComments) continue;
+        items.push({ id: d.id, url: `https://fmrl.test/${d.id}`, private: d.encrypted === true, status: d.status ?? "live", rev, seen_rev: seenRev, revisions,
+          ...(d.newComments ? { new_comments: d.newComments, comments_at: "2026-09-08T12:00:00Z" } : {}) });
       }
       return json(res, 200, { items });
     }

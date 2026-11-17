@@ -38,11 +38,11 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "marked": "15.0.12",
+    "parse5": "^7.3.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "parse5": "^7.3.0",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^3.0.0"

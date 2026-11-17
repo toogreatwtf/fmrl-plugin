@@ -4,7 +4,7 @@ The package OpenAI's plugin directory takes: an Agent Plugins manifest (`plugin.
 
 ## What it runs
 
-Nothing on the person's machine. ChatGPT calls the hosted fmrl server at `https://fmrl.site/mcp` over streamable HTTP, signed in with OAuth: ChatGPT identifies itself by its Client ID Metadata Document, the person consents once on fmrl.site, and the connection is one named fmrl key. Eight tools: `fmrl_publish`, `fmrl_get`, `fmrl_watch`, `fmrl_inbox`, `fmrl_edit`, `fmrl_list`, `fmrl_whoami`, `fmrl_delete`.
+Nothing on the person's machine. ChatGPT calls the hosted fmrl server at `https://fmrl.site/mcp` over streamable HTTP, signed in with OAuth: ChatGPT identifies itself by its Client ID Metadata Document, the person consents once on fmrl.site, and the connection is one named fmrl key. Twelve tools: `fmrl_publish`, `fmrl_get`, `fmrl_watch`, `fmrl_inbox`, `fmrl_edit`, `fmrl_list`, `fmrl_whoami`, `fmrl_delete`, and on public Markdown pages the comment tools `fmrl_notes`, `fmrl_comment`, `fmrl_reply` and `fmrl_resolve`.
 
 ## What it sends and stores
 

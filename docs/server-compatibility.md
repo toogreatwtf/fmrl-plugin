@@ -22,3 +22,10 @@ validate. A successful publish with an invalid response, or a timeout with an
 uncertain outcome, must not be automatically republished. Use `fmrl_list` and the
 saved page information to reconcile first. Publish idempotency remains absent:
 this client sends no `Idempotency-Key`.
+
+The comment tools (`fmrl_notes`, `fmrl_comment`, `fmrl_reply`, `fmrl_resolve`)
+need a server with the `/api/v1/docs/{id}/notes` routes. An older server answers
+those with 404, and the tools pass its message on; nothing else changes. On a
+private page they send only sealed comments (`payload`, and `base_rev` for a new
+thread), never the words or the key, and an inbox item's `new_comments` is read
+as 0 when a server leaves it out.

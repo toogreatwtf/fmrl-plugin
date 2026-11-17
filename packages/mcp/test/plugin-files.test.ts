@@ -27,8 +27,8 @@ describe("the plugin manifest", () => {
       expect(manifest.description).toContain(`${t}`);
       for (const readme of ["README.md", "packages/mcp/README.md"]) expect(read(readme)).toContain(`| \`${t}\` |`);
     }
-    expect(read("README.md")).toContain("Any MCP client gets fifteen tools:");
-    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets fifteen tools:");
+    expect(read("README.md")).toContain("Any MCP client gets nineteen tools:");
+    expect(read("packages/mcp/README.md")).toContain("Any MCP client gets nineteen tools:");
   });
   it("names all three slash commands, as the READMEs do", () => {
     for (const cmd of ["/fmrl:share", "/fmrl:whoami", "/fmrl:status"]) {

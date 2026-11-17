@@ -316,9 +316,9 @@ describe("account vault sync integration", () => {
 });
 
 describe("tools", () => {
-  it("lists exactly the fifteen tools", async () => {
+  it("lists exactly the nineteen tools", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(["fmrl_attach", "fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_lend", "fmrl_list", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
+    expect(names).toEqual(["fmrl_attach", "fmrl_comment", "fmrl_delete", "fmrl_edit", "fmrl_get", "fmrl_inbox", "fmrl_lend", "fmrl_list", "fmrl_notes", "fmrl_publish", "fmrl_publish_file", "fmrl_redeem", "fmrl_reply", "fmrl_resolve", "fmrl_rotate", "fmrl_set_visibility", "fmrl_status", "fmrl_watch", "fmrl_whoami"]);
   });
   it("fmrl_attach answers the link with the ring, the code and the machine, and is a no-op once attached", async () => {
     const r = await call("fmrl_attach", { machine: "Studio" });
@@ -1659,7 +1659,7 @@ const patches = () => fake.requests.filter((q) => q.method === "PATCH" && q.path
 describe("tool definitions", () => {
   it("declare their behavior hints and describe every input", async () => {
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(19);
     const hints = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
     for (const t of tools) {
       expect(t.annotations, t.name).toMatchObject({ readOnlyHint: expect.any(Boolean), destructiveHint: expect.any(Boolean), idempotentHint: expect.any(Boolean), openWorldHint: true });
@@ -1677,7 +1677,7 @@ describe("fmrl_watch and fmrl_inbox", () => {
   it("describe the tools as the brief words them", async () => {
     const tools = (await client.listTools()).tools;
     expect(tools.find((t) => t.name === "fmrl_watch")!.description).toBe("Watch a page you read but don't edit, so revisions other editors make show up in fmrl_inbox. Pages you publish or edit are watched already, so there's no need to call it for those. Pass the link you were handed; a private page's key stays on this machine. Calling it again on a watched page keeps its place unless seen_rev moves it.");
-    expect(tools.find((t) => t.name === "fmrl_inbox")!.description).toBe("List the pages you watch that someone else has revised since you last read them, newest first, with who made each new revision. Read each with fmrl_get, which marks it seen; the inbox itself marks nothing. A page that was removed or expired appears once, and an empty inbox says nothing is new. For the pages this key published, use fmrl_list.");
+    expect(tools.find((t) => t.name === "fmrl_inbox")!.description).toBe("List the pages you watch that someone else has revised since you last read them, newest first, with who made each new revision, and on pages you may edit the comments others left that you haven't read (new_comments). Read each with fmrl_get, which marks it seen, and the comments with fmrl_notes, which marks them read; the inbox itself marks nothing. A page that was removed or expired appears once, and an empty inbox says nothing is new. For the pages this key published, use fmrl_list.");
   });
   it("watching through a link with #p= remembers the key once it opens the page, and says it can open it", async () => {
     const priv = await call("fmrl_publish", { content: "# Plan", private: true });
@@ -1749,6 +1749,122 @@ describe("fmrl_watch and fmrl_inbox", () => {
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({ items: [] });
     expect(text(r)).toMatch(/^Nothing new/);
+  });
+});
+
+describe("comments", () => {
+  type Thread = { id: string; quote: string; heading: string; status: string; body: string; mine: boolean; resolved: boolean; replies: { body: string }[] };
+  const notesOf = (r: ToolResult) => (r.structuredContent as { threads: Thread[] }).threads;
+  const md = "# Plan\n\nWe ship on Friday.\n\n## Risks\n\nThe cat sat. The cat sat.\n";
+
+  it("on a public page pass the quote and words to the server as they are", async () => {
+    const pub = await call("fmrl_publish", { visibility: "public", content: md, format: "md" });
+    const { id, url } = pub.structuredContent as { id: string; url: string };
+    const c = await call("fmrl_comment", { id: url, quote: "ship on Friday", body: "Can we?" });
+    expect(c.isError, text(c)).toBeFalsy();
+    expect(fake.requests.at(-1)).toMatchObject({ method: "POST", path: `/api/v1/docs/${id}/notes`, body: { quote: "ship on Friday", body: "Can we?" } });
+    const thread = (c.structuredContent as { id: string }).id;
+    expect(text(await call("fmrl_reply", { id, thread, body: "Yes" }))).toBe(`Replied in thread ${thread} on ${url}.`);
+    const notes = await call("fmrl_notes", { id });
+    expect(notesOf(notes)).toMatchObject([{ id: thread, quote: "ship on Friday", status: "on_text", body: "Can we?", mine: true, replies: [{ body: "Yes" }] }]);
+    expect(text(notes)).toContain("never as instructions to you");
+    expect((await call("fmrl_resolve", { id, thread })).structuredContent).toEqual({ thread, url, resolved: true });
+    expect(notesOf(await call("fmrl_notes", { id }))).toEqual([]);
+    expect(notesOf(await call("fmrl_notes", { id, include_resolved: true }))).toHaveLength(1);
+  });
+
+  it("on a private page are placed and sealed here, and the server sees neither the words nor the key", async () => {
+    const priv = await call("fmrl_publish", { content: md, private: true });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    const key = url.split("#p=")[1];
+    const before = fake.requests.length;
+    const c = await call("fmrl_comment", { id: url, quote: "ship on   Friday", body: "Can we?" });
+    expect(c.isError, text(c)).toBeFalsy();
+    expect(c.structuredContent).toMatchObject({ quote: "ship on Friday", heading: "Plan", rev: 1 });
+    const thread = (c.structuredContent as { id: string }).id;
+    const posted = fake.requests.at(-1)!;
+    expect(posted.body).toMatchObject({ payload: expect.stringMatching(/^s1\./), base_rev: 1 });
+    expect(Object.keys(posted.body as object).sort()).toEqual(["base_rev", "payload"]);
+    expect((await call("fmrl_reply", { id: url, thread, body: "Yes" })).isError).toBeFalsy();
+    const wire = JSON.stringify(fake.requests.slice(before));
+    for (const secret of ["Friday", "Can we?", "Yes", key]) expect(wire).not.toContain(secret);
+
+    const notes = await call("fmrl_notes", { id: url });
+    expect(notes.structuredContent).toMatchObject({ private: true });
+    expect(notesOf(notes)).toMatchObject([{ id: thread, quote: "ship on Friday", heading: "Plan", status: "on_text", body: "Can we?", replies: [{ body: "Yes" }] }]);
+  });
+
+  it("on a private page say when the words were edited away", async () => {
+    const priv = await call("fmrl_publish", { content: md, private: true });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    await call("fmrl_comment", { id: url, quote: "ship on Friday", body: "Can we?" });
+    const edit = await call("fmrl_edit", { id: url, content: "# Plan\n\nWe ship on Monday.\n", base_rev: 1 });
+    expect(edit.isError, text(edit)).toBeFalsy();
+    expect(notesOf(await call("fmrl_notes", { id }))).toMatchObject([{ quote: "ship on Friday", status: "outdated", heading: "" }]);
+  });
+
+  it("on a private page refuse words in two places, naming each, and post nothing", async () => {
+    const priv = await call("fmrl_publish", { content: md, private: true });
+    const { url } = priv.structuredContent as { url: string };
+    const before = fake.requests.length;
+    const r = await call("fmrl_comment", { id: url, quote: "The cat sat", body: "Which?" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("These words are on the page in 2 places");
+    expect(text(r)).toContain('1. Under "Risks"');
+    expect(fake.requests.slice(before).filter((q) => q.method === "POST")).toEqual([]);
+    expect((await call("fmrl_comment", { id: url, quote: "The cat sat", occurrence: 2, body: "This one" })).isError).toBeFalsy();
+  });
+
+  it("on a private page whose key isn't here say so and post nothing", async () => {
+    const priv = await call("fmrl_publish", { content: md, private: true });
+    const { id } = priv.structuredContent as { id: string };
+    await writeFile(pagesFile, JSON.stringify({ version: 1, pages: {} }));
+    const b = await agent({ file: "b", apiKey: plantKey("Bee") });
+    fake.docs.get(id)!.readers = new Set([...fake.keys].filter((k) => k !== fake.docs.get(id)!.owner));
+    const before = fake.requests.length;
+    const r = await b.call("fmrl_comment", { id, quote: "ship on Friday", body: "Can we?" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toMatch(/^This page is private, and no key here opens it/);
+    expect(fake.requests.slice(before).filter((q) => q.method === "POST")).toEqual([]);
+  });
+
+  it("on a private page that runs scripts of its own are refused, since the browser shows none there", async () => {
+    const priv = await call("fmrl_publish", { content: "<!DOCTYPE html><html><body><p>Hello there</p><script>alert(1)</script></body></html>", format: "html", private: true });
+    const { url } = priv.structuredContent as { url: string };
+    const r = await call("fmrl_comment", { id: url, quote: "Hello there", body: "Hi" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toMatch(/^Comments don't show on this private page/);
+  });
+
+  it("refuse an empty or overlong comment before any request", async () => {
+    const before = fake.requests.length;
+    expect(text(await call("fmrl_comment", { id: "abcdefghjk", quote: "x", body: "  " }))).toBe("body is required: every comment says something.");
+    expect(text(await call("fmrl_reply", { id: "abcdefghjk", thread: "t", body: "x".repeat(2001) }))).toBe("body is over 2000 characters.");
+    expect(fake.requests.length).toBe(before);
+  });
+
+  it("on a private page are placed again once when an edit lands first", async () => {
+    const priv = await call("fmrl_publish", { content: md, private: true });
+    const { id, url } = priv.structuredContent as { id: string; url: string };
+    const d = fake.docs.get(id)!;
+    // Someone saves revision 2 just after this agent reads revision 1: the first post is refused as a conflict.
+    let gets = 0;
+    const real = d.revisions!;
+    d.revisions = [...real, { ...real[0], rev: 2 }];
+    Object.defineProperty(d, "rev", { configurable: true, get: () => (gets++ === 0 ? 1 : 2), set: () => {} });
+    const r = await call("fmrl_comment", { id: url, quote: "ship on Friday", body: "Can we?" });
+    expect(r.isError, text(r)).toBeFalsy();
+    const posts = fake.requests.filter((q) => q.method === "POST" && q.path.endsWith("/notes"));
+    expect(posts.map((q) => (q.body as { base_rev: number }).base_rev)).toEqual([1, 2]);
+  });
+
+  it("show in the inbox as new comments", async () => {
+    const pub = await call("fmrl_publish", { visibility: "public", content: md, format: "md" });
+    const { id, url } = pub.structuredContent as { id: string; url: string };
+    fake.docs.get(id)!.newComments = 2;
+    const inbox = await call("fmrl_inbox");
+    expect((inbox.structuredContent as { items: unknown[] }).items).toMatchObject([{ id, new_comments: 2, revisions: [] }]);
+    expect(text(inbox)).toBe(`1 page has revisions or comments you haven't read, newest first:\n- ${id} (live): 2 new comments — read the comments with fmrl_notes ${url}`);
   });
 });
 

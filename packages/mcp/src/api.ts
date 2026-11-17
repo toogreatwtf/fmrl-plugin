@@ -52,7 +52,20 @@ export interface UpdateResponse { id: string; url: string; rev: number; expires_
 /** WatchResponse is what watching, unwatching's sibling PUT, and marking an inbox item seen all answer with. */
 export interface WatchResponse { id: string; url: string; private: boolean; rev: number; seen_rev: number }
 /** InboxItem is one page with unread revisions: only revisions made by a key other than the watcher's own. */
-export interface InboxItem { id: string; url: string; private: boolean; status: string; rev: number; seen_rev: number; revisions: { rev: number; at: string; editor: Editor }[] }
+/** InboxItem is one page with unread revisions or, on a page this key may edit, unread comments by others (new_comments, 0 or absent from a server before comments woke agents). */
+export interface InboxItem { id: string; url: string; private: boolean; status: string; rev: number; seen_rev: number; revisions: { rev: number; at: string; editor: Editor }[]; new_comments?: number; comments_at?: string }
+/** NoteReply is one reply in a comment thread. On a private page body is empty and payload holds it sealed. */
+export interface NoteReply { id: string; body: string; payload?: string; name: string; agent: boolean; mine: boolean }
+/** NoteThread is one comment thread as GET /docs/{id}/notes lists it. On a private page status is "sealed", quote, heading and body are empty, and payload holds the words and place sealed. */
+export interface NoteThread { id: string; quote: string; heading: string; status: "on_text" | "outdated" | "page" | "sealed"; rev: number; body: string; payload?: string; name: string; agent: boolean; mine: boolean; resolved: boolean; replies: NoteReply[] }
+/** NotesResponse is GET /docs/{id}/notes. */
+export interface NotesResponse { id: string; url: string; rev: number; private?: boolean; threads: NoteThread[] }
+/** NoteRequest is POST /docs/{id}/notes: a thread on words of a public page (quote, body), a reply (thread, body), or on a private page the same sealed (payload, with base_rev for a thread). */
+export interface NoteRequest { thread?: string; quote?: string; prefix?: string; suffix?: string; occurrence?: number; body?: string; payload?: string; base_rev?: number }
+/** NoteResponse is what POST /docs/{id}/notes answers: a new thread's id, quote, heading and rev, or a reply's id and thread. */
+export interface NoteResponse { id: string; url: string; thread?: string; quote?: string; heading?: string; rev?: number; watching: boolean }
+/** ResolveResponse is POST /docs/{id}/notes/{thread}/resolve. */
+export interface ResolveResponse { thread: string; url: string; resolved: boolean }
 
 /** LastCall is what the client remembers of its most recent request, for fmrl_status: never a body, a key or a page id (ids in paths are blanked). status 0 is no answer at all, and code says why. */
 export interface LastCall { method: string; path: string; status: number; code?: string; ms: number; at: number }
@@ -224,6 +237,16 @@ export class FmrlApi {
   }
   inbox(key: string, opts?: CallOptions): Promise<{ items: InboxItem[] }> {
     return this.call<{ items: InboxItem[] }>("GET", "/inbox", key, undefined, undefined, opts);
+  }
+  /** notes lists a page's comment threads, open ones only unless includeResolved, and marks them read for this key. */
+  notes(key: string, id: string, includeResolved = false): Promise<NotesResponse> {
+    return this.call<NotesResponse>("GET", `/docs/${encodeURIComponent(id)}/notes${includeResolved ? "?include_resolved=true" : ""}`, key);
+  }
+  addNote(key: string, id: string, body: NoteRequest): Promise<NoteResponse> {
+    return this.call<NoteResponse>("POST", `/docs/${encodeURIComponent(id)}/notes`, key, body);
+  }
+  resolveNote(key: string, id: string, thread: string, resolved: boolean): Promise<ResolveResponse> {
+    return this.call<ResolveResponse>("POST", `/docs/${encodeURIComponent(id)}/notes/${encodeURIComponent(thread)}/resolve`, key, resolved ? undefined : { resolved: false });
   }
   inboxSeen(key: string, id: string, rev: number): Promise<WatchResponse> {
     return this.call<WatchResponse>("POST", "/inbox/seen", key, { id, rev });

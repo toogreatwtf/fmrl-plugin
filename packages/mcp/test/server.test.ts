@@ -1828,6 +1828,21 @@ describe("comments", () => {
     expect(fake.requests.slice(before).filter((q) => q.method === "POST")).toEqual([]);
   });
 
+  it("on a private page whose key isn't here leave its unread revision in the inbox", async () => {
+    const priv = await call("fmrl_publish", { content: md, private: true });
+    const { id } = priv.structuredContent as { id: string };
+    await writeFile(pagesFile, JSON.stringify({ version: 1, pages: {} }));
+    const bKey = plantKey("Bee");
+    const b = await agent({ file: "b", apiKey: bKey });
+    const d = fake.docs.get(id)!;
+    d.readers = new Set([...fake.keys].filter((k) => k !== d.owner));
+    (d.watchers ??= new Map()).set(bKey, 0);
+    const r = await b.call("fmrl_notes", { id });
+    expect(text(r)).toMatch(/^This page is private, and no key here opens it/);
+    expect(d.watchers.get(bKey)).toBe(0);
+    expect((await b.call("fmrl_inbox", {})).structuredContent).toMatchObject({ items: [{ id, seen_rev: 0 }] });
+  });
+
   it("on a private page that runs scripts of its own are refused, since the browser shows none there", async () => {
     const priv = await call("fmrl_publish", { content: "<!DOCTYPE html><html><body><p>Hello there</p><script>alert(1)</script></body></html>", format: "html", private: true });
     const { url } = priv.structuredContent as { url: string };

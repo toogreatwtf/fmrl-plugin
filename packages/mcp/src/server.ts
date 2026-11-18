@@ -1291,15 +1291,23 @@ export function createServer(deps: ServerDeps): McpServer {
    * private page its key and its latest revision opened here, so comments
    * are placed and read on the page's own words without the server seeing
    * either. A private page no key here opens, or one the viewer shows no
-   * comments on, is refused before anything is written.
+   * comments on, is refused before anything is written. Opening it means
+   * reading its latest revision, which marks it seen; when that's refused,
+   * the watch is put back where it was, so an unread revision stays in
+   * fmrl_inbox.
    */
   const notesPage = async (k: string, ref: ReturnType<typeof parsePageRef>): Promise<{ d: DocResponse; key?: string; text?: PageText; rev?: number }> => {
     const d = await api.get(k, ref.id);
     if (!d.private) return { d };
+    const unread = (await api.inbox(k)).items.find((it) => it.id === ref.id && it.seen_rev < it.rev);
     const r = await api.getRevision(k, ref.id, d.rev ?? 1);
     const opened = await openPrivatePage(ref, r.content, d.sealed, opener(k, d));
-    if (!opened) throw new NotesRefusal(NOTES_NEED_KEY);
-    if (!commentsShow(opened.html, [canvasAssets.copyJS])) throw new NotesRefusal(NOTES_HIDDEN);
+    const refuse = async (why: string): Promise<never> => {
+      if (unread) await api.watch(k, ref.id, unread.seen_rev).catch((e: unknown) => log?.(`notes: couldn't put the watch on ${ref.id} back: ${errorText(e)}`));
+      throw new NotesRefusal(why);
+    };
+    if (!opened) return refuse(NOTES_NEED_KEY);
+    if (!commentsShow(opened.html, [canvasAssets.copyJS])) return refuse(NOTES_HIDDEN);
     return { d, key: opened.key, text: PageText.fromHTML(opened.html), rev: r.rev };
   };
   /** noteBody refuses a comment or reply with no words or too many, as the server does for a public page's. */

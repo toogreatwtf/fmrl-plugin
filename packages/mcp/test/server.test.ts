@@ -1843,6 +1843,15 @@ describe("comments", () => {
     expect((await b.call("fmrl_inbox", {})).structuredContent).toMatchObject({ items: [{ id, seen_rev: 0 }] });
   });
 
+  it("on a private page still work when the inbox can't be read", async () => {
+    const priv = await call("fmrl_publish", { content: md, private: true });
+    const { url } = priv.structuredContent as { url: string };
+    fake.inboxStatus = 503;
+    const c = await call("fmrl_comment", { id: url, quote: "ship on Friday", body: "Can we?" });
+    expect(c.isError, text(c)).toBeFalsy();
+    expect(notesOf(await call("fmrl_notes", { id: url }))).toMatchObject([{ quote: "ship on Friday", body: "Can we?" }]);
+  });
+
   it("on a private page that runs scripts of its own are refused, since the browser shows none there", async () => {
     const priv = await call("fmrl_publish", { content: "<!DOCTYPE html><html><body><p>Hello there</p><script>alert(1)</script></body></html>", format: "html", private: true });
     const { url } = priv.structuredContent as { url: string };

@@ -1299,7 +1299,11 @@ export function createServer(deps: ServerDeps): McpServer {
   const notesPage = async (k: string, ref: ReturnType<typeof parsePageRef>): Promise<{ d: DocResponse; key?: string; text?: PageText; rev?: number }> => {
     const d = await api.get(k, ref.id);
     if (!d.private) return { d };
-    const unread = (await api.inbox(k)).items.find((it) => it.id === ref.id && it.seen_rev < it.rev);
+    // Only for putting the watch back: an inbox that can't be read now skips that, not the comment.
+    const unread = await api.inbox(k).then(
+      ({ items }) => items.find((it) => it.id === ref.id && it.seen_rev < it.rev),
+      (e: unknown) => { log?.(`notes: couldn't read the inbox before opening ${ref.id}: ${errorText(e)}`); return undefined; },
+    );
     const r = await api.getRevision(k, ref.id, d.rev ?? 1);
     const opened = await openPrivatePage(ref, r.content, d.sealed, opener(k, d));
     const refuse = async (why: string): Promise<never> => {

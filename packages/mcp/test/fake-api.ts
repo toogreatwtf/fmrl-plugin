@@ -56,6 +56,8 @@ export interface FakeApi {
   machines: Map<string, string>;
   /** machineStatus, when set, is what PUT /me/machine answers instead (404 plays a server from before markymd #358). */
   machineStatus?: number;
+  /** inboxStatus, when set, is what GET /inbox answers instead. */
+  inboxStatus?: number;
   quota: number;
   /** privacyChanges logs each owner's privacy change the fake took, in order. */
   privacyChanges: Array<{ id: string; to: "public" | "private" }>;
@@ -616,6 +618,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
     if (method === "GET" && url.pathname === "/api/v1/inbox") {
       const key = auth();
       if (!key) return unauthorized();
+      if (api.inboxStatus) return fail(res, api.inboxStatus, "unavailable", "");
       const items: Record<string, unknown>[] = [];
       for (const d of api.docs.values()) {
         if (d.removed) continue;

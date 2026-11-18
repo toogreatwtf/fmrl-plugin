@@ -93,6 +93,8 @@ it.each(["mismatched", "rotated", "spent"])("refused %s recovery is not remember
  expect(await pages.get("abcdefghjkmn")).toEqual({});
  expect(fake.docs.get("abcdefghjkmn")?.rev).toBeUndefined();
  expect(fake.requests.some(q => q.path.startsWith("/c/"))).toBe(false);
+ expect(JSON.stringify(r.content)).toContain("the recovery token didn't give this key edit access");
+ expect(JSON.stringify(r.content)).not.toContain(token);
 });
 
 it("publish replay retains its recovery and a previously supplied courtesy hint", async () => {

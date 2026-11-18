@@ -284,6 +284,10 @@ export const NO_OWN_FILE = (tool: string, folder: string, name: string) => `${to
 export const CONTENT_WRITTEN = (file: string, bytes: number, format: string) => `Content (${format}, ${bytes} bytes) written to ${file}, not shown here. Edit that file and save it with fmrl_edit's content_file.`;
 export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
 export const MANAGE_HINT = (origin: string, id: string) => `To edit, supply ${origin}/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`;
+/** EDIT_NOT_ALLOWED is fmrl_edit's answer when fmrl.site refused the edit (404) and no recovery token was tried. */
+export const EDIT_NOT_ALLOWED = (origin: string, id: string) => `fmrl.site refused this edit (404 not_found): this key can't edit ${origin}/${id}. A key edits pages it owns, pages its person can edit once it's attached to them, and pages whose recovery link it's given. ${MANAGE_HINT(origin, id)}`;
+/** EDIT_TOKEN_REFUSED is fmrl_edit's answer when fmrl.site refused the edit (404) with every recovery token tried. */
+export const EDIT_TOKEN_REFUSED = (origin: string, id: string) => `fmrl.site refused this edit (404 not_found): the recovery token didn't give this key edit access to ${origin}/${id}. It may be for another page, a share link rather than the page's recovery link, or no longer valid. Ask for a fresh recovery link from the page, or, if the page is your person's, check that this key is attached to them.`;
 export const CONFLICT = (rev: number) => `Revision ${rev} is the latest; read it with fmrl_get and edit from there.`;
 
 export const VISIBILITY_OWNER = "Only the page's owner can change who can read it: the key that published it, or the account that owns it from its own browser. Nothing changed.";
@@ -1004,7 +1008,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "fmrl_edit",
     {
       title: "Edit a fmrl.site page",
-      description: "Save new content to an existing page as its next revision; earlier revisions stay readable through fmrl_get's rev. To make a new page use fmrl_publish, and to change who can read a page use fmrl_set_visibility. Pass base_rev (the rev you read): if someone saved a newer revision meanwhile, nothing is saved and the answer gives latest_rev to read first. Works on pages this key owns and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token). A private page stays private under its same key, so every existing link keeps opening it; public content carrying a recognizable credential is refused. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
+      description: "Save new content to an existing page as its next revision; earlier revisions stay readable through fmrl_get's rev. To make a new page use fmrl_publish, and to change who can read a page use fmrl_set_visibility. Pass base_rev (the rev you read): if someone saved a newer revision meanwhile, nothing is saved and the answer gives latest_rev to read first. Works on pages this key owns, on pages its person can edit once this key is attached to them, and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token). A private page stays private under its same key, so every existing link keeps opening it; public content carrying a recognizable credential is refused. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). Supply recovery separately as manage_token."),
@@ -1083,7 +1087,11 @@ export function createServer(deps: ServerDeps): McpServer {
               if (!(e instanceof ApiError && e.status === 404 && !owned)) throw e;
             }
           }
-          if (!u) throw new Error(MANAGE_HINT(new URL(d.url).origin, ref.id));
+          if (!u) {
+            // Every try was a 404: say whether a token was refused or none was given, so the caller isn't told to supply what it already did.
+            const origin = new URL(d.url).origin;
+            throw new Error(tokens.some((t) => t !== undefined) ? EDIT_TOKEN_REFUSED(origin, ref.id) : EDIT_NOT_ALLOWED(origin, ref.id));
+          }
           if (used !== undefined && used === ref.manage && used !== stored.manage) await remember(ref.id, { manage: used });
           return { id: u.id, url: pageKey ? `${u.url}#p=${pageKey}` : u.url, rev: u.rev, watching: u.watching };
         });

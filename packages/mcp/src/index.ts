@@ -1,58 +1,8 @@
 #!/usr/bin/env node
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { FmrlApi } from "./api.js";
-import { alreadyOffered, autoUpdatePass, autoUpdateState, claimOffer, shouldOffer, statePath } from "./autoupdate.js";
-import { loadConfig } from "./config.js";
-import { credentialsPath } from "./credentials.js";
-import { KeyStore } from "./keys.js";
-import { exitWithClient, processAlive } from "./lifecycle.js";
-import { PageStore, pagesPath } from "./pages.js";
-import { pluginStatus, pluginSurface, userAgent } from "./plugin.js";
-import { createServer, VERSION } from "./server.js";
+// The entry point checks Node's version before anything else loads: on
+// Node 18 and older, fmrl-mcp's own modules fail at import with an error
+// that says nothing about Node, and the client only sees the server close.
+import { MIN_NODE, nodeMajor, serveTooOld } from "./oldnode.js";
 
-// stdout is the JSON-RPC channel; everything we say goes to stderr.
-const log = (line: string) => process.stderr.write(line + "\n");
-
-async function main(): Promise<void> {
-  const cfg = loadConfig(process.env, log);
-  const surface = pluginSurface(process.env);
-  const api = new FmrlApi(cfg.baseUrl, { headers: { "User-Agent": userAgent(VERSION, surface) } });
-  const keys = new KeyStore({ api, baseUrl: cfg.baseUrl, apiKeyFromEnv: cfg.apiKey, ringFromEnv: cfg.ring, file: credentialsPath(), log });
-  const pages = new PageStore(cfg.baseUrl, pagesPath());
-  // Whether anything is keeping the plugin current. Read once at startup,
-  // as the plugin manifest is: neither changes without a restart.
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  const autoUpdate = pluginRoot && surface === "claude-cli" ? await autoUpdateState() : undefined;
-  // Whether the CLI's auto-update pass can run at all: the desktop app and a
-  // CLI with the auto-updater disabled inherit that to us in the environment.
-  const pass = autoUpdatePass();
-  const state = statePath();
-  // Read here as well as in createServer: a manifest we cannot read sends
-  // no instructions, so the one offer must not be spent on that start.
-  const plugin = pluginStatus(pluginRoot, VERSION);
-  // Claimed rather than marked afterwards: the claim is what settles two
-  // starts racing, and it is made here rather than when the agent relays
-  // the offer, which the server cannot see. Asking once too few beats
-  // asking every day.
-  const offerAutoUpdate = shouldOffer(autoUpdate, await alreadyOffered(state), plugin !== undefined, pass) && (await claimOffer(state));
-  const server = createServer({
-    api, keys, pages, log, agentName: cfg.agentName, pluginRoot, pluginSurface: surface, autoUpdate, offerAutoUpdate, autoUpdatePass: pass,
-    // Read raw, as the CLI reads it: any value at all means no traffic the user did not ask for.
-    nonessentialTrafficOff: Boolean(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC),
-  });
-  await server.connect(new StdioServerTransport());
-  // A client that crashes or is killed must not leave this server running.
-  exitWithClient({
-    stdin: process.stdin,
-    onSignal: (signal, handler) => process.on(signal, handler),
-    ppid: () => process.ppid,
-    alive: processAlive,
-    exit: (code) => process.exit(code),
-    log,
-  });
-}
-
-main().catch((e) => {
-  log(`fmrl-mcp: ${e instanceof Error ? e.message : String(e)}`);
-  process.exit(1);
-});
+if (nodeMajor(process.versions.node) < MIN_NODE) serveTooOld(process.versions.node);
+else await import("./start.js");

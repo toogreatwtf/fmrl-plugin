@@ -180,7 +180,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
     const prefix = api.prefixOf(key);
     if (api.linked.has(key) || (oneLiveAttach && (attachExpiry.get(prefix) ?? 0) > Date.now())) return undefined;
     attachExpiry.set(prefix, Date.now() + 3600000);
-    return `https://fmrl.test/c/${randomBytes(16).toString("base64url")}`;
+    return `${api.baseUrl}/c/${randomBytes(16).toString("base64url")}`;
   };
   /** prefixes maps a rotated secret to its record's prefix; a minted key's prefix is its own first 9 characters. */
   const prefixes = new Map<string, string>();
@@ -305,7 +305,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       if (watchCount(api, key) < api.watchLimit) {
         api.docs.get(id)!.watchers = new Map([[key, 1]]);
       }
-      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/c/${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", recovery: "usable", attach_url: oneLiveAttach ? courtesy(key) : api.linked.has(key) ? undefined : `https://fmrl.test/attach/code${id}` });
+      return json(res, 201, { id, url: `https://fmrl.test/${id}`, raw_url: `https://fmrl.test/${id}/raw`, manage_url: `https://fmrl.test/c/${manageToken}`, expires_at: "2026-09-15T12:00:00Z", status: "live", recovery: "usable", attach_url: oneLiveAttach ? courtesy(key) : api.linked.has(key) ? undefined : `${api.baseUrl}/attach/code${id}` });
     }
     const revisionsMatch = url.pathname.match(/^\/api\/v1\/docs\/([^/]+)\/revisions$/);
     if (method === "GET" && revisionsMatch) {
@@ -506,7 +506,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       const machine = body && typeof body === "object" && !Array.isArray(body) ? (body as { machine?: unknown }).machine : undefined;
       if (machine !== undefined && typeof machine !== "string") return fail(res, 400, "bad_request", "");
       const cleaned = typeof machine === "string" ? machine.trim().replace(/\s+/g, " ").slice(0, 40) : "";
-      return json(res, 201, { url: `https://fmrl.test/c/attachcmd${api.prefixOf(key).slice(5)}`, expires_at: new Date(Date.now() + 600000).toISOString(), code: "K7Q-4MZ", ...(cleaned ? { machine: cleaned } : {}) });
+      return json(res, 201, { url: `${api.baseUrl}/c/attachcmd${api.prefixOf(key).slice(5)}`, expires_at: new Date(Date.now() + 600000).toISOString(), code: "K7Q-4MZ", ...(cleaned ? { machine: cleaned } : {}) });
     }
     // Naming an attached agent's machine (markymd #358): cleaned as the attach link's, refused while unattached.
     if (method === "PUT" && url.pathname === "/api/v1/me/machine") {
@@ -525,7 +525,7 @@ export async function startFakeApi({ oneLiveAttach = false } = {}): Promise<Fake
       const key = auth();
       if (!key) return unauthorized();
       const rotatedAt = api.rotatedAt.get(api.prefixOf(key));
-      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(api.machines.has(key) ? { machine: api.machines.get(key) } : {}), ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), attach_url: oneLiveAttach ? courtesy(key) : "https://fmrl.test/attach/fresh" });
+      return json(res, 200, { prefix: api.prefixOf(key), created_at: "2026-09-08T12:00:00Z", label: api.labels.get(key) ?? "", quota: { publishes: { used: api.publishes.get(key) ?? 0, limit: api.quota, resets_at: "2026-10-01T00:00:00Z" } }, attached_at: api.linked.has(key) ? "2026-09-16T12:00:00Z" : null, ...(api.machines.has(key) ? { machine: api.machines.get(key) } : {}), ...(rotatedAt ? { rotated_at: rotatedAt } : {}), ...(api.accountVaults.has(key) ? { account_vault: api.accountVaults.get(key) } : {}), attach_url: oneLiveAttach ? courtesy(key) : `${api.baseUrl}/attach/fresh` });
     }
     if (method === "POST" && url.pathname === "/api/v1/me/rotate") {
       const key = auth();

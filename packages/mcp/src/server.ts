@@ -11,6 +11,7 @@ import { FileInTheWay, fileName, fileStem, filesDir, openFilesDir, writeIn } fro
 import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
+import { credentialOrigin } from "./credentials.js";
 import { documentTitle, firstHeading, looksLikeHTML, readSource, sourceBlock, toHTML, wrapDocument } from "./markdown.js";
 import { LentRings, Lender, type LendAsk } from "./lent.js";
 import { canvasAssets } from "./highlight.js";
@@ -93,8 +94,15 @@ const ringCarried = (url: string) => (/[#&]r=/.test(url) ? " It also carries the
 
 export const LINK_HINT = (url: string) => `Attach this agent to your identity: open ${url} in your browser.${ringCarried(url)}`;
 
-/** withRing appends a key's ring to a browser link as #r=<prefix>.<ring>. The link page stores it for the key its form names, by the prefix the server gives the key (a rotated secret's own first characters are not it); the server never sees a fragment. */
-export function withRing(linkUrl: string, prefix: string, ring: string): string {
+/**
+ * withRing appends a key's ring to a browser link as #r=<prefix>.<ring>. The link page stores it for the key its form
+ * names, by the prefix the server gives the key (a rotated secret's own first characters are not it); the server never
+ * sees a fragment. The ring goes only on a link to fmrl's own pages: http(s), no user name or password, and the same
+ * origin as viewerBase. Any other link comes back as it was, without the ring.
+ */
+export function withRing(linkUrl: string, prefix: string, ring: string, viewerBase: string): string {
+  const own = credentialOrigin(viewerBase);
+  if (own === undefined || credentialOrigin(linkUrl) !== own) return linkUrl;
   return `${linkUrl}${linkUrl.includes("#") ? "&" : "#"}r=${prefix}.${ring}`;
 }
 export const RING_FILE_LINE = (file: string) => `Your key ring is in ${file}; back up that file to keep every page's key.`;
@@ -847,8 +855,8 @@ export function createServer(deps: ServerDeps): McpServer {
       ring ??= await ringOrNothing(k);
       if (ring) {
         const prefix = await keys.prefixFor(k);
-        if (p.attach_url) p.attach_url = withRing(p.attach_url, prefix, ring);
-        if (p.link_url) p.link_url = withRing(p.link_url, prefix, ring);
+        if (p.attach_url) p.attach_url = withRing(p.attach_url, prefix, ring, api.viewerBase);
+        if (p.link_url) p.link_url = withRing(p.link_url, prefix, ring, api.viewerBase);
       }
     }
     return p;
@@ -1587,8 +1595,8 @@ export function createServer(deps: ServerDeps): McpServer {
           }
           else if (output.attached_at) delete output.attach_url;
           if (ringValue) {
-            if (output.attach_url) output.attach_url = withRing(output.attach_url, output.prefix, ringValue);
-            if (output.link_url) output.link_url = withRing(output.link_url, output.prefix, ringValue);
+            if (output.attach_url) output.attach_url = withRing(output.attach_url, output.prefix, ringValue, api.viewerBase);
+            if (output.link_url) output.link_url = withRing(output.link_url, output.prefix, ringValue, api.viewerBase);
           }
           if (output.attached_at !== undefined) output.canvases_url = canvasesUrl(output, api.viewerBase);
           return output;
@@ -1764,7 +1772,7 @@ export function createServer(deps: ServerDeps): McpServer {
           let url = a.url;
           try {
             const ring = await keys.ringFor(k);
-            if (ring) url = withRing(url, await keys.prefixFor(k), ring);
+            if (ring) url = withRing(url, await keys.prefixFor(k), ring, api.viewerBase);
           } catch {
             // No ring to carry: the link still attaches; private pages open once the ring is backed up.
           }

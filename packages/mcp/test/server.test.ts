@@ -13,7 +13,7 @@ import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/cryp
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
 import { PageStore } from "../src/pages.js";
-import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
+import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, withRing, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
 import { PREFER_THIS_SERVER } from "../src/plugin.js";
@@ -328,7 +328,7 @@ describe("tools", () => {
     expect(s.attached).toBe(false);
     expect(s.code).toBe("K7Q-4MZ");
     expect(s.machine).toBe("Studio");
-    expect(s.attach_url).toMatch(/^https:\/\/fmrl\.test\/c\/attachcmd/);
+    expect(s.attach_url.startsWith(`${fake.baseUrl}/c/attachcmd`)).toBe(true);
     expect(s.attach_url).toMatch(RING_PAIR);
     const req = fake.requests.filter((q) => q.path === "/api/v1/me/attach").at(-1)!;
     expect(req.body).toEqual({ machine: "Studio" });
@@ -411,10 +411,10 @@ describe("tools", () => {
       "Expires 2026-09-15T12:00:00Z",
       "This page lasts seven days unless someone keeps it on the page itself.",
       `Recovery link (grants management and editing; does not remove the page; share the page URL with it): https://fmrl.test/c/tok${id}manage0`,
-      `Attach this agent to your identity: open https://fmrl.test/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`,
+      `Attach this agent to your identity: open ${fake.baseUrl}/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`,
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
-    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/fresh#r=${prefix}.${ring}` });
+    expect(r.structuredContent).toMatchObject({ attach_url: `${fake.baseUrl}/attach/fresh#r=${prefix}.${ring}` });
     expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/me", "/api/v1/publish", "/api/v1/me"]);
     expect(firstPublish().body).toEqual({ content: "# Hello", title: "Hello" });
   });
@@ -515,9 +515,10 @@ describe("tools", () => {
   it("fmrl_whoami says whether a browser is linked and always offers a link", async () => {
     const r = await call("fmrl_whoami");
     expect(text(r)).toContain("This agent is not attached to an identity, so its pages don't show on fmrl.site yet.");
-    expect(text(r)).toContain("open https://fmrl.test/attach/fresh#r=");
+    expect(text(r)).toContain(`open ${fake.baseUrl}/attach/fresh#r=`);
     expect(text(r)).toMatch(/Once it is attached, its pages show at http:\/\/127\.0\.0\.1:\d+\/\?canvases, tagged fmrl_\w{4}\.$/m);
-    expect(r.structuredContent).toMatchObject({ attached_at: null, attach_url: expect.stringMatching(/^https:\/\/fmrl\.test\/attach\/fresh#r=/) });
+    expect(r.structuredContent).toMatchObject({ attached_at: null });
+    expect((r.structuredContent as { attach_url: string }).attach_url.startsWith(`${fake.baseUrl}/attach/fresh#r=`)).toBe(true);
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const again = await call("fmrl_whoami");
     expect(text(again)).toContain("This agent attached to its identity on 2026-09-16T12:00:00Z.");
@@ -803,11 +804,81 @@ describe("tools", () => {
     const ring = (await ringInFile())!;
     const prefix = keyOf(fake.requests.at(-1)!).slice(0, 9);
     expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/fresh#r=${prefix}.${ring}` });
-    expect(text(r)).toContain(`open https://fmrl.test/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`);
+    expect(r.structuredContent).toMatchObject({ attach_url: `${fake.baseUrl}/attach/fresh#r=${prefix}.${ring}` });
+    expect(text(r)).toContain(`open ${fake.baseUrl}/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`);
     expect(text(r)).toContain(RING_FILE_LINE(credFile));
     expect(RING_FILE_LINE(credFile)).toBe(`Your key ring is in ${credFile}; back up that file to keep every page's key.`);
     expect(text(r).split(ring)).toHaveLength(2);
+  });
+  it("withRing adds the ring only to a link on the viewer's own origin", () => {
+    const ring = "R".repeat(43);
+    expect(withRing("https://fmrl.site/attach/a", "fmrl_Abcd", ring, "https://fmrl.site")).toBe(`https://fmrl.site/attach/a#r=fmrl_Abcd.${ring}`);
+    expect(withRing("https://fmrl.site/attach/a#x=1", "fmrl_Abcd", ring, "https://fmrl.site")).toBe(`https://fmrl.site/attach/a#x=1&r=fmrl_Abcd.${ring}`);
+    for (const link of [
+      "https://elsewhere.example/attach/a",
+      "http://fmrl.site/attach/a",
+      "https://fmrl.site:8443/attach/a",
+      "https://fmrl.site.elsewhere.example/attach/a",
+      "https://user:pass@fmrl.site/attach/a",
+      "https://user@fmrl.site/attach/a",
+      "javascript:alert(1)",
+      "/attach/a",
+      "not a link",
+    ]) expect(withRing(link, "fmrl_Abcd", ring, "https://fmrl.site")).toBe(link);
+    expect(withRing("https://fmrl.site/attach/a", "fmrl_Abcd", ring, "not a base")).toBe("https://fmrl.site/attach/a");
+  });
+  it("fmrl_whoami leaves the ring off attach and link urls on another origin", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    const original = api.me.bind(api);
+    vi.spyOn(api, "me").mockImplementation(async k => ({ ...await original(k), attached_at: null, attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" }));
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      const ring = (await ringInFile())!;
+      expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(r.structuredContent).toMatchObject({ attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" });
+      expect(JSON.stringify(r)).not.toContain(ring);
+      expect(text(r)).not.toContain("It also carries the ring");
+    } finally { await c.close(); }
+  });
+  it("fmrl_publish leaves the ring off attach and link urls on another origin", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    const original = api.publish.bind(api);
+    const me = api.me.bind(api);
+    vi.spyOn(api, "publish").mockImplementation(async (k, b) => ({ ...await original(k, b), attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" }));
+    // The hint the publish reply leaves is the one me notes too: here, a link on another origin.
+    vi.spyOn(api, "me").mockImplementation(async (k, o) => {
+      const m = { ...await me(k, o), attached_at: null, attach_url: "https://elsewhere.example/attach/x" };
+      api.noteAttachment(k, m);
+      return m;
+    });
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_publish", arguments: { visibility: "public", content: "# Hello" } }) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      const ring = (await ringInFile())!;
+      expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(r.structuredContent).toMatchObject({ attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" });
+      expect(JSON.stringify(r)).not.toContain(ring);
+      expect(text(r)).not.toContain("It also carries the ring");
+    } finally { await c.close(); }
+  });
+  it("fmrl_attach leaves the ring off a link on another origin", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    vi.spyOn(api, "attach").mockResolvedValue({ url: "https://elsewhere.example/c/attachcmd", expires_at: new Date(Date.now() + 600000).toISOString(), code: "K7Q-4MZ" });
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_attach", arguments: {} }) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      const ring = (await ringInFile())!;
+      expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(r.structuredContent).toMatchObject({ attach_url: "https://elsewhere.example/c/attachcmd" });
+      expect(JSON.stringify(r)).not.toContain(ring);
+    } finally { await c.close(); }
   });
   it("fmrl_whoami with FMRL_RING carries that ring and says where it comes from", async () => {
     const envRing = newRing();

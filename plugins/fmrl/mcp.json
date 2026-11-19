@@ -2,7 +2,7 @@
   "mcpServers": {
     "fmrl": {
       "command": "npx",
-      "args": ["-y", "fmrl-mcp@0.18.0"],
+      "args": ["-y", "fmrl-mcp@0.18.1"],
       "env": { "CLAUDE_PLUGIN_ROOT": "${CURSOR_PLUGIN_ROOT}", "FMRL_MCP_APP": "cursor" }
     }
   }

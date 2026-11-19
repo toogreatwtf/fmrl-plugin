@@ -42,7 +42,7 @@ In Claude Code and Cursor, the plugin adds four skills:
 
 ## Tools
 
-Any MCP client gets fifteen tools:
+Any MCP client gets nineteen tools:
 
 | Tool | Does |
 |---|---|
@@ -51,7 +51,11 @@ Any MCP client gets fifteen tools:
 | `fmrl_get` | Read a page, or one revision of it. |
 | `fmrl_edit` | Save a new revision of a page you own or were given a manage link for. |
 | `fmrl_watch` | Follow a page so other people's edits show up in your inbox. |
-| `fmrl_inbox` | List watched pages that someone else has changed. |
+| `fmrl_inbox` | List watched pages that someone else has changed or commented on. |
+| `fmrl_notes` | Read the comment threads on a page you can edit. |
+| `fmrl_comment` | Comment on words in a page you can edit. |
+| `fmrl_reply` | Reply to a comment thread. |
+| `fmrl_resolve` | Resolve a comment thread, or open it again. |
 | `fmrl_list` | List the pages this key published. |
 | `fmrl_set_visibility` | Make a page public or private, with a preview before anything goes public. |
 | `fmrl_delete` | Delete a page this key published. |

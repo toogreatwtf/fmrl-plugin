@@ -1,0 +1,38 @@
+[
+  {
+    "name": "headings and paragraphs",
+    "md": "# Plan\n\nFirst we *read* the **brief**.\n\n## Risks\n\nNothing yet.\n",
+    "body": "\u003ch1 id=\"plan\"\u003ePlan\u003c/h1\u003e\n\u003cp\u003eFirst we \u003cem\u003eread\u003c/em\u003e the \u003cstrong\u003ebrief\u003c/strong\u003e.\u003c/p\u003e\n\u003ch2 id=\"risks\"\u003eRisks\u003c/h2\u003e\n\u003cp\u003eNothing yet.\u003c/p\u003e\n",
+    "text": "\nPlan\nFirst we read the brief.\nRisks\nNothing yet.\n\n\n\n\n\n"
+  },
+  {
+    "name": "a code block keeps its fence body, and the copy button adds no text",
+    "md": "Run this:\n\n```bash\ncurl --fail \"https://fmrl.site\"\n```\n\nThen wait.\n",
+    "body": "\u003cp\u003eRun this:\u003c/p\u003e\n\u003cpre\u003e\u003ccode class=\"language-bash\"\u003e\u003cspan class=\"tk-k\"\u003ecurl\u003c/span\u003e \u003cspan class=\"tk-a\"\u003e--fail\u003c/span\u003e \u003cspan class=\"tk-s\"\u003e\u0026quot;https://fmrl.site\u0026quot;\u003c/span\u003e\n\u003c/code\u003e\u003c/pre\u003e\n\u003cp\u003eThen wait.\u003c/p\u003e\n",
+    "text": "\nRun this:\ncurl --fail \"https://fmrl.site\"\n\nThen wait.\n\n\n\n\n\n"
+  },
+  {
+    "name": "lists, a task list and a table",
+    "md": "- one\n- two\n  - nested\n\n- [x] done\n- [ ] open\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+    "body": "\u003cul\u003e\n\u003cli\u003e\n\u003cp\u003eone\u003c/p\u003e\n\u003c/li\u003e\n\u003cli\u003e\n\u003cp\u003etwo\u003c/p\u003e\n\u003cul\u003e\n\u003cli\u003enested\u003c/li\u003e\n\u003c/ul\u003e\n\u003c/li\u003e\n\u003cli\u003e\n\u003cp\u003e\u003cinput checked=\"\" disabled=\"\" type=\"checkbox\"\u003e done\u003c/p\u003e\n\u003c/li\u003e\n\u003cli\u003e\n\u003cp\u003e\u003cinput disabled=\"\" type=\"checkbox\"\u003e open\u003c/p\u003e\n\u003c/li\u003e\n\u003c/ul\u003e\n\u003ctable\u003e\n\u003cthead\u003e\n\u003ctr\u003e\n\u003cth\u003ea\u003c/th\u003e\n\u003cth\u003eb\u003c/th\u003e\n\u003c/tr\u003e\n\u003c/thead\u003e\n\u003ctbody\u003e\n\u003ctr\u003e\n\u003ctd\u003e1\u003c/td\u003e\n\u003ctd\u003e2\u003c/td\u003e\n\u003c/tr\u003e\n\u003c/tbody\u003e\n\u003c/table\u003e\n",
+    "text": "\n\n\none\n\n\ntwo\n\nnested\n\n\n\n done\n\n\n open\n\n\n\n\n\na\nb\n\n\n\n\n1\n2\n\n\n\n\n\n\n\n\n"
+  },
+  {
+    "name": "links, inline code, entities and a hard break",
+    "md": "See [the docs](https://fmrl.site/api) and `fmrl_get`.\nAT\u0026amp;T \u0026lt;3  \nnext line\n",
+    "body": "\u003cp\u003eSee \u003ca href=\"https://fmrl.site/api\"\u003ethe docs\u003c/a\u003e and \u003ccode\u003efmrl_get\u003c/code\u003e.\nAT\u0026amp;T \u0026lt;3\u003cbr\u003e\nnext line\u003c/p\u003e\n",
+    "text": "\nSee the docs and fmrl_get.\nAT\u0026T \u003c3\nnext line\n\n\n\n\n\n"
+  },
+  {
+    "name": "astral characters and curly quotes",
+    "md": "Ship it 🚀 now — “quoted” and ‘single’.\n\n\u003e A quote 😎 here.\n",
+    "body": "\u003cp\u003eShip it 🚀 now — “quoted” and ‘single’.\u003c/p\u003e\n\u003cblockquote\u003e\n\u003cp\u003eA quote 😎 here.\u003c/p\u003e\n\u003c/blockquote\u003e\n",
+    "text": "\nShip it 🚀 now — “quoted” and ‘single’.\n\nA quote 😎 here.\n\n\n\n\n\n\n"
+  },
+  {
+    "name": "the same words twice",
+    "md": "# One\n\nThe cat sat.\n\n# Two\n\nThe cat sat.\n",
+    "body": "\u003ch1 id=\"one\"\u003eOne\u003c/h1\u003e\n\u003cp\u003eThe cat sat.\u003c/p\u003e\n\u003ch1 id=\"two\"\u003eTwo\u003c/h1\u003e\n\u003cp\u003eThe cat sat.\u003c/p\u003e\n",
+    "text": "\nOne\nThe cat sat.\nTwo\nThe cat sat.\n\n\n\n\n\n"
+  }
+]

@@ -7,7 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ApiError, canvasesUrl, isRevoked, type DocResponse, type Editor, type FmrlApi, type InboxItem, type LendState, type NoteRequest, type NoteResponse, type NoteThread, type MeResponse, type PublishRequest, type PublishResponse, type RedeemResponse, type RotateResponse, type UpdateResponse } from "./api.js";
 import { openRecord, seal, sealRecord, sealWithKey, type OpenedRecord } from "./crypto.js";
-import { fileName, fileStem, filesDir, openFilesDir, writeIn } from "./files.js";
+import { FileInTheWay, fileName, fileStem, filesDir, openFilesDir, writeIn } from "./files.js";
 import { ACCEPTED_EXTENSIONS, MAX_BYTES, TOO_LARGE_MESSAGE, formatForPath } from "./format.js";
 import { parseDocId, parsePageRef, parseRecoveryToken } from "./ids.js";
 import { MINT_LABEL, normalizeKeyCode, prefixOf, type KeyStore } from "./keys.js";
@@ -286,6 +286,7 @@ function readText(r: PageRead, at: string): string {
 export const EDIT_ONE_SOURCE = "Give the new content as content or as content_file, one of the two. Nothing was saved.";
 export const OUTSIDE_FOLDER = (tool: string, folder: string, p: string) => `${tool} reads only files in the fmrl folder, ${folder}, where fmrl_get's to_file writes; ${p} is not one of them. Nothing was read.`;
 export const NOT_OWN_FILE = (tool: string, folder: string, p: string, stem: string) => `${tool} reads only the edited page's own file in the fmrl folder, ${folder}: ${stem}.md or ${stem}.html, the name fmrl_get's to_file writes it under; ${p} is not that file. Nothing was read.`;
+export const FILE_IN_THE_WAY = (file: string, sibling: boolean) => `fmrl_get's to_file wrote nothing: ${file} is already in the fmrl folder${sibling ? ", an earlier copy of this page in the other format," : ""} and holds something other than this revision, perhaps edits not saved yet. Nothing was changed. Save it first with fmrl_edit's content_file, or, only if the person says to drop it, call fmrl_get again with replace: true.`;
 export const NO_OWN_FILE = (tool: string, folder: string, name: string) => `${tool}: there is no ${name} in the fmrl folder, ${folder}. fmrl_get with to_file writes it there. Nothing was read.`;
 export const CONTENT_WRITTEN = (file: string, bytes: number, format: string) => `Content (${format}, ${bytes} bytes) written to ${file}, not shown here. Edit that file and save it with fmrl_edit's content_file.`;
 export const PRIVATE_NEEDS_KEY = "This page is private: pass its link with #p=<key>.";
@@ -1018,11 +1019,12 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         id: z.string().min(1).describe("A page id or page URL, optionally with its private key (#p=). A /c/ recovery link is not a page URL."),
         rev: z.number().int().min(1).optional().describe("The revision to read; the latest when left out."),
-        to_file: z.boolean().optional().describe("true: write the content, as it reads after opening, to <id>.md or <id>.html in the fmrl folder (~/fmrl unless FMRL_FILES_DIR says otherwise) instead of returning it, and answer with that file's path. It replaces an earlier copy of the same page. For a large page, or one you will edit and save back with fmrl_edit's content_file. The file is readable only by this user."),
+        to_file: z.boolean().optional().describe("true: write the content, as it reads after opening, to <id>.md or <id>.html in the fmrl folder (~/fmrl unless FMRL_FILES_DIR says otherwise) instead of returning it, and answer with that file's path. If that file is already there with something else in it (edits not saved yet), or a copy in the other format is, nothing is written unless replace is true. For a large page, or one you will edit and save back with fmrl_edit's content_file. The file is readable only by this user."),
+        replace: z.boolean().optional().describe("With to_file: true replaces a file already there for this page, in either format, dropping whatever it holds. Pass it only when the person said to discard that copy."),
       },
       outputSchema: readOutput,
     },
-    async ({ id, rev, to_file }) => {
+    async ({ id, rev, to_file, replace }) => {
       let ref: ReturnType<typeof parsePageRef>;
       try { ref = parsePageRef(id, refOpts); } catch (e) { return fail(errorText(e)); }
       let at = "";
@@ -1056,9 +1058,18 @@ export function createServer(deps: ServerDeps): McpServer {
         // The content goes to disk, not through the model: the answer keeps everything else, the profile included.
         const format = v.content_format ?? "html";
         const dir = await folder();
-        const file = await writeIn(dir, fileName(ref.id, format), v.content);
-        // A copy in the other format is from an older revision: remove it, so fmrl_edit can't save that one back.
-        await unlink(path.join(dir, fileName(ref.id, format === "md" ? "html" : "md"))).catch(() => undefined);
+        // A copy in the other format is from an older revision, or holds edits not saved yet: with replace it goes, so
+        // fmrl_edit can't save that one back; without, nothing is written while it is there.
+        const sibling = path.join(dir, fileName(ref.id, format === "md" ? "html" : "md"));
+        if (!replace && (await fsLstat(sibling).catch(() => undefined))) throw new Error(FILE_IN_THE_WAY(sibling, true));
+        let file: string;
+        try {
+          file = await writeIn(dir, fileName(ref.id, format), v.content, { replace });
+        } catch (e) {
+          if (e instanceof FileInTheWay) throw new Error(FILE_IN_THE_WAY(e.file, false));
+          throw e;
+        }
+        if (replace) await unlink(sibling).catch(() => undefined);
         const written = { path: file, bytes: Buffer.byteLength(v.content) };
         const { content: ignoredContent, ...rest } = v;
         return { ...rest, content_file: written, content_note: CONTENT_WRITTEN(written.path, written.bytes, format) };

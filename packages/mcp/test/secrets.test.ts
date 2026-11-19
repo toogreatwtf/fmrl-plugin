@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { publicRefusal, secretKinds } from "../src/secrets.js";
+import { publicRefusal, secretKinds, withoutMarkup } from "../src/secrets.js";
 
 // A token-shaped body with digits and mixed case, as real keys have; not any real key.
 const T = (n: number) => "aB3dE5gH7jK9mN2pQ4sT6vW8yZ1cF0xL".repeat(4).slice(0, n);
@@ -100,5 +100,39 @@ describe("secretKinds", () => {
     expect(publicRefusal(`# Notes\n\n${split}`, "save", undefined, "md")).toContain("a GitHub token");
     // HTML is taken as written: its own tags are what the reader sees.
     expect(publicRefusal(`<p>${split}</p>`, "save", undefined, "html")).toBeUndefined();
+  });
+});
+
+describe("withoutMarkup", () => {
+  const byRegex = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, "");
+  it("removes comments and tags exactly as the regexes it replaces did", () => {
+    for (const s of ["", "plain", "<b>x</b>", "a<>b", "<!---->x", "<!--->x-->y", "<!-->x", "a<!-- c -->b<!-- d", "<a<b>c", "x<y", "<!--a-->b<c>d<!--e", "gh<i></i>p_<!-- x -->abc"]) {
+      expect(withoutMarkup(s)).toBe(byRegex(s));
+    }
+    // Every short string over the characters that matter.
+    let seed = 7;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+    for (let n = 0; n < 5000; n++) {
+      let s = "";
+      for (let len = next() % 16; len > 0; len--) s += "<!->a\n"[next() % 6];
+      expect(withoutMarkup(s)).toBe(byRegex(s));
+    }
+  });
+  it.each([
+    ["\"<\"", "<"],
+    ["\"<!--\"", "<!--"],
+    ["\"<!--<\"", "<!--<"],
+  ])("stays linear on 1 MiB of %s with no closer", (_, unit) => {
+    const hostile = unit.repeat(Math.ceil((1 << 20) / unit.length));
+    const started = performance.now();
+    expect(withoutMarkup(hostile)).toBe(hostile);
+    expect(secretKinds(hostile)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
+  it("keeps a 2 MiB hostile public page quick to check", () => {
+    const hostile = "<!--".repeat(1 << 18) + "<a".repeat(1 << 19);
+    const started = performance.now();
+    expect(publicRefusal(hostile, "publish", undefined, "html")).toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(1500);
   });
 });

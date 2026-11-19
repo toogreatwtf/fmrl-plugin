@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open as fsOpen, realpath, rename, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open as fsOpen, readFile, realpath, rename, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -44,23 +44,69 @@ export function fileName(id: string, format: "html" | "md"): string {
   return `${fileStem(id)}.${format}`;
 }
 
+/** FileInTheWay is writeIn's refusal: name is already in the folder and holds something else, so it was left as it was. */
+export class FileInTheWay extends Error {
+  constructor(readonly file: string) {
+    super(`${file} is already there and holds something else`);
+  }
+}
+
 /**
- * writeIn writes content to name inside folder (a real path from openFilesDir), replacing an earlier copy. It writes
- * a new temporary file first (O_CREAT|O_EXCL, mode 0600) and renames it into place, so a reader never sees half a
- * page, and a symlink planted under that name is replaced, never followed.
+ * writeIn writes content to name inside folder (a real path from openFilesDir). It writes a new temporary file first
+ * (O_CREAT|O_EXCL, mode 0600) and then puts it in place, so a reader never sees half a page. Without replace, the
+ * file is put in place only if nothing is there yet (a hard link, which fails on an existing name, symlinks
+ * included, or an exclusive create where hard links aren't supported); a regular file already there with exactly this content is left as it is, and anything else there is
+ * left alone and FileInTheWay is thrown. With replace, it is renamed into place, so an earlier copy, or a symlink
+ * planted under that name, is replaced, never followed.
  */
-export async function writeIn(folder: string, name: string, content: string): Promise<string> {
+export async function writeIn(folder: string, name: string, content: string, opts: { replace?: boolean } = {}): Promise<string> {
   const file = path.join(folder, name);
   const tmp = path.join(folder, `.${name}.${randomUUID()}.tmp`);
   const fh = await fsOpen(tmp, "wx", 0o600);
   try {
     await fh.writeFile(content);
     await fh.close();
-    await rename(tmp, file);
+    if (opts.replace) {
+      await rename(tmp, file);
+      return file;
+    }
+    try {
+      try {
+        await link(tmp, file);
+      } catch (e) {
+        // A filesystem without hard links: create the file itself exclusively instead.
+        if ((e as NodeJS.ErrnoException).code === "EEXIST") throw e;
+        await writeNew(file, content);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      if (!(await holds(file, content))) throw new FileInTheWay(file);
+    }
+    await unlink(tmp).catch(() => undefined);
   } catch (e) {
     await fh.close().catch(() => undefined);
     await unlink(tmp).catch(() => undefined);
     throw e;
   }
   return file;
+}
+
+/** writeNew creates file (O_CREAT|O_EXCL, mode 0600) and writes content to it, removing it again if the write fails. */
+async function writeNew(file: string, content: string): Promise<void> {
+  const fh = await fsOpen(file, "wx", 0o600);
+  try {
+    await fh.writeFile(content);
+    await fh.close();
+  } catch (e) {
+    await fh.close().catch(() => undefined);
+    await unlink(file).catch(() => undefined);
+    throw e;
+  }
+}
+
+/** holds is whether file is a regular file (not a link) whose content is exactly content. */
+async function holds(file: string, content: string): Promise<boolean> {
+  const st = await lstat(file).catch(() => undefined);
+  if (!st?.isFile() || st.size !== Buffer.byteLength(content)) return false;
+  return (await readFile(file, "utf8").catch(() => undefined)) === content;
 }

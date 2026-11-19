@@ -516,7 +516,8 @@ describe("tools", () => {
     expect(text(r)).toContain("This agent is not attached to an identity, so its pages don't show on fmrl.site yet.");
     expect(text(r)).toContain(`open ${fake.baseUrl}/attach/fresh#r=`);
     expect(text(r)).toMatch(/Once it is attached, its pages show at http:\/\/127\.0\.0\.1:\d+\/\?canvases, tagged fmrl_\w{4}\.$/m);
-    expect(r.structuredContent).toMatchObject({ attached_at: null, attach_url: expect.stringMatching(new RegExp(`^${fake.baseUrl.replace(/[.]/g, "\\.")}/attach/fresh#r=`)) });
+    expect(r.structuredContent).toMatchObject({ attached_at: null });
+    expect((r.structuredContent as { attach_url: string }).attach_url.startsWith(`${fake.baseUrl}/attach/fresh#r=`)).toBe(true);
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const again = await call("fmrl_whoami");
     expect(text(again)).toContain("This agent attached to its identity on 2026-09-16T12:00:00Z.");

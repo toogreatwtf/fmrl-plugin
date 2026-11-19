@@ -1785,13 +1785,14 @@ describe("comments", () => {
     const posted = fake.requests.at(-1)!;
     expect(posted.body).toMatchObject({ payload: expect.stringMatching(/^s1\./), base_rev: 1 });
     expect(Object.keys(posted.body as object).sort()).toEqual(["base_rev", "payload"]);
-    expect((await call("fmrl_reply", { id: url, thread, body: "Yes" })).isError).toBeFalsy();
+    expect((await call("fmrl_reply", { id: url, thread, body: "Yes, works for me." })).isError).toBeFalsy();
     const wire = JSON.stringify(fake.requests.slice(before));
-    for (const secret of ["Friday", "Can we?", "Yes", key]) expect(wire).not.toContain(secret);
+    // Every string here but the key has a space, which sealed text never holds, so it can't match by chance.
+    for (const secret of ["ship on Friday", "Can we?", "Yes, works for me.", key]) expect(wire).not.toContain(secret);
 
     const notes = await call("fmrl_notes", { id: url });
     expect(notes.structuredContent).toMatchObject({ private: true });
-    expect(notesOf(notes)).toMatchObject([{ id: thread, quote: "ship on Friday", heading: "Plan", status: "on_text", body: "Can we?", replies: [{ body: "Yes" }] }]);
+    expect(notesOf(notes)).toMatchObject([{ id: thread, quote: "ship on Friday", heading: "Plan", status: "on_text", body: "Can we?", replies: [{ body: "Yes, works for me." }] }]);
   });
 
   it("on a private page say when the words were edited away", async () => {

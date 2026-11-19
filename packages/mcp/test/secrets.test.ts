@@ -104,8 +104,18 @@ describe("secretKinds", () => {
 });
 
 describe("withoutMarkup", () => {
-  const byRegex = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, "");
-  it("removes comments and tags exactly as the regexes it replaces did", () => {
+  // What /open[\s\S]*?close/g removed, worked out one position at a time: from each open, up to the first close after it.
+  const naive = (s: string, open: string, close: string) => {
+    let out = "";
+    for (let i = 0; i < s.length;) {
+      const end = s.startsWith(open, i) ? s.indexOf(close, i + open.length) : -1;
+      if (end >= 0) { i = end + close.length; continue; }
+      out += s[i++];
+    }
+    return out;
+  };
+  const byRegex = (s: string) => naive(naive(s, "<!--", "-->"), "<", ">");
+  it("removes comments and tags exactly as the regexes it replaces did, /<!--[\\s\\S]*?-->/g then /<[^>]*>/g", () => {
     for (const s of ["", "plain", "<b>x</b>", "a<>b", "<!---->x", "<!--->x-->y", "<!-->x", "a<!-- c -->b<!-- d", "<a<b>c", "x<y", "<!--a-->b<c>d<!--e", "gh<i></i>p_<!-- x -->abc"]) {
       expect(withoutMarkup(s)).toBe(byRegex(s));
     }

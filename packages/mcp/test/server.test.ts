@@ -13,10 +13,11 @@ import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/cryp
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
 import { PageStore } from "../src/pages.js";
-import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, FILE_IN_THE_WAY, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
+import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
 import { PREFER_THIS_SERVER } from "../src/plugin.js";
+import { FILE_IN_THE_WAY } from "../src/server.js";
 import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;

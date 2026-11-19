@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, type Stats } from "node:fs";
 import { createECDH } from "node:crypto";
-import { chmod, link, mkdir, mkdtemp, open as fsOpen, readdir, readFile, realpath, rename, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat as lstatFile, mkdir, mkdtemp, open as fsOpen, readdir, readFile, realpath, rename, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -17,6 +17,7 @@ import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, LIST_EMPTY
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
 import { PREFER_THIS_SERVER } from "../src/plugin.js";
+import { FILE_IN_THE_WAY } from "../src/server.js";
 import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;
@@ -1253,19 +1254,47 @@ describe("fmrl_edit", () => {
     expect(puts().at(-1)).toMatchObject({ body: { content: edited, format: "md", base_rev: 1 } });
     expect((await call("fmrl_get", { id })).structuredContent).toMatchObject({ rev: 2, content: edited });
 
-    // The bare file name reads from the folder too, and a second read replaces the copy in place.
+    // The bare file name reads from the folder too, and a second read that finds this revision there leaves it be.
     const byName = await call("fmrl_edit", { id, content_file: `${id}.md`, base_rev: 2 });
     expect(byName.isError).toBeFalsy();
-    await writeFile(out, "stale");
-    const again = (await call("fmrl_get", { id, to_file: true })).structuredContent as { content_file: { path: string } };
+    const same = await call("fmrl_get", { id, to_file: true });
+    expect(same.isError).toBeFalsy();
+    expect((same.structuredContent as { content_file: { path: string } }).content_file.path).toBe(out);
+    expect(await readFile(out, "utf8")).toBe(edited);
+    expect(await readdir(folder)).toEqual([`${id}.md`]);
+
+    // A copy holding something else may be edits not saved yet: a read writes nothing over it unless told to replace it.
+    await writeFile(out, "unsaved edits");
+    const kept = await call("fmrl_get", { id, to_file: true });
+    expect(kept.isError).toBe(true);
+    expect(text(kept)).toBe(FILE_IN_THE_WAY(out, false));
+    expect(await readFile(out, "utf8")).toBe("unsaved edits");
+    expect(await readdir(folder)).toEqual([`${id}.md`]);
+    const again = (await call("fmrl_get", { id, to_file: true, replace: true })).structuredContent as { content_file: { path: string } };
     expect(again.content_file.path).toBe(out);
     expect(await readFile(out, "utf8")).toBe(edited);
 
-    // A copy left in the other format is an older revision: the next to_file removes it, so it can't be saved back.
+    // A copy left in the other format is an older revision: a read leaves it and writes nothing, and replace removes
+    // it, so it can't be saved back.
     const html = path.join(folder, `${id}.html`);
     await writeFile(html, "<p>older</p>");
-    await call("fmrl_get", { id, to_file: true });
+    const sibling = await call("fmrl_get", { id, to_file: true });
+    expect(sibling.isError).toBe(true);
+    expect(text(sibling)).toBe(FILE_IN_THE_WAY(html, true));
+    expect((await readdir(folder)).sort()).toEqual([`${id}.html`, `${id}.md`]);
+    expect(await readFile(html, "utf8")).toBe("<p>older</p>");
+    expect((await call("fmrl_get", { id, to_file: true, replace: true })).isError).toBeFalsy();
     expect(await readdir(folder)).toEqual([`${id}.md`]);
+  });
+  it("fmrl_get's to_file writes nothing over another page's own file", async () => {
+    const one = (await call("fmrl_publish", { content: "# One", format: "md" })).structuredContent as { id: string };
+    const two = (await call("fmrl_publish", { content: "# Two", format: "md" })).structuredContent as { id: string };
+    expect((await call("fmrl_get", { id: one.id, to_file: true })).isError).toBeFalsy();
+    expect((await call("fmrl_get", { id: two.id, to_file: true })).isError).toBeFalsy();
+    const folder = await realpath(path.join(dir, "files"));
+    expect(await readFile(path.join(folder, `${one.id}.md`), "utf8")).toBe("# One");
+    expect(await readFile(path.join(folder, `${two.id}.md`), "utf8")).toBe("# Two");
+    expect((await readdir(folder)).sort()).toEqual([`${one.id}.md`, `${two.id}.md`].sort());
   });
   it("fmrl_get's to_file takes no path, so a caller can't aim the write, and a link planted under the page's name is replaced, not followed", async () => {
     const pub = await call("fmrl_publish", { content: "ssh-ed25519 AAAA attacker", format: "md" });
@@ -1275,9 +1304,17 @@ describe("fmrl_edit", () => {
     await writeFile(target, "mine");
     await mkdir(path.join(dir, "files"), { recursive: true });
     await symlink(target, path.join(dir, "files", `${id}.md`));
-    const r = await call("fmrl_get", { id, out: target, path: target, to_file: true });
+    const planted = path.join(dir, "files", `${id}.md`);
+    // Without replace the link is in the way: nothing is written, through it or over it.
+    const kept = await call("fmrl_get", { id, out: target, path: target, to_file: true });
+    expect(kept.isError).toBe(true);
+    expect(await readFile(target, "utf8")).toBe("mine");
+    expect((await lstatFile(planted)).isSymbolicLink()).toBe(true);
+    // With replace the link itself is replaced, never followed.
+    const r = await call("fmrl_get", { id, out: target, path: target, to_file: true, replace: true });
     expect(r.isError).toBeFalsy();
     expect(await readFile(target, "utf8")).toBe("mine");
+    expect((await lstatFile(planted)).isSymbolicLink()).toBe(false);
     expect((r.structuredContent as { content_file: { path: string } }).content_file.path).not.toContain(work);
   });
   it("fmrl_edit takes content or content_file, exactly one, and reads only the edited page's own file in the fmrl folder", async () => {
@@ -1388,7 +1425,7 @@ describe("fmrl_edit", () => {
     const ed = await call("fmrl_edit", { id, content_file: `${id}.md` });
     expect(text(ed)).toContain("Other users can write in the fmrl folder");
     await chmod(folder, 0o755);
-    expect((await call("fmrl_get", { id, to_file: true })).isError).toBeFalsy();
+    expect((await call("fmrl_get", { id, to_file: true, replace: true })).isError).toBeFalsy();
     expect(puts()).toHaveLength(0);
   });
   it("fmrl_get's to_file opens a private page here and writes its source", async () => {

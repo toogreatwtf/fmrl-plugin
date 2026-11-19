@@ -83,11 +83,33 @@ const NAMED: Record<string, string> = {
   lcub: "{", rcub: "}", lbrace: "{", rbrace: "}",
 };
 
+/**
+ * dropSpans removes every span from open to the first close after it, as text.replace(/open[\s\S]*?close/g, "") does,
+ * but in linear time: that regex rescans to the end of the string from every open that has no close after it. Once
+ * no close is left, the rest stays as it is.
+ */
+function dropSpans(text: string, open: string, close: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const start = text.indexOf(open, i);
+    if (start < 0) break;
+    const end = text.indexOf(close, start + open.length);
+    if (end < 0) break;
+    out += text.slice(i, start);
+    i = end + close.length;
+  }
+  return out + text.slice(i);
+}
+
+/** withoutMarkup is content with HTML comments and then tags removed, as .replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, "") leaves it ("<>" included), in linear time. */
+export function withoutMarkup(content: string): string {
+  return dropSpans(dropSpans(content, "<!--", "-->"), "<", ">");
+}
+
 /** joinedText is HTML's text as a browser joins it: comments and tags removed and entities decoded, so a key that markup splits (a syntax highlighter's spans, ghp&#95;…) is found as the reader sees it. */
 function joinedText(content: string): string {
-  return content
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<[^>]*>/g, "")
+  return withoutMarkup(content)
     // A numeric reference needs no closing semicolon in a browser (ghp&#95abc reads ghp_abc); a named one is read with it.
     .replace(/&(?:#(\d+);?|#[xX]([0-9a-fA-F]+);?|([a-zA-Z]+);)/g, (all, dec?: string, hex?: string, name?: string) => {
       if (name !== undefined) return NAMED[name] ?? all;

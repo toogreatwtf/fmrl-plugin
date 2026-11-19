@@ -1141,7 +1141,7 @@ describe("fmrl_edit", () => {
 
   it("describes the tool as the brief words it", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "fmrl_edit")!;
-    expect(tool.description).toBe("Save new content to an existing page as its next revision; earlier revisions stay readable through fmrl_get's rev. To make a new page use fmrl_publish, and to change who can read a page use fmrl_set_visibility. Pass base_rev (the rev you read): if someone saved a newer revision meanwhile, nothing is saved and the answer gives latest_rev to read first. Works on pages this key owns and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token). A private page stays private under its same key, so every existing link keeps opening it; public content carrying a recognizable credential is refused. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
+    expect(tool.description).toBe("Save new content to an existing page as its next revision; earlier revisions stay readable through fmrl_get's rev. To make a new page use fmrl_publish, and to change who can read a page use fmrl_set_visibility. Pass base_rev (the rev you read): if someone saved a newer revision meanwhile, nothing is saved and the answer gives latest_rev to read first. Works on pages this key owns, on pages its person can edit once this key is attached to them, and on any page whose management token you were given (pass the page URL as id and the token or recovery link separately as manage_token). A private page stays private under its same key, so every existing link keeps opening it; public content carrying a recognizable credential is refused. Editing watches the page: revisions other editors make afterwards show up in fmrl_inbox, with no fmrl_watch call.");
   });
   it("publishing remembers the page's manage token, and a private page's key", async () => {
     const pub = await call("fmrl_publish", { visibility: "public", content: "# Open" });
@@ -1371,7 +1371,7 @@ describe("fmrl_edit", () => {
 
     const bare = await b.call("fmrl_edit", { id, content: "# Nope" });
     expect(bare.isError).toBe(true);
-    expect(text(bare)).toBe(`To edit, supply https://fmrl.test/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`);
+    expect(text(bare)).toBe(`fmrl.site refused this edit (404 not_found): this key can't edit https://fmrl.test/${id}. A key edits pages it owns, pages its person can edit once it's attached to them, and pages whose recovery link it's given. To edit, supply https://fmrl.test/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`);
 
     const forged = await b.call("fmrl_edit", { id, manage_token: "f".repeat(22), content: "# Forged" });
     expect(forged.isError).toBe(true);
@@ -1520,13 +1520,13 @@ describe("fmrl_edit", () => {
     expect(puts().map((q) => q.manageToken)).toEqual([forged, manageTok(manage_url)]);
     expect(await b.pages.get(id)).toEqual({ manage: manageTok(manage_url) });
   });
-  it("a refused link token with no other stored token fails with the manage-link hint, once", async () => {
+  it("a refused link token with no other stored token says the token was refused, once", async () => {
     const pub = await call("fmrl_publish", { visibility: "public", content: "# Shared", format: "md" });
     const { id } = pub.structuredContent as { id: string };
     const b = await second();
     const r = await b.call("fmrl_edit", { id, manage_token: "f".repeat(22), content: "# By B" });
     expect(r.isError).toBe(true);
-    expect(text(r)).toBe(`To edit, supply https://fmrl.test/${id} as id and its recovery token or /c/<token> link separately as manage_token. Ask whoever shares a recovery link to include the page URL. Recovery grants management, not deletion.`);
+    expect(text(r)).toBe(`fmrl.site refused this edit (404 not_found): the recovery token didn't give this key edit access to https://fmrl.test/${id}. It may be for another page, a share link rather than the page's recovery link, or no longer valid. Ask for a fresh recovery link from the page, or, if the page is your person's, check that this key is attached to them.`);
     expect(puts()).toHaveLength(1);
     expect(await b.pages.get(id)).toEqual({});
   });

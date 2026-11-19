@@ -17,6 +17,7 @@ The `release` workflow (`.github/workflows/release.yml`) runs on every merge to 
 
 - When `packages/mcp/package.json` names a version npm does not have yet, it publishes it through npm Trusted Publishing (GitHub OIDC, no token in secrets, a provenance attestation back to the commit).
 - The publish runs only for `main` and waits for a maintainer's approval, so a merge alone never ships to every installed plugin.
+- Dependencies are installed, and the server is built, tested and packed, in a build job that can't publish. The approved publish job installs nothing and runs no package scripts: it checks that the tarball is the one the build job packed, for this version and commit, and publishes that file.
 - Once npm has the version, the same approved job lists it in the official MCP Registry as `io.github.toogreatwtf/fmrl-mcp` from `packages/mcp/server.json`, logging in with GitHub OIDC.
 - npm and the registry are checked separately. A version that is on npm but not yet listed is listed by re-running the workflow, or running it by hand on `main`, and approving it.
 - After the publish, it tags the version as `v<x.y.z>` on the commit npm recorded for it and writes a GitHub Release whose notes list the PRs that touched `packages/mcp` since the previous version. The same notes are on the run's summary page while the publish waits for approval.

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, type Stats } from "node:fs";
 import { createECDH } from "node:crypto";
-import { chmod, link, mkdir, mkdtemp, open as fsOpen, readdir, readFile, realpath, rename, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat as lstatFile, mkdir, mkdtemp, open as fsOpen, readdir, readFile, realpath, rename, stat as statFile, symlink, unlink, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -13,10 +13,11 @@ import { newRing, openEnvelope, openRecord, seal, sealRecord } from "../src/cryp
 import { MAX_BYTES } from "../src/format.js";
 import { KeyStore } from "../src/keys.js";
 import { PageStore } from "../src/pages.js";
-import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, type ServerDeps } from "../src/server.js";
+import { CONTENT_WRITTEN, createServer, machineName, EDIT_ONE_SOURCE, LIST_EMPTY, NO_OWN_FILE, NOT_HELD_LINE, NOT_OWN_FILE, OUTSIDE_FOLDER, RING_ENV_LINE, RING_FILE_LINE, SEVEN_DAYS_PRIVATE, VERSION, withRing, type ServerDeps } from "../src/server.js";
 import { vaultFingerprint } from "../src/vault-crypto.js";
 import { NO_PLUGIN_LINE, VERBOSE_HINT } from "../src/status.js";
 import { PREFER_THIS_SERVER } from "../src/plugin.js";
+import { FILE_IN_THE_WAY } from "../src/server.js";
 import { hangingFetch, startFakeApi, type FakeApi } from "./fake-api.js";
 
 let fake: FakeApi; let client: Client; let dir: string; let credFile: string; let pagesFile: string;
@@ -327,7 +328,7 @@ describe("tools", () => {
     expect(s.attached).toBe(false);
     expect(s.code).toBe("K7Q-4MZ");
     expect(s.machine).toBe("Studio");
-    expect(s.attach_url).toMatch(/^https:\/\/fmrl\.test\/c\/attachcmd/);
+    expect(s.attach_url.startsWith(`${fake.baseUrl}/c/attachcmd`)).toBe(true);
     expect(s.attach_url).toMatch(RING_PAIR);
     const req = fake.requests.filter((q) => q.path === "/api/v1/me/attach").at(-1)!;
     expect(req.body).toEqual({ machine: "Studio" });
@@ -410,10 +411,10 @@ describe("tools", () => {
       "Expires 2026-09-15T12:00:00Z",
       "This page lasts seven days unless someone keeps it on the page itself.",
       `Recovery link (grants management and editing; does not remove the page; share the page URL with it): https://fmrl.test/c/tok${id}manage0`,
-      `Attach this agent to your identity: open https://fmrl.test/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`,
+      `Attach this agent to your identity: open ${fake.baseUrl}/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`,
     ]);
     expect(r.structuredContent).toMatchObject({ id, url: `https://fmrl.test/${id}`, status: "live" });
-    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/fresh#r=${prefix}.${ring}` });
+    expect(r.structuredContent).toMatchObject({ attach_url: `${fake.baseUrl}/attach/fresh#r=${prefix}.${ring}` });
     expect(fake.requests.map((q) => q.path)).toEqual(["/api/v1/keys", "/api/v1/me", "/api/v1/me", "/api/v1/publish", "/api/v1/me"]);
     expect(firstPublish().body).toEqual({ content: "# Hello", title: "Hello" });
   });
@@ -514,9 +515,10 @@ describe("tools", () => {
   it("fmrl_whoami says whether a browser is linked and always offers a link", async () => {
     const r = await call("fmrl_whoami");
     expect(text(r)).toContain("This agent is not attached to an identity, so its pages don't show on fmrl.site yet.");
-    expect(text(r)).toContain("open https://fmrl.test/attach/fresh#r=");
+    expect(text(r)).toContain(`open ${fake.baseUrl}/attach/fresh#r=`);
     expect(text(r)).toMatch(/Once it is attached, its pages show at http:\/\/127\.0\.0\.1:\d+\/\?canvases, tagged fmrl_\w{4}\.$/m);
-    expect(r.structuredContent).toMatchObject({ attached_at: null, attach_url: expect.stringMatching(/^https:\/\/fmrl\.test\/attach\/fresh#r=/) });
+    expect(r.structuredContent).toMatchObject({ attached_at: null });
+    expect((r.structuredContent as { attach_url: string }).attach_url.startsWith(`${fake.baseUrl}/attach/fresh#r=`)).toBe(true);
     fake.linked.add((fake.requests.at(-1)!.auth as string).slice(7));
     const again = await call("fmrl_whoami");
     expect(text(again)).toContain("This agent attached to its identity on 2026-09-16T12:00:00Z.");
@@ -802,11 +804,81 @@ describe("tools", () => {
     const ring = (await ringInFile())!;
     const prefix = keyOf(fake.requests.at(-1)!).slice(0, 9);
     expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(r.structuredContent).toMatchObject({ attach_url: `https://fmrl.test/attach/fresh#r=${prefix}.${ring}` });
-    expect(text(r)).toContain(`open https://fmrl.test/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`);
+    expect(r.structuredContent).toMatchObject({ attach_url: `${fake.baseUrl}/attach/fresh#r=${prefix}.${ring}` });
+    expect(text(r)).toContain(`open ${fake.baseUrl}/attach/fresh#r=${prefix}.${ring} in your browser. It also carries the ring that lets that browser open your private pages.`);
     expect(text(r)).toContain(RING_FILE_LINE(credFile));
     expect(RING_FILE_LINE(credFile)).toBe(`Your key ring is in ${credFile}; back up that file to keep every page's key.`);
     expect(text(r).split(ring)).toHaveLength(2);
+  });
+  it("withRing adds the ring only to a link on the viewer's own origin", () => {
+    const ring = "R".repeat(43);
+    expect(withRing("https://fmrl.site/attach/a", "fmrl_Abcd", ring, "https://fmrl.site")).toBe(`https://fmrl.site/attach/a#r=fmrl_Abcd.${ring}`);
+    expect(withRing("https://fmrl.site/attach/a#x=1", "fmrl_Abcd", ring, "https://fmrl.site")).toBe(`https://fmrl.site/attach/a#x=1&r=fmrl_Abcd.${ring}`);
+    for (const link of [
+      "https://elsewhere.example/attach/a",
+      "http://fmrl.site/attach/a",
+      "https://fmrl.site:8443/attach/a",
+      "https://fmrl.site.elsewhere.example/attach/a",
+      "https://user:pass@fmrl.site/attach/a",
+      "https://user@fmrl.site/attach/a",
+      "javascript:alert(1)",
+      "/attach/a",
+      "not a link",
+    ]) expect(withRing(link, "fmrl_Abcd", ring, "https://fmrl.site")).toBe(link);
+    expect(withRing("https://fmrl.site/attach/a", "fmrl_Abcd", ring, "not a base")).toBe("https://fmrl.site/attach/a");
+  });
+  it("fmrl_whoami leaves the ring off attach and link urls on another origin", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    const original = api.me.bind(api);
+    vi.spyOn(api, "me").mockImplementation(async k => ({ ...await original(k), attached_at: null, attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" }));
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_whoami", arguments: {} }) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      const ring = (await ringInFile())!;
+      expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(r.structuredContent).toMatchObject({ attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" });
+      expect(JSON.stringify(r)).not.toContain(ring);
+      expect(text(r)).not.toContain("It also carries the ring");
+    } finally { await c.close(); }
+  });
+  it("fmrl_publish leaves the ring off attach and link urls on another origin", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    const original = api.publish.bind(api);
+    const me = api.me.bind(api);
+    vi.spyOn(api, "publish").mockImplementation(async (k, b) => ({ ...await original(k, b), attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" }));
+    // The hint the publish reply leaves is the one me notes too: here, a link on another origin.
+    vi.spyOn(api, "me").mockImplementation(async (k, o) => {
+      const m = { ...await me(k, o), attached_at: null, attach_url: "https://elsewhere.example/attach/x" };
+      api.noteAttachment(k, m);
+      return m;
+    });
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_publish", arguments: { visibility: "public", content: "# Hello" } }) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      const ring = (await ringInFile())!;
+      expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(r.structuredContent).toMatchObject({ attach_url: "https://elsewhere.example/attach/x", link_url: "https://elsewhere.example/link/y" });
+      expect(JSON.stringify(r)).not.toContain(ring);
+      expect(text(r)).not.toContain("It also carries the ring");
+    } finally { await c.close(); }
+  });
+  it("fmrl_attach leaves the ring off a link on another origin", async () => {
+    const api = new FmrlApi(fake.baseUrl);
+    vi.spyOn(api, "attach").mockResolvedValue({ url: "https://elsewhere.example/c/attachcmd", expires_at: new Date(Date.now() + 600000).toISOString(), code: "K7Q-4MZ" });
+    const keys = new KeyStore({ api, baseUrl: fake.baseUrl, file: credFile });
+    const c = await connect({ api, keys });
+    try {
+      const r = await c.callTool({ name: "fmrl_attach", arguments: {} }) as ToolResult;
+      expect(r.isError).toBeFalsy();
+      const ring = (await ringInFile())!;
+      expect(ring).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(r.structuredContent).toMatchObject({ attach_url: "https://elsewhere.example/c/attachcmd" });
+      expect(JSON.stringify(r)).not.toContain(ring);
+    } finally { await c.close(); }
   });
   it("fmrl_whoami with FMRL_RING carries that ring and says where it comes from", async () => {
     const envRing = newRing();
@@ -1182,19 +1254,47 @@ describe("fmrl_edit", () => {
     expect(puts().at(-1)).toMatchObject({ body: { content: edited, format: "md", base_rev: 1 } });
     expect((await call("fmrl_get", { id })).structuredContent).toMatchObject({ rev: 2, content: edited });
 
-    // The bare file name reads from the folder too, and a second read replaces the copy in place.
+    // The bare file name reads from the folder too, and a second read that finds this revision there leaves it be.
     const byName = await call("fmrl_edit", { id, content_file: `${id}.md`, base_rev: 2 });
     expect(byName.isError).toBeFalsy();
-    await writeFile(out, "stale");
-    const again = (await call("fmrl_get", { id, to_file: true })).structuredContent as { content_file: { path: string } };
+    const same = await call("fmrl_get", { id, to_file: true });
+    expect(same.isError).toBeFalsy();
+    expect((same.structuredContent as { content_file: { path: string } }).content_file.path).toBe(out);
+    expect(await readFile(out, "utf8")).toBe(edited);
+    expect(await readdir(folder)).toEqual([`${id}.md`]);
+
+    // A copy holding something else may be edits not saved yet: a read writes nothing over it unless told to replace it.
+    await writeFile(out, "unsaved edits");
+    const kept = await call("fmrl_get", { id, to_file: true });
+    expect(kept.isError).toBe(true);
+    expect(text(kept)).toBe(FILE_IN_THE_WAY(out, false));
+    expect(await readFile(out, "utf8")).toBe("unsaved edits");
+    expect(await readdir(folder)).toEqual([`${id}.md`]);
+    const again = (await call("fmrl_get", { id, to_file: true, replace: true })).structuredContent as { content_file: { path: string } };
     expect(again.content_file.path).toBe(out);
     expect(await readFile(out, "utf8")).toBe(edited);
 
-    // A copy left in the other format is an older revision: the next to_file removes it, so it can't be saved back.
+    // A copy left in the other format is an older revision: a read leaves it and writes nothing, and replace removes
+    // it, so it can't be saved back.
     const html = path.join(folder, `${id}.html`);
     await writeFile(html, "<p>older</p>");
-    await call("fmrl_get", { id, to_file: true });
+    const sibling = await call("fmrl_get", { id, to_file: true });
+    expect(sibling.isError).toBe(true);
+    expect(text(sibling)).toBe(FILE_IN_THE_WAY(html, true));
+    expect((await readdir(folder)).sort()).toEqual([`${id}.html`, `${id}.md`]);
+    expect(await readFile(html, "utf8")).toBe("<p>older</p>");
+    expect((await call("fmrl_get", { id, to_file: true, replace: true })).isError).toBeFalsy();
     expect(await readdir(folder)).toEqual([`${id}.md`]);
+  });
+  it("fmrl_get's to_file writes nothing over another page's own file", async () => {
+    const one = (await call("fmrl_publish", { content: "# One", format: "md" })).structuredContent as { id: string };
+    const two = (await call("fmrl_publish", { content: "# Two", format: "md" })).structuredContent as { id: string };
+    expect((await call("fmrl_get", { id: one.id, to_file: true })).isError).toBeFalsy();
+    expect((await call("fmrl_get", { id: two.id, to_file: true })).isError).toBeFalsy();
+    const folder = await realpath(path.join(dir, "files"));
+    expect(await readFile(path.join(folder, `${one.id}.md`), "utf8")).toBe("# One");
+    expect(await readFile(path.join(folder, `${two.id}.md`), "utf8")).toBe("# Two");
+    expect((await readdir(folder)).sort()).toEqual([`${one.id}.md`, `${two.id}.md`].sort());
   });
   it("fmrl_get's to_file takes no path, so a caller can't aim the write, and a link planted under the page's name is replaced, not followed", async () => {
     const pub = await call("fmrl_publish", { content: "ssh-ed25519 AAAA attacker", format: "md" });
@@ -1204,9 +1304,17 @@ describe("fmrl_edit", () => {
     await writeFile(target, "mine");
     await mkdir(path.join(dir, "files"), { recursive: true });
     await symlink(target, path.join(dir, "files", `${id}.md`));
-    const r = await call("fmrl_get", { id, out: target, path: target, to_file: true });
+    const planted = path.join(dir, "files", `${id}.md`);
+    // Without replace the link is in the way: nothing is written, through it or over it.
+    const kept = await call("fmrl_get", { id, out: target, path: target, to_file: true });
+    expect(kept.isError).toBe(true);
+    expect(await readFile(target, "utf8")).toBe("mine");
+    expect((await lstatFile(planted)).isSymbolicLink()).toBe(true);
+    // With replace the link itself is replaced, never followed.
+    const r = await call("fmrl_get", { id, out: target, path: target, to_file: true, replace: true });
     expect(r.isError).toBeFalsy();
     expect(await readFile(target, "utf8")).toBe("mine");
+    expect((await lstatFile(planted)).isSymbolicLink()).toBe(false);
     expect((r.structuredContent as { content_file: { path: string } }).content_file.path).not.toContain(work);
   });
   it("fmrl_edit takes content or content_file, exactly one, and reads only the edited page's own file in the fmrl folder", async () => {
@@ -1317,7 +1425,7 @@ describe("fmrl_edit", () => {
     const ed = await call("fmrl_edit", { id, content_file: `${id}.md` });
     expect(text(ed)).toContain("Other users can write in the fmrl folder");
     await chmod(folder, 0o755);
-    expect((await call("fmrl_get", { id, to_file: true })).isError).toBeFalsy();
+    expect((await call("fmrl_get", { id, to_file: true, replace: true })).isError).toBeFalsy();
     expect(puts()).toHaveLength(0);
   });
   it("fmrl_get's to_file opens a private page here and writes its source", async () => {

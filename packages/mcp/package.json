@@ -1,6 +1,6 @@
 {
   "name": "fmrl-mcp",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "mcpName": "io.github.toogreatwtf/fmrl-mcp",
   "description": "Your agent's outbox. Ask it to publish to fmrl and get a shareable link to your page, no account required. Agents and people can edit and organize pages together. Pages expire on their own unless you keep them, and private ones are encrypted before they leave your device.",
   "license": "MIT",
@@ -38,7 +38,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "marked": "15.0.12",
-    "parse5": "^7.3.0",
+    "parse5": "^8.1.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

@@ -50,6 +50,15 @@
 # wait for approval. The check decides only whether to ask; it cannot
 # publish, and the publish job checks npm again itself before it touches
 # anything.
+#
+# Installing dependencies, building, testing and packing happen in the build
+# job, which has no id-token permission and no environment. It packs the
+# tarball and uploads it as an artifact of this run. The publish job, the
+# only one that can mint the OIDC token, installs no dependencies and runs no
+# package scripts: it downloads that tarball, checks it is the one the build
+# job made, for this version and this commit, and publishes the file as it
+# is. The tarball carries gitHead (this commit), which a directory publish
+# would have added by itself, so the tag job still finds the commit on npm.
 name: release
 
 on:
@@ -131,9 +140,56 @@ jobs:
           VERSION: ${{ steps.gate.outputs.version }}
         run: .github/scripts/release-notes.sh "$VERSION" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
 
+  # Builds, tests and packs fmrl-mcp, with no id-token and no environment, so
+  # dependency code never runs where the publish token can be minted.
+  build:
+    name: build fmrl-mcp ${{ needs.check.outputs.version }}
+    needs: check
+    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    defaults:
+      run:
+        working-directory: packages/mcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: pack fmrl-mcp@${{ needs.check.outputs.version }}
+        id: pack
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          if [ "$(node -p "require('./package.json').version")" != "$VERSION" ]; then
+            echo "package.json no longer names ${VERSION}; refusing to pack." >&2
+            exit 1
+          fi
+          # A directory publish records the commit as gitHead by itself; a
+          # tarball publish takes it from the tarball's package.json.
+          npm pkg set gitHead="$GITHUB_SHA"
+          npm pack --ignore-scripts
+          tarball="fmrl-mcp-${VERSION}.tgz"
+          test -f "$tarball"
+          echo "sha256=$(sha256sum "$tarball" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fmrl-mcp-tarball
+          path: packages/mcp/fmrl-mcp-${{ needs.check.outputs.version }}.tgz
+          if-no-files-found: error
+          compression-level: 0
+
   publish:
     name: publish fmrl-mcp ${{ needs.check.outputs.version }}
-    needs: check
+    needs: [check, build]
     if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
     environment: npm-release
     runs-on: ubuntu-latest
@@ -152,14 +208,15 @@ jobs:
         working-directory: packages/mcp
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No npm cache here: this job installs no dependencies.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-          cache: npm
-          cache-dependency-path: packages/mcp/package-lock.json
       - name: npm 11.5.1+ for trusted publishing
-        run: npm install -g npm@11.21.1 && npm --version
+        run: npm install -g --ignore-scripts npm@11.21.1 && npm --version
       - name: is this version already on npm and in the MCP Registry?
         id: gate
         run: |
@@ -188,14 +245,42 @@ jobs:
                  echo "list=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "the MCP Registry answered HTTP ${code} for ${name}@${version}; refusing to guess." >&2; exit 1 ;;
           esac
+      # The tarball the build job made, built and tested there. Nothing is
+      # installed or built here, and no package script runs.
       - if: steps.gate.outputs.publish == 'true'
-        run: npm ci
-      # prepublishOnly (package.json) runs the build and the test suite
-      # again right before the tarball is made, so a publish never ships
-      # what the test workflow did not see.
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fmrl-mcp-tarball
+          path: ${{ runner.temp }}/tarball
+      - if: steps.gate.outputs.publish == 'true'
+        name: check the tarball
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+          DIR: ${{ runner.temp }}/tarball
+        run: |
+          tarball="${DIR}/fmrl-mcp-${VERSION}.tgz"
+          if [ "$(ls -A "$DIR")" != "fmrl-mcp-${VERSION}.tgz" ]; then
+            echo "expected only fmrl-mcp-${VERSION}.tgz from the build job; found: $(ls -A "$DIR")" >&2
+            exit 1
+          fi
+          if [ "$(sha256sum "$tarball" | cut -d' ' -f1)" != "$SHA256" ]; then
+            echo "the tarball is not the one the build job packed; refusing to publish." >&2
+            exit 1
+          fi
+          tar -xzOf "$tarball" package/package.json > "${RUNNER_TEMP}/packed.json"
+          node -e '
+            const p = require(process.argv[1]);
+            const want = { name: "fmrl-mcp", version: process.env.VERSION, gitHead: process.env.GITHUB_SHA };
+            for (const [k, v] of Object.entries(want)) {
+              if (p[k] !== v) { console.error(`the tarball says ${k} ${p[k]}, not ${v}; refusing to publish.`); process.exit(1); }
+            }
+          ' "${RUNNER_TEMP}/packed.json"
       - if: steps.gate.outputs.publish == 'true'
         name: publish fmrl-mcp@${{ steps.gate.outputs.version }}
-        run: npm publish --access public
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: npm publish "${RUNNER_TEMP}/tarball/fmrl-mcp-${VERSION}.tgz" --access public --ignore-scripts
       - if: steps.gate.outputs.list == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

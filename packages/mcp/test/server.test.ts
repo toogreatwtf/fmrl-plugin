@@ -1895,8 +1895,8 @@ describe("comments", () => {
     expect(Object.keys(posted.body as object).sort()).toEqual(["base_rev", "payload"]);
     expect((await call("fmrl_reply", { id: url, thread, body: "Yes, works for me." })).isError).toBeFalsy();
     const wire = JSON.stringify(fake.requests.slice(before));
-    // Every string here but the key has a space, which sealed text never holds, so it can't match by chance.
-    for (const secret of ["ship on Friday", "Can we?", "Yes, works for me.", key]) expect(wire).not.toContain(secret);
+    // Each phrase here is long enough, and the key random enough, that nothing these requests should hold matches by chance.
+    for (const secret of ["ship on   Friday", "ship on Friday", "Can we?", "Yes, works for me.", key]) expect(wire).not.toContain(secret);
 
     const notes = await call("fmrl_notes", { id: url });
     expect(notes.structuredContent).toMatchObject({ private: true });

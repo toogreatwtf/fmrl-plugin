@@ -83,6 +83,7 @@ jobs:
       contents: read
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
+      build: ${{ steps.gate.outputs.build }}
       version: ${{ steps.gate.outputs.version }}
     defaults:
       run:
@@ -130,6 +131,9 @@ jobs:
             echo "fmrl-mcp@${version}: npm ${npm}, MCP Registry ${registry}; the publish job will wait for approval in npm-release."
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
+          # Only a version npm lacks needs a tarball; one that is on npm and
+          # only needs listing skips the build job.
+          if [ "$npm" = new ]; then echo "build=true" >> "$GITHUB_OUTPUT"; fi
       # The notes for this version, on the run's summary page, which is where
       # the approval is given. The same notes go on the GitHub Release once
       # the publish is through.
@@ -145,7 +149,7 @@ jobs:
   build:
     name: build fmrl-mcp ${{ needs.check.outputs.version }}
     needs: check
-    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
+    if: github.ref == 'refs/heads/main' && needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -176,6 +180,9 @@ jobs:
           # A directory publish records the commit as gitHead by itself; a
           # tarball publish takes it from the tarball's package.json.
           npm pkg set gitHead="$GITHUB_SHA"
+          # --ignore-scripts: no lifecycle script (prepack, prepare,
+          # prepublishOnly) runs in a release. Anything the tarball needs
+          # must be a step of this job, before this one.
           npm pack --ignore-scripts
           tarball="fmrl-mcp-${VERSION}.tgz"
           test -f "$tarball"
@@ -186,11 +193,21 @@ jobs:
           path: packages/mcp/fmrl-mcp-${{ needs.check.outputs.version }}.tgz
           if-no-files-found: error
           compression-level: 0
+          # The approval can wait up to 30 days; keep the tarball that long
+          # whatever the repository's default retention is. (A lower
+          # repository or organization maximum still wins.)
+          retention-days: 30
 
   publish:
     name: publish fmrl-mcp ${{ needs.check.outputs.version }}
     needs: [check, build]
-    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
+    # The build job is skipped when the version is already on npm and only
+    # needs listing, so a skipped build must not skip this job; a failed one
+    # must.
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' &&
+      needs.check.outputs.publish == 'true' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
     environment: npm-release
     runs-on: ubuntu-latest
     # One publish at a time, and never cancel one in flight: a cancelled
@@ -332,7 +349,9 @@ jobs:
   tag:
     name: tag fmrl-mcp ${{ needs.check.outputs.version }}
     needs: [check, publish]
-    if: github.ref == 'refs/heads/main' && needs.publish.result == 'success'
+    # !cancelled(): without a status function, a skipped build job upstream
+    # would skip this job too.
+    if: "!cancelled() && github.ref == 'refs/heads/main' && needs.publish.result == 'success'"
     permissions:
       contents: write
     uses: ./.github/workflows/tag-release.yml
